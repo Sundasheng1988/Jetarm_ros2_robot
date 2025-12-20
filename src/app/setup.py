@@ -31,6 +31,7 @@ setup(
             'calibration_node = app.calibration_node:main',
             'test_calculation = app.test_calculation: main',
             'object_detection = app.object_detection_node: main',
+            'roi_color_detector_node = app.roi_color_detector_node:main',
         ]
     },
 )
