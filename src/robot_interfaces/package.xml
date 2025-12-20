@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robot_interfaces</name>
+  <version>0.0.1</version>
+  <description>Common robot interface messages (env objects, etc.).</description>
+
+  <maintainer email="you@example.com">sundasheng</maintainer>
+  <license>MIT</license>
+
+  <!-- 构建工具 -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- 依赖的消息包 -->
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+
+  <!-- 接口生成依赖 -->
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <!-- 告诉 ROS2：这是一个接口包 -->
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+
