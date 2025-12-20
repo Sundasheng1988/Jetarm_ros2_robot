@@ -14,3 +14,10 @@ __pycache__/
 Thumbs.db
 *.swp
 *.swo
+# ===== AI models / large assets (DO NOT COMMIT) =====
+models/
+*.onnx
+*.pt
+*.pth
+*.mdl
+*.zip
