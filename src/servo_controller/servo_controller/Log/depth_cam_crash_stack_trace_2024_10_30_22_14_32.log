@@ -1,0 +1,27 @@
+Received signal: 6
+Stack trace (most recent call last) in thread 131803:
+#24   Object "[0xffffffffffffffff]", at 0xffffffffffffffff, in 
+#23   Object "/lib/aarch64-linux-gnu/libc.so.6", at 0xffff8a985edb, in 
+#22   Object "/lib/aarch64-linux-gnu/libc.so.6", at 0xffff8a91d5c7, in 
+#21   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff7371bab3, in 
+#20   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73a4f59b, in 
+#19   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73a4d3d3, in 
+#18   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73a4c887, in 
+#17   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73a4d657, in 
+#16   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73a4ebcf, in 
+#15   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73a4dc8b, in 
+#14   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff739ca42f, in 
+#13   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73984baf, in 
+#12   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff73983a7f, in 
+#11   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff739869bb, in 
+#10   Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff7378afbb, in 
+#9    Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/libOrbbecSDK.so.1.10", at 0xffff736d9523, in 
+#8    Object "/lib/aarch64-linux-gnu/libstdc++.so.6", at 0xffff8ab22e03, in __cxa_throw
+#7    Object "/lib/aarch64-linux-gnu/libstdc++.so.6", at 0xffff8ab22b1f, in std::terminate()
+#6    Object "/lib/aarch64-linux-gnu/libstdc++.so.6", at 0xffff8ab22abb, in 
+#5    Object "/lib/aarch64-linux-gnu/libstdc++.so.6", at 0xffff8ab262db, in __gnu_cxx::__verbose_terminate_handler()
+#4    Object "/lib/aarch64-linux-gnu/libc.so.6", at 0xffff8a8c712f, in abort
+#3    Object "/lib/aarch64-linux-gnu/libc.so.6", at 0xffff8a8da67b, in raise
+#2    Object "/lib/aarch64-linux-gnu/libc.so.6", at 0xffff8a91f200, in 
+#1    Object "linux-vdso.so.1", at 0xffffa6ee97bb, in 
+#0    Object "/home/ubuntu/third_party_ros2/orbbec_ws/install/orbbec_camera/lib/liborbbec_camera.so", at 0xffff7f52f433, in signalHandler(int)
