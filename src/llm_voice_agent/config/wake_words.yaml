@@ -1,0 +1,16 @@
+# llm_voice_agent/config/wake_words.yaml
+/**:
+  ros__parameters:
+    # 唤醒词（数组）
+    wake_words:
+      - "jack"
+      - "杰克"
+
+    # 正则（比如允许 J  A  C  K 中间有空格）
+    wake_regex:
+      - 'j\s*a\s*c\s*k'
+
+    # 去除唤醒词时使用的替换正则（与 wake_regex 同步）
+    strip_patterns:
+      - 'j\s*a\s*c\s*k'
+

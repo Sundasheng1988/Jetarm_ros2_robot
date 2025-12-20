@@ -1,6 +1,8 @@
+# executor.node
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import math
 import json
 import time
 from typing import Any, Dict, List, Optional
@@ -103,6 +105,14 @@ class GroundExecutorNode(Node):
         # 回位脉冲（可按需覆盖）
         self.declare_parameter('home_pulses', [500, 560, 130, 115, 500])
 
+        # ★ ch5（腕）映射参数：直接按 rpy[2]（弧度）映射
+        self.declare_parameter('wrist_enable', True)               # 是否启用 ch5 = yaw(rpy)
+        self.declare_parameter('wrist_center_pulse', 500)          # 中心脉冲
+        self.declare_parameter('wrist_span_deg', 240.0)            # 总行程对应角度（±span/2）
+        self.declare_parameter('wrist_limits', [100, 900])         # 脉冲限幅
+        self.declare_parameter('wrist_zero_deg', 0.0)              # 机械零位相对世界 0° 的修正（度）
+        self.declare_parameter('wrist_clip45', True)               # 是否将角度压到 ±45°（与 sorting 一致）
+
         # 读取参数
         self.dry_run = bool(self.get_parameter('dry_run').value)
         self.auto_confirm = bool(self.get_parameter('auto_confirm').value)
@@ -134,6 +144,14 @@ class GroundExecutorNode(Node):
         self.confirm_wait_sec = float(self.get_parameter('confirm_wait_sec').value)
         self.home_pulses: List[int] = list(self.get_parameter('home_pulses').value)
 
+        # ch5 参数读取
+        self.wrist_enable = bool(self.get_parameter('wrist_enable').value)
+        self.wrist_center = int(self.get_parameter('wrist_center_pulse').value)
+        self.wrist_span_deg = float(self.get_parameter('wrist_span_deg').value)
+        self.wrist_limits = list(self.get_parameter('wrist_limits').value)
+        self.wrist_zero_deg = float(self.get_parameter('wrist_zero_deg').value)
+        self.wrist_clip45 = bool(self.get_parameter('wrist_clip45').value)
+
         # ============== 发布/订阅 ==============
         # grounded_goal
         self.goal_sub = self.create_subscription(
@@ -153,7 +171,6 @@ class GroundExecutorNode(Node):
         self.preview_text_pub = self.create_publisher(String, '/executor/preview_text', self.qos_preview)
         self.preview_step_pub = self.create_publisher(String, '/executor/preview_step', self.qos_preview)
         self.preview_steps_json_pub = self.create_publisher(String, '/executor/preview_steps_json', self.qos_preview)
-        # 新增：完整整段文本一次性话题（最稳）
         self.preview_full_text_pub = self.create_publisher(String, '/executor/preview_full_text', self.qos_preview)
 
         # 确认
@@ -198,6 +215,41 @@ class GroundExecutorNode(Node):
             f"(IK 固定: pitch={self.ik_fixed_pitch_deg}°, range={self.ik_pitch_range}, res={self.ik_resolution})"
         )
 
+    # ----------------- ch5：yaw(rpy) → 脉冲（核心改动） -----------------
+    def _yaw_to_ch5(self, yaw_rad: float) -> int:
+        """将 rpy[2]（弧度）映射到第 5 路舵机脉冲。"""
+        if not self.wrist_enable:
+            return self.wrist_center
+        deg = math.degrees(float(yaw_rad))  # 弧度→度
+        # 归一化到 [-180,180)
+        deg = (deg + 180.0) % 360.0 - 180.0
+        # 与 object_sortting 一致：把角度压到 ±45°，避免 90°跳变
+        if self.wrist_clip45:
+            if deg < -45.0:
+                deg += 90.0
+            elif deg > 45.0:
+                deg -= 90.0
+        # 相对机械零位修正
+        deg -= self.wrist_zero_deg
+        # 线性映射（±span/2 -> center ± 500）
+        k_per_deg = 1000.0 / max(1e-6, self.wrist_span_deg)  # 例如 240° → 1000 脉冲
+        pulse = int(round(self.wrist_center + deg * k_per_deg))
+        lo = int(self.wrist_limits[0]) if self.wrist_limits else 100
+        hi = int(self.wrist_limits[1]) if self.wrist_limits else 900
+        pulse = max(lo, min(hi, pulse))
+        return pulse
+
+    # 在 IK 的基础上覆盖/补齐 ch5（务必在发布前调用）
+    def _finalize_pulses_with_yaw(self, pos: List[float], rpy: List[float], pulses: List[int]) -> List[int]:
+        pulses = [int(p) for p in pulses] if pulses else []
+        # 确保至少 5 路
+        while len(pulses) < 5:
+            pulses.append(500)
+        # 用 rpy[2] 直接生成 ch5
+        ch5 = self._yaw_to_ch5(rpy[2] if (rpy and len(rpy) > 2) else 0.0)
+        pulses[4] = ch5
+        return pulses
+
     # ============== JointState 回调与工具 ==============
     def _on_joint_state(self, msg: JointState):
         self._last_js = msg
@@ -208,12 +260,9 @@ class GroundExecutorNode(Node):
         return None
 
     def _wait_motion_and_settle(self, duration_ms: int) -> None:
-        # 先等待“指令预计运动时长 + 额外稳定时间”
         t_end = time.time() + max(0.0, duration_ms) / 1000.0 + self.settle_extra_ms / 1000.0
         while time.time() < t_end:
             rclpy.spin_once(self, timeout_sec=0.02)
-
-        # 然后在 still_window_sec 内滑动检测
         start = time.time()
         last = self._get_joint_pos()
         ok_since = None
@@ -232,7 +281,6 @@ class GroundExecutorNode(Node):
             else:
                 ok_since = None
             last = cur
-        # 超时不抛错
 
     # ============== 视觉回调 ==============
     def on_detection(self, msg: Any):
@@ -341,7 +389,7 @@ class GroundExecutorNode(Node):
             'pulses': [int(x) for x in self.home_pulses]
         })
 
-        # === 预览：带阶段 emoji 的中文自然描述（合并为一句） ===
+        # === 预览：中文描述 ===
         move_dur_ms = int(self.move_duration_ms)
         grip_dur_ms = 300
 
@@ -349,10 +397,8 @@ class GroundExecutorNode(Node):
             return f"({pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f})"
 
         def _fmt_pulses(pulses: List[int]) -> str:
-            # 中文逗号，更好看
             return "(" + "，".join(str(int(p)) for p in pulses) + ")"
 
-        # 英文步骤名 → 中文友好名称（仅用于预览显示，不影响实际执行 name）
         NAME_MAP_MOVE = {
             'hover_source': '源点上方（悬停）',
             'approach_pick': '源点抓取位置',
@@ -368,26 +414,27 @@ class GroundExecutorNode(Node):
             'gripper_open_place': ('🟣 放置完成', '打开夹爪（放置）'),
         }
 
-        # 为了兼容 /executor/preview 结构化消费者，构建 steps_expanded
         steps_expanded: List[Dict[str, Any]] = []
         preview_lines: List[str] = []
 
         for st in steps:
             if st.get('type') == 'move':
-                # 求脉冲（预览）
                 if 'pulses' in st and (st.get('position') is None or 'position' not in st):
+                    # 回位：仅脉冲
                     pulses = [int(p) for p in st['pulses']]
+                    # 强制补齐/覆盖 ch5（用当前阶段的 rpy 或 0）
+                    yaw_rpy = (rpy_src if 'source' in st['name'] else (rpy_tgt or [0,0,0]))  # 回家时 rpy 不重要
+                    pulses = self._finalize_pulses_with_yaw(st.get('position') or [0,0,0], yaw_rpy, pulses)
                     mode = 'pulses_only'
                     pos = None
                 else:
                     pos = st['position']; rpy = st['rpy']
-                    # IK 仅用于预览
                     self.get_logger().info(f"➡️  IK(preview): {_fmt_xyz(pos)} rpy={rpy}")
-                    pulses = self._ik_get_pulses(pos, rpy)
+                    base = self._ik_get_pulses(pos, rpy)
+                    pulses = self._finalize_pulses_with_yaw(pos, rpy, base)  # ★ 这里覆盖/补齐 ch5
                     st['pulses'] = pulses
                     mode = 'pose'
 
-                # 增强可读性的中文+emoji
                 if st.get('name') == 'return_home':
                     line = f"🏁 回到「{NAME_MAP_MOVE.get('return_home','初始位')}」 · 脉冲={_fmt_pulses(pulses)} · 时长={move_dur_ms/1000:.1f}s"
                 else:
@@ -397,7 +444,6 @@ class GroundExecutorNode(Node):
 
                 preview_lines.append(line)
 
-                # 结构化
                 entry = {
                     'type': 'move',
                     'name': st.get('name', 'move'),
@@ -427,22 +473,18 @@ class GroundExecutorNode(Node):
                     'duration_ms': grip_dur_ms
                 })
 
-        # 发布预览：保持兼容（结构化 + 文本多话题）
+        # 发布预览
         full_text = "\n".join(preview_lines)
-
-        # 结构化（供 UI/脚本使用）
         self.preview_pub.publish(String(data=json.dumps({'steps': steps_expanded}, ensure_ascii=False)))
-        # 文本（整段 + 逐行）
         self.preview_text_pub.publish(String(data=full_text))
         self.preview_full_text_pub.publish(String(data=full_text))
         for line in preview_lines:
             self.preview_step_pub.publish(String(data=line))
         self.preview_steps_json_pub.publish(String(data=json.dumps(preview_lines, ensure_ascii=False)))
 
-        self.get_logger().info("📰 已发布预览（中文 + 阶段 emoji），等待确认...")
+        self.get_logger().info("📰 已发布预览，等待确认...")
         self.get_logger().info(f"⌛ 等待确认：发布 Bool 到 {self.confirm_topic} (true) 或 String 到 {self.confirm_str_topic} ('yes')")
 
-        # 等待确认
         if not self._wait_confirm():
             self.get_logger().warn("⛔ 未确认，取消执行")
             return
@@ -520,13 +562,14 @@ class GroundExecutorNode(Node):
 
     # ============== 实际执行（move/gripper） ==============
     def _exec_move(self, st: Dict[str, Any]):
-        # 支持两种 move：常规位姿 or 仅脉冲（回位）
         pulses = st.get('pulses')
         if pulses is not None and ('position' not in st or st.get('position') is None):
-            # 回位：仅脉冲
             pulses = [int(p) for p in pulses]
+            # 回位也确保 ch5 合法（直接保持现有 ch5）
+            while len(pulses) < 5:
+                pulses.append(500)
             self.get_logger().info(
-                f"↩️  ReturnHome: Pulses={pulses} dur={self.move_duration_ms}ms dry_run={self.dry_run}"
+                f"➡️  MoveTo {st['name']}: pulses={pulses} dur={self.move_duration_ms}ms dry_run={self.dry_run}"
             )
             self._publish_servos(pulses, duration_ms=self.move_duration_ms)
             self._wait_motion_and_settle(self.move_duration_ms)
@@ -534,7 +577,8 @@ class GroundExecutorNode(Node):
 
         # 常规位姿
         pos = st['position']; rpy = st['rpy']
-        pulses = st.get('pulses') or [500, 500, 500, 500, 500]
+        base = st.get('pulses') or [500, 500, 500, 500, 500]
+        pulses = self._finalize_pulses_with_yaw(pos, rpy, base)  # ★ 再次确保 ch5 覆盖
         self.get_logger().info(
             f"➡️  MoveTo {st['name']}: ({pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f}) rpy={rpy} "
             f"dur={self.move_duration_ms}ms dry_run={self.dry_run}"
@@ -543,7 +587,6 @@ class GroundExecutorNode(Node):
         self._wait_motion_and_settle(self.move_duration_ms)
 
     def _exec_gripper(self, st: Dict[str, Any]):
-        # 打开=200，闭合=700
         pulse = int(st.get('pulse', 200))
         name = st.get('name', 'gripper')
         self.get_logger().info(f"🫳 Gripper {name}: id={self.gripper_id} pulse={pulse} dur=300ms dry_run={self.dry_run}")
@@ -555,6 +598,7 @@ class GroundExecutorNode(Node):
         sp.id = int(self.gripper_id)
         sp.position = int(pulse)
         msg.position = [sp]
+        self.get_logger().info(f"📤 Publish Gripper: duration={msg.duration}s items=[({sp.id},{sp.position})]")
         self.servo_pub.publish(msg)
         self._wait_motion_and_settle(int(300))
 

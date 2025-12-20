@@ -7,6 +7,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from rclpy.qos import qos_profile_sensor_data
+
 
 COLOR_SET = {"red","blue","yellow","green","black","white"}
 
@@ -81,7 +83,7 @@ class GroundingNode(Node):
     def __init__(self):
         super().__init__("grounding_node")
         self.sub_cmd = self.create_subscription(String, "/parsed_command", self.on_cmd, 10)
-        self.sub_wm  = self.create_subscription(String, "/world_model/objects", self.on_world_model, 10)
+        self.sub_wm  = self.create_subscription(String, "/world_model/roi_objects", self.on_world_model, qos_profile_sensor_data)
         self.pub_goal = self.create_publisher(String, "/grounded_goal", 10)
         self.create_service(Trigger, "/grounding/clear_memory", self.on_reset)
 
@@ -147,7 +149,7 @@ class GroundingNode(Node):
                     "updated_at": float(o.get("updated_at") or now_ts()),
                 }
         except Exception as e:
-            self.get_logger().error(f"解析 /world_model/objects 失败: {e}\n原文: {msg.data}")
+            self.get_logger().error(f"解析 /world_model/roi_objects 失败: {e}\n原文: {msg.data}")
 
     def on_cmd(self, msg: String):
         # 输入如：{"action":"pick","from":"red_cup","to":"right_side", ...}

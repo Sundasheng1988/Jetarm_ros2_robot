@@ -1,0 +1,576 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import time, math, json
+import numpy as np
+import cv2
+
+import rclpy
+from rclpy.node import Node
+from cv_bridge import CvBridge
+
+from sensor_msgs.msg import Image, CameraInfo
+from std_msgs.msg import String
+from vision_interfaces.msg import DetectionResult
+from ultralytics import YOLO
+from kinematics_msgs.srv import GetRobotPose
+
+
+# ========= 基础几何 =========
+def _quat_to_rot(qx, qy, qz, qw) -> np.ndarray:
+    n = math.sqrt(qx*qx + qy*qy + qz*qz + qw*qw) or 1.0
+    qx, qy, qz, qw = qx/n, qy/n, qz/n, qw/n
+    xx, yy, zz = qx*qx, qy*qy, qz*qz
+    xy, xz, yz = qx*qy, qx*qz, qy*qz
+    wx, wy, wz = qw*qx, qw*qy, qw*qz
+    return np.array([
+        [1 - 2*(yy+zz), 2*(xy-wz),     2*(xz+wy)],
+        [2*(xy+wz),     1 - 2*(xx+zz), 2*(yz-wx)],
+        [2*(xz-wy),     2*(yz+wx),     1 - 2*(xx+yy)],
+    ], dtype=np.float64)
+
+def _pose_to_T(position, orientation) -> np.ndarray:
+    R = _quat_to_rot(orientation.x, orientation.y, orientation.z, orientation.w)
+    T = np.eye(4, dtype=np.float64)
+    T[:3,:3] = R
+    T[:3, 3] = [position.x, position.y, position.z]
+    return T
+
+
+# ========= 主节点 =========
+class YoloToWorldNode(Node):
+    """
+    YOLO + 深度 → camera坐标 → hand → base
+    发布：
+      - /vision_target (DetectionResult)
+      - /world_model/objects (std_msgs/String, JSON)
+    仅增强“类别判定”：加入形状分类（ball/cube/cylinder）与 traffic light→ball 纠偏。
+    世界坐标与消息结构保持不变。
+    """
+
+    # YOLO 类别同义归一化
+    BALL_ALIASES = {'sports ball','ball','tennis ball','ping pong ball','soccer ball','basketball','volleyball'}
+    CUBE_ALIASES = {'box','crate','rubiks cube'}
+    CYL_ALIASES  = {'bottle','can','cup'}
+
+    def __init__(self):
+        super().__init__('simple_yolo_node')
+
+        # ---- 既有参数 ----
+        self.declare_parameter('rgb_topic', '/depth_cam/rgb/image_raw')
+        self.declare_parameter('depth_topic', '/depth_cam/depth/image_raw')
+        self.declare_parameter('camera_info_topic', '/depth_cam/depth/camera_info')
+        self.declare_parameter('yolo_model', '/home/sundasheng/ros2_ws/src/vision_yolo/models/yolov8x.pt')
+        self.declare_parameter('min_conf', 0.4)
+        self.declare_parameter('publish_interval', 0.3)
+        self.declare_parameter('depth_in_meters', False)   # 16UC1(mm) → False
+        self.declare_parameter('median_kernel', 5)
+        self.declare_parameter('world_frame', 'base')
+        self.declare_parameter('publish_if_no_pose', True)
+        self.declare_parameter('pose_valid_secs', 2.0)
+        self.declare_parameter('pose_query_hz', 5.0)
+        self.declare_parameter('show_window', True)
+        self.declare_parameter(
+            'hand2cam_matrix',
+            [ 0.0,  0.0,  1.0, -0.101,
+             -1.0,  0.0,  0.0,  0.011,
+              0.0, -1.0,  0.0,  0.045,
+              0.0,  0.0,  0.0,  1.0 ]
+        )
+
+        # ---- 新增：形状分类 + 纠偏参数（不影响坐标计算）----
+        self.declare_parameter('enable_shape_classify', True)
+        self.declare_parameter('shape_score_threshold', 0.70)     # 0.6~0.8
+        self.declare_parameter('shape_debug', False)               # 输出圆度/鼓包等
+
+        # traffic light → ball 纠偏
+        self.declare_parameter('force_remap_traffic_to_ball', False)  # 现场肯定没有红绿灯时建议 True
+        self.declare_parameter('relabel_traffic_ball', True)          # 启发式纠正
+        self.declare_parameter('circ_threshold', 0.60)
+        self.declare_parameter('area_px_threshold', 300)
+        self.declare_parameter('ar_low', 0.70)
+        self.declare_parameter('ar_high', 1.30)
+        self.declare_parameter('depth_bulge_m', 0.006)             # 中心-边缘 >6mm
+
+        # YOLO 白名单（留空则不过滤）
+        self.declare_parameter('class_whitelist',
+                               ['cup','cell phone','bottle','mouse','person','sports ball','traffic light'])
+
+        # 颜色名展示（仅拼到 /vision_target，不进 world_model）
+        self.declare_parameter('enable_color_name', True)
+        self.declare_parameter('append_color_to_det_name', True)
+
+        # ---- 读取参数 ----
+        p = self.get_parameter
+        self.rgb_topic          = p('rgb_topic').value
+        self.depth_topic        = p('depth_topic').value
+        self.camera_info_topic  = p('camera_info_topic').value
+        self.model_path         = p('yolo_model').value
+        self.min_conf           = float(p('min_conf').value)
+        self.publish_interval   = float(p('publish_interval').value)
+        self.depth_in_meters    = bool(p('depth_in_meters').value)
+        self.median_kernel      = int(p('median_kernel').value)
+        self.world_frame        = str(p('world_frame').value)
+        self.publish_if_no_pose = bool(p('publish_if_no_pose').value)
+        self.pose_valid_secs    = float(p('pose_valid_secs').value)
+        self.pose_query_hz      = float(p('pose_query_hz').value)
+        self.show_window        = bool(p('show_window').value)
+
+        try:
+            self.hand2cam = np.array(p('hand2cam_matrix').value, dtype=np.float64).reshape(4,4)
+        except Exception as e:
+            self.get_logger().warn(f'hand2cam_matrix 非 4x4，回退单位阵: {e}')
+            self.hand2cam = np.eye(4, dtype=np.float64)
+
+        self.enable_shape_classify = bool(self.get_parameter('enable_shape_classify').value)
+        self.shape_score_threshold = float(self.get_parameter('shape_score_threshold').value)
+        self.shape_debug           = bool(self.get_parameter('shape_debug').value)
+
+        self.force_remap_traffic_to_ball = bool(self.get_parameter('force_remap_traffic_to_ball').value)
+        self.relabel_traffic_ball = bool(self.get_parameter('relabel_traffic_ball').value)
+        self.circ_threshold  = float(self.get_parameter('circ_threshold').value)
+        self.area_px_th      = int(self.get_parameter('area_px_threshold').value)
+        self.ar_low          = float(self.get_parameter('ar_low').value)
+        self.ar_high         = float(self.get_parameter('ar_high').value)
+        self.depth_bulge_m   = float(self.get_parameter('depth_bulge_m').value)
+
+        self.class_whitelist = set(self.get_parameter('class_whitelist').value)
+        self.enable_color_name = bool(self.get_parameter('enable_color_name').value)
+        self.append_color_to_det_name = bool(self.get_parameter('append_color_to_det_name').value)
+
+        # ---- 组件/订阅/发布 ----
+        self.bridge = CvBridge()
+        self.model  = YOLO(self.model_path)
+        self.get_logger().info(f'✅ YOLOv8 已加载: {self.model_path}')
+
+        self.create_subscription(Image,      self.rgb_topic,         self.on_rgb,      10)
+        self.create_subscription(Image,      self.depth_topic,       self.on_depth,    10)
+        self.create_subscription(CameraInfo, self.camera_info_topic, self.on_caminfo,  10)
+
+        self.pub_det = self.create_publisher(DetectionResult, '/vision_target',        10)
+        self.pub_wm  = self.create_publisher(String,           '/world_model/objects', 10)
+
+        # hand 位姿客户端（维持原逻辑，不阻塞）
+        self.pose_cli = self.create_client(GetRobotPose, '/kinematics/get_current_pose')
+        if not self.pose_cli.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn('⚠️ /kinematics/get_current_pose 暂不可用；先只发像素+深度')
+
+        self._last_T_hand  = None
+        self._last_T_stamp = 0.0
+        self._pose_req_outstanding = False
+        if self.pose_query_hz > 0:
+            self.create_timer(1.0 / self.pose_query_hz, self._refresh_hand_pose)
+
+        # 缓存
+        self.depth   = None    # np.float32, m
+        self.K       = None    # 3x3
+        self.last_ts = 0.0
+        self._warned_no_pose = False
+
+    # ---- hand pose 后台刷新 ----
+    def _refresh_hand_pose(self):
+        if self._pose_req_outstanding or self.pose_cli is None:
+            return
+        try:
+            self._pose_req_outstanding = True
+            fut = self.pose_cli.call_async(GetRobotPose.Request())
+            fut.add_done_callback(self._on_pose_result)
+        except Exception as e:
+            self._pose_req_outstanding = False
+            self.get_logger().warn(f'pose req error: {e}')
+
+    def _on_pose_result(self, fut):
+        self._pose_req_outstanding = False
+        try:
+            res = fut.result()
+            if res and res.success:
+                T = _pose_to_T(res.pose.position, res.pose.orientation)
+                self._last_T_hand  = T
+                self._last_T_stamp = time.time()
+        except Exception:
+            pass
+
+    # ---- 回调 ----
+    def on_caminfo(self, msg: CameraInfo):
+        try:
+            self.K = np.array(msg.k, dtype=np.float64).reshape(3,3)
+        except Exception as e:
+            self.get_logger().error(f'CameraInfo 解析失败: {e}')
+
+    def on_depth(self, msg: Image):
+        try:
+            img = self.bridge.imgmsg_to_cv2(msg, 'passthrough').astype(np.float32)
+            self.depth = img if self.depth_in_meters else (img / 1000.0)  # mm→m
+        except Exception as e:
+            self.get_logger().error(f'Depth 解析失败: {e}')
+
+    def on_rgb(self, msg: Image):
+        now = time.time()
+        if (now - self.last_ts) < self.publish_interval or self.K is None or self.depth is None:
+            return
+
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        except Exception as e:
+            self.get_logger().error(f'RGB 解析失败: {e}')
+            return
+
+        # 1) YOLO
+        res = self.model(frame, verbose=False)[0]
+
+        # 2) hand 位姿是否新鲜
+        have_world = (self._last_T_hand is not None) and ((now - self._last_T_stamp) < self.pose_valid_secs)
+        if not have_world and not self._warned_no_pose:
+            self.get_logger().warn('未拿到 hand 位姿或已过期；/world_model/objects 将跳过（可先用 publish_if_no_pose=true 只发 vision_target 对拍）')
+            self._warned_no_pose = True
+
+        # 3) 构造消息
+        det = DetectionResult()
+        det.image_width  = [frame.shape[1]]
+        det.image_height = [frame.shape[0]]
+
+        objects = []
+        unix_ts = int(now)
+        H_img, W_img = frame.shape[:2]
+
+        for b in res.boxes:
+            cls_id  = int(b.cls[0])
+            raw_name = str(self.model.names[cls_id])
+            conf    = float(b.conf[0])
+
+            # 白名单
+            if self.class_whitelist and (raw_name not in self.class_whitelist):
+                continue
+            if conf < self.min_conf:
+                continue
+
+            # ROI
+            x1, y1, x2, y2 = map(int, b.xyxy[0].tolist())
+            x1 = max(0, x1); y1 = max(0, y1)
+            x2 = min(W_img-1, x2); y2 = min(H_img-1, y2)
+            w, h = (x2-x1), (y2-y1)
+            if w <= 0 or h <= 0:
+                continue
+            u = (x1 + x2)//2
+            v = (y1 + y2)//2
+
+            bgr_roi = frame[y1:y2, x1:x2]
+            depth_roi = None
+            try:
+                if self.depth is not None:
+                    depth_roi = self.depth[y1:y2, x1:x2]
+            except Exception:
+                depth_roi = None
+
+            # --- 基准类别（归一化）---
+            cls_fixed = self._norm_cls(raw_name)
+
+            # --- 纠偏：traffic light → ball ---
+            if self.force_remap_traffic_to_ball and raw_name.lower() == 'traffic light':
+                cls_fixed = 'ball'
+            elif self.relabel_traffic_ball and raw_name.lower() == 'traffic light':
+                if self._ball_like(bgr_roi, depth_roi, w, h):
+                    cls_fixed = 'ball'
+                    conf = max(conf, 0.75)
+
+            # --- 形状分类（优先覆盖）---
+            if self.enable_shape_classify:
+                shape, sc, dbg = self._classify_shape(bgr_roi, depth_roi)
+                if self.shape_debug:
+                    self.get_logger().info(f"[shape] raw={raw_name} circ={dbg.get('circ',0):.2f} hough={dbg.get('hough',0):.2f} bulge={dbg.get('bulge',0):.3f} quad={dbg.get('quad',0)} score={{'ball':{dbg.get('sb',0):.2f},'cyl':{dbg.get('sy',0):.2f},'cube':{dbg.get('sc',0):.2f}}} -> {shape}({sc:.2f})")
+                if sc >= self.shape_score_threshold:
+                    cls_fixed = shape
+                    conf = max(conf, 0.85)
+
+            # 颜色名（仅展示）
+            color_cn = self._infer_color_name(bgr_roi)
+            det_name = f"{cls_fixed}:{color_cn}" if (self.enable_color_name and self.append_color_to_det_name and color_cn) else cls_fixed
+
+            # ---- /vision_target ----
+            det.class_name.append(det_name)
+            det.confidence.append(conf)
+            det.center_x.append(int(u))
+            det.center_y.append(int(v))
+
+            z = self._depth_at(u, v)
+            det.center_z.append(z if z is not None else -1.0)
+
+            # ---- /world_model/objects（坐标与结构保持不变）----
+            if have_world and z and z > 0:
+                fx, fy = self.K[0,0], self.K[1,1]
+                cx, cy = self.K[0,2], self.K[1,2]
+                x_cam  = (u - cx) / fx * z
+                y_cam  = (v - cy) / fy * z
+                p_cam  = np.array([x_cam, y_cam, z, 1.0], dtype=np.float64).reshape(4,1)
+
+                base_T_cam = self._last_T_hand @ self.hand2cam
+                p_base = base_T_cam @ p_cam
+                X, Y, Z, _ = p_base.flatten().tolist()
+
+                objects.append({
+                    "id": len(objects)+1,
+                    "class_name": cls_fixed,      # 仅最终类别名，不拼颜色
+                    "color": None,
+                    "pose": {
+                        "frame": self.world_frame,
+                        "xyz": [round(X,3), round(Y,3), round(Z,3)],
+                        "rpy": [0.0, 0.0, 1.57]
+                    },
+                    "confidence": round(conf,3),
+                    "updated_at": unix_ts
+                })
+
+        # 4) 发布
+        self.pub_det.publish(det)
+        if have_world and objects:
+            payload = json.dumps({"objects": objects}, ensure_ascii=False)
+            self.pub_wm.publish(String(data=payload))
+            o = objects[0]
+            self.get_logger().info(f"🌍 {o['class_name']} → {o['pose']['xyz']} @ {self.world_frame}, conf={o['confidence']}")
+
+        # 5) 叠字显示
+        if self.show_window:
+            try:
+                for i, cls in enumerate(det.class_name):
+                    cv2.circle(frame, (det.center_x[i], det.center_y[i]), 4, (0,255,0), -1)
+                    cv2.putText(frame, f"{cls} {det.confidence[i]:.2f}",
+                                (max(det.center_x[i]-40, 5), max(det.center_y[i]-10, 15)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+                cv2.imshow("YOLO", frame); cv2.waitKey(1)
+            except Exception:
+                pass
+
+        self.last_ts = now
+
+    # ========= 工具 =========
+    def _depth_at(self, u, v):
+        if self.depth is None: return None
+        H, W = self.depth.shape[:2]
+        if not (0 <= u < W and 0 <= v < H): return None
+
+        if self.median_kernel >= 3 and self.median_kernel % 2 == 1:
+            k = self.median_kernel
+            x1, x2 = max(0, u-k//2), min(W, u+k//2+1)
+            y1, y2 = max(0, v-k//2), min(H, v+k//2+1)
+            patch  = self.depth[y1:y2, x1:x2]
+            val    = patch[np.isfinite(patch) & (patch > 0.0)]
+            return float(np.median(val)) if val.size else None
+        else:
+            d = float(self.depth[v, u])
+            return d if (math.isfinite(d) and d > 0.0) else None
+
+    def _norm_cls(self, name: str) -> str:
+        n = (name or '').lower()
+        if n in self.BALL_ALIASES: return 'ball'
+        if n in self.CUBE_ALIASES: return 'cube'
+        if n in self.CYL_ALIASES:  return 'cylinder'
+        return n
+
+    # ---- 形状分类：返回 (label, score, debug_dict) ----
+    def _classify_shape(self, bgr_roi, depth_roi):
+        dbg = {'circ':0.0,'hough':0.0,'bulge':0.0,'quad':0,'sb':0.0,'sy':0.0,'sc':0.0}
+        if bgr_roi is None or bgr_roi.size == 0:
+            return 'unknown', 0.0, dbg
+    
+        gray = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5,5), 0)
+
+        thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                    cv2.THRESH_BINARY, 11, 2)
+        thr = cv2.medianBlur(thr, 5)
+        cnts, _ = cv2.findContours(thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return 'unknown', 0.0, dbg
+        c = max(cnts, key=cv2.contourArea)
+        A = cv2.contourArea(c); P = cv2.arcLength(c, True)
+        if A < 200 or P <= 1e-6:
+            return 'unknown', 0.0, dbg
+
+        circularity = float(4.0*np.pi*A/(P*P))  # 1 为完美圆
+        dbg['circ'] = circularity
+
+        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2,
+                                   minDist=min(gray.shape)//4, param1=100, param2=25,
+                                   minRadius=int(min(gray.shape)*0.15),
+                                   maxRadius=int(min(gray.shape)*0.6))
+        dbg['hough'] = 1.0 if circles is not None else 0.0
+    
+        bulge = 0.0
+        if depth_roi is not None and depth_roi.size:
+            d = depth_roi.astype(np.float32)
+            d[d<=0] = np.nan
+            if not np.all(np.isnan(d)):
+                h,w = d.shape
+                cy,cx = h//2, w//2
+                center = d[max(0,cy-2):cy+3, max(0,cx-2):cx+3]
+                ring = np.hstack([d[0,:], d[-1,:], d[:,0], d[:,-1]])
+                cm = np.nanmedian(center); rm = np.nanmedian(ring)
+                if np.isfinite(cm) and np.isfinite(rm):
+                    bulge = rm - cm
+        dbg['bulge'] = float(bulge)
+
+        eps = 0.02*P
+        approx = cv2.approxPolyDP(c, eps, True)
+        is_quad = (len(approx) == 4)
+        dbg['quad'] = int(is_quad)
+        right_angles = 0
+        if is_quad:
+            pts = approx.reshape(-1,2)
+            for i in range(4):
+                v1 = pts[(i+1)%4] - pts[i]
+                v2 = pts[(i-1)%4] - pts[i]
+                ang = abs(np.degrees(np.arccos(
+                    np.clip(np.dot(v1,v2) / (np.linalg.norm(v1)*np.linalg.norm(v2)+1e-6), -1, 1)
+                )))
+                if 70 <= ang <= 110:
+                    right_angles += 1
+
+        score_ball = 0.0
+        if circularity >= 0.60: score_ball += 0.4
+        if circles is not None: score_ball += 0.3
+        if bulge > 0.006:       score_ball += 0.5
+        dbg['sb'] = score_ball
+
+        score_cylinder = 0.0
+        if circularity >= 0.60: score_cylinder += 0.4
+        if circles is not None: score_cylinder += 0.3
+        if abs(bulge) < 0.003:  score_cylinder += 0.4
+        dbg['sy'] = score_cylinder
+
+        score_cube = 0.0
+        if is_quad and right_angles >= 3: score_cube += 0.6
+        if abs(bulge) < 0.004:            score_cube += 0.3
+        dbg['sc'] = score_cube
+
+        best = max(
+            ('ball', score_ball),
+            ('cylinder', score_cylinder),
+            ('cube', score_cube),
+            key=lambda x: x[1]
+        )
+        return best[0], best[1], dbg   # <== 永远返回三项
+
+    # ---- 启发式球判断（用于 traffic light 纠偏）----
+    def _ball_like(self, bgr_roi, depth_roi, w, h) -> bool:
+        if bgr_roi is None or bgr_roi.size == 0:
+            return False
+        mask, fill_ratio = self._dominant_color_mask(bgr_roi)
+        circ_mask = self._circularity_from_mask(mask)
+        circle_ratio = self._hough_circle_ratio(bgr_roi)
+        sphere_like = self._is_sphere_like(depth_roi)
+        ar = w / float(h + 1e-6)
+        ar_ok, area_ok = (self.ar_low <= ar <= self.ar_high), (w*h) >= self.area_px_th
+
+        score = 0.0
+        if circ_mask >= self.circ_threshold: score += 0.5
+        if circle_ratio >= 0.45:             score += 0.3
+        if sphere_like:                       score += 0.4
+        if ar_ok and area_ok:                 score += 0.2
+        if fill_ratio >= 0.5:                 score += 0.2
+
+        return score >= 0.7
+
+    def _dominant_color_mask(self, bgr_roi):
+        hsv = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2HSV)
+        H,S,V = hsv[:,:,0], hsv[:,:,1], hsv[:,:,2]
+        base = (S > 60) & (V > 60)
+        if np.count_nonzero(base) < 50:
+            return np.zeros(H.shape, np.uint8), 0.0
+        hist = cv2.calcHist([H[base].astype(np.uint8)], [0], None, [180], [0,180]).flatten()
+        peak = int(np.argmax(hist))
+        lower = (peak-10) % 180
+        upper = (peak+10) % 180
+        if lower <= upper:
+            mask = ((H >= lower) & (H <= upper) & base)
+        else:
+            mask = (((H >= lower) | (H <= upper)) & base)
+        mask = mask.astype(np.uint8) * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5,5),np.uint8))
+        mask = cv2.medianBlur(mask, 5)
+        fill_ratio = float(np.count_nonzero(mask)) / float(mask.size + 1e-6)
+        return mask, fill_ratio
+
+    def _circularity_from_mask(self, mask: np.ndarray) -> float:
+        if mask is None or mask.size == 0:
+            return 0.0
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return 0.0
+        c = max(cnts, key=cv2.contourArea)
+        A = cv2.contourArea(c); P = cv2.arcLength(c, True)
+        if P <= 1e-6 or A <= 1e-6:
+            return 0.0
+        return float(4.0*np.pi*A/(P*P))
+
+    def _hough_circle_ratio(self, bgr_roi: np.ndarray) -> float:
+        gray = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2GRAY)
+        gray = cv2.medianBlur(gray, 5)
+        h, w = gray.shape[:2]
+        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2,
+                                   minDist=min(h,w)//4, param1=100, param2=25,
+                                   minRadius=int(min(h,w)*0.15), maxRadius=int(min(h,w)*0.6))
+        if circles is None:
+            return 0.0
+        r = float(np.max(circles[0,:,2]))
+        return r / (0.5*min(h,w) + 1e-6)
+
+    def _is_sphere_like(self, depth_roi: np.ndarray) -> bool:
+        if depth_roi is None or depth_roi.size == 0:
+            return False
+        d = depth_roi.astype(np.float32)
+        d[d<=0] = np.nan
+        if np.all(np.isnan(d)):
+            return False
+        h, w = d.shape
+        cy, cx = h//2, w//2
+        center = d[max(0,cy-2):cy+3, max(0,cx-2):cx+3]
+        ring = np.hstack([d[0,:], d[-1,:], d[:,0], d[:,-1]])
+        c_med = np.nanmedian(center); r_med = np.nanmedian(ring)
+        if not np.isfinite(c_med) or not np.isfinite(r_med):
+            return False
+        bulge = r_med - c_med
+        return bulge > self.depth_bulge_m
+
+    def _infer_color_name(self, bgr_roi: np.ndarray) -> str:
+        if (not self.enable_color_name) or bgr_roi is None or bgr_roi.size == 0:
+            return ""
+        hsv = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2HSV)
+        H,S,V = hsv[:,:,0], hsv[:,:,1], hsv[:,:,2]
+        mask = (S > 50) & (V > 50)
+        if np.count_nonzero(mask) < 50:
+            v = float(V.mean())
+            if v > 180: return "白色"
+            if v < 50:  return "黑色"
+            return "灰色"
+        h_mean = float(np.mean(H[mask])) * 2.0  # 0~360°
+        if h_mean >= 330 or h_mean < 15:    return "红色"
+        if 15 <= h_mean < 30:               return "橙色"
+        if 30 <= h_mean < 45:               return "黄色"
+        if 45 <= h_mean < 90:               return "黄绿色"
+        if 90 <= h_mean < 150:              return "绿色"
+        if 150 <= h_mean < 210:             return "青色"
+        if 210 <= h_mean < 255:             return "蓝色"
+        if 255 <= h_mean < 290:             return "蓝紫色"
+        if 290 <= h_mean < 330:             return "紫色"
+        return "未知"
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = YoloToWorldNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+
+
+if __name__ == '__main__':
+    main()
+
