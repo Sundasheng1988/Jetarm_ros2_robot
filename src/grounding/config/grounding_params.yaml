@@ -1,0 +1,40 @@
+grounding_node:
+  ros__parameters:
+    reuse_last_object: false
+
+    place_map.left_side.frame: "table"
+    place_map.left_side.xyz:   [-0.25,  0.20, 0.02]
+    place_map.left_side.rpy:   [0.0, 0.0, 1.57]
+
+    place_map.right_side.frame: "table"
+    place_map.right_side.xyz:   [-0.25, -0.20, 0.02]
+    place_map.right_side.rpy:   [0.0, 0.0, 1.57]
+
+    place_map.center.frame: "table"
+    place_map.center.xyz:   [-0.25,  0.00, 0.02]
+    place_map.center.rpy:   [0.0, 0.0, 1.57]
+
+    place_map.front_side.frame: "table"
+    place_map.front_side.xyz:   [-0.10,  0.00, 0.02]
+    place_map.front_side.rpy:   [0.0, 0.0, 1.57]
+
+    place_map.back_side.frame: "table"
+    place_map.back_side.xyz:   [-0.40,  0.00, 0.02]
+    place_map.back_side.rpy:   [0.0, 0.0, 1.57]
+
+    place_map.bin_a.frame: "bin_a_center"
+    place_map.bin_a.xyz:   [0.0, 0.0, 0.02]
+    place_map.bin_a.rpy:   [0.0, 0.0, 0.0]
+
+    place_map.bin_b.frame: "bin_b_center"
+    place_map.bin_b.xyz:   [0.0, 0.0, 0.02]
+    place_map.bin_b.rpy:   [0.0, 0.0, 0.0]
+
+    place_map.tray_a.frame: "tray_a"
+    place_map.tray_a.xyz:   [0.0, 0.0, 0.02]
+    place_map.tray_a.rpy:   [0.0, 0.0, 0.0]
+
+    place_map.tray_b.frame: "tray_b"
+    place_map.tray_b.xyz:   [0.0, 0.0, 0.02]
+    place_map.tray_b.rpy:   [0.0, 0.0, 0.0]
+

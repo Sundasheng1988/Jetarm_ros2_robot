@@ -1,0 +1,10 @@
+# Default initial positions for jetarm_6dof's ros2_control fake system
+
+initial_positions:
+  joint1: 0.000
+  joint2: 0.7309
+  joint3: -1.6127
+  joint4: -1.6591
+  joint5: 0.000
+  r_joint: 1.5700
+ 

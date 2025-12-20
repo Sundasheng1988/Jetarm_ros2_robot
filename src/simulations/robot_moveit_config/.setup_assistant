@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: jetarm_6dof_description
+    relative_path: urdf/jetarm_6dof_robot.urdf.xacro
+  srdf:
+    relative_path: config/jetarm_6dof.srdf
+  package_settings:
+    author_name: ZouZhaoTao
+    author_email: support@hiwonder.com
+    generated_timestamp: 1733147224
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity

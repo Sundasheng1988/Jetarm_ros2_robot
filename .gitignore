@@ -1,0 +1,16 @@
+build/
+install/
+log/
+.colcon/*
+.colcon-lcov-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

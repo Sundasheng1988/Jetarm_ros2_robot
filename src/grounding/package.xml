@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>grounding</name>
+  <version>0.1.0</version>
+  <description>Grounding node: 将 llm_parser 的 {action, from, to} 对齐到场景中的具体对象与位姿，发布 /grounded_goal。</description>
+
+  <maintainer email="sundasheng@todo.todo">sundasheng</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- 运行时依赖（Python 包推荐用 exec_depend） -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+
+  <!-- 测试依赖（可保留） -->
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <!-- 可选的元信息 -->
+  <url type="repository">https://example.com/your_repo/grounding</url>
+  <url type="bugtracker">https://example.com/your_repo/grounding/issues</url>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
+

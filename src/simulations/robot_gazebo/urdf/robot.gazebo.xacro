@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="robot" xmlns:xacro="http://ros.org/wiki/xacro">
+    <xacro:include filename="$(find jetarm_6dof_description)/urdf/jetarm_6dof_robot.urdf.xacro"/>
+
+    <!-- ign_joint_control -->
+    <xacro:include filename="$(find robot_gazebo)/urdf/jetarm.gazebo.xacro"/>
+
+    <gazebo>
+        <!-- Joint state publisher -->
+         <!--<plugin filename="ign_ros2_control-system" name="ign_ros2_control::IgnitionROS2ControlPlugin"> -->
+        <plugin filename="$(find ign_ros2_control)/../../lib/libign_ros2_control-system.so" 
+                name="ign_ros2_control::IgnitionROS2ControlPlugin">
+          <parameters>$(find robot_gazebo)/config/robot_config.yaml</parameters>
+        </plugin>
+        <!-- joint -->
+        <plugin filename="libignition-gazebo-joint-state-publisher-system.so" name="ignition::gazebo::systems::JointStatePublisher">
+            <topic>joint_states</topic>
+        </plugin>
+        
+ </gazebo>   
+
+</robot>

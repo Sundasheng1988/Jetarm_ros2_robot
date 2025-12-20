@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jetarm_6dof">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import jetarm_6dof urdf file -->
+    <xacro:include filename="$(find jetarm_6dof_description)/urdf/jetarm_6dof_robot.urdf.xacro" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="jetarm_6dof.ros2_control.xacro" />
+
+
+    <xacro:jetarm_6dof_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

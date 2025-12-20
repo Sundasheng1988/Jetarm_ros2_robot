@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+import os, sys
+
+# 计算工作空间的 site-packages 路径，并加入 sys.path（不依赖外部环境）
+_this = os.path.abspath(__file__)                       # .../install/lib/llm_parser/llm_command_parser_node
+_install_lib = os.path.dirname(os.path.dirname(_this))  # .../install/lib
+_install_prefix = os.path.dirname(_install_lib)         # .../install
+_site_dir = os.path.join(
+    _install_prefix, 'lib',
+    f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages'
+)
+if os.path.isdir(_site_dir) and _site_dir not in sys.path:
+    sys.path.insert(0, _site_dir)
+
+from llm_parser.llm_command_parser_node import main
+
+if __name__ == "__main__":
+    main()
