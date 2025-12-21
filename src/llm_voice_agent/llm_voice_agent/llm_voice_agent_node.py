@@ -169,15 +169,6 @@ SMALLTALK_PATTERNS = [
 ]
 SMALLTALK_RE = re.compile('|'.join(SMALLTALK_PATTERNS), re.IGNORECASE)
 
-# ===== 25/12/14 L2 语音节点休眠 / 激活关键词 =====
-SLEEP_KEYWORDS = [
-    "等一下", "先等等", "你等一下", "先别说话",
-    "安静一下", "你先休息", "暂停语音"
-]
-
-WAKE_KEYWORDS = [
-    "激活", "可以了", "醒来", "恢复"
-]
 
 # === 25/12/14  L1：语义动作暂停（动作层）===
 PAUSE_KEYWORDS = [
@@ -186,6 +177,34 @@ PAUSE_KEYWORDS = [
 RESUME_KEYWORDS = [
     "开始跟着", "看着我",
     "继续跟着", "你继续", "继续看着我"
+]
+
+# ===== 25/12/21 L2 系统级唤醒 / 休眠（必须带 jack）=====
+SYSTEM_WAKE_KEYWORDS = [
+    "jack启动系统",
+    "jack唤醒系统",
+    "jack恢复系统",
+]
+
+SYSTEM_SLEEP_KEYWORDS = [
+    "jack请先休息吧",
+    "jack系统休眠",
+]
+
+# ===== 25/12/21 L3：对话静音（不休眠系统）=====
+L3_MUTE_KEYWORDS = [
+    "别说话",
+    "安静",
+    "静音",
+    "我在拍视频",
+    "不要说话",
+]
+
+L3_UNMUTE_KEYWORDS = [
+    "可以说话了",
+    "继续说话",
+    "恢复对话",
+    "你可以说话了",
 ]
 
 def is_smalltalk(text: str) -> bool:
@@ -329,6 +348,7 @@ class LlmVoiceAgent(Node):
         self.sleeping = False   # 💤 25/12/14 新增：语音节点休眠态
         self._last_reply = ''
         self._last_reply_ts = 0.0
+        self.l3_muted = False #  25/12/21 新增： L3-State Layer： muted 
 
         # —— 稳定参数：输入/输出去重+时间节流 ——
         self._reply_dedup_window = float(self.declare_parameter('reply_dedup_window_s', 2.0).get_parameter_value().double_value)
@@ -430,6 +450,7 @@ class LlmVoiceAgent(Node):
         
         # 统一归一化（供 L1 / L2 使用）
         norm_raw = re.sub(r'[，。！!？?\s]+', '', raw_text)
+        norm = norm_text(raw_text)   # ← 提前定义
         
         now = time.time()
         
@@ -437,55 +458,90 @@ class LlmVoiceAgent(Node):
         # L2：系统级休眠 / 唤醒（最高优先级）
         # =====================================================
         if self.sleeping:
-        # —— 只允许“唤醒语义”或“唤醒词” ——
-            wake_hit = (
-                any(k in norm_raw for k in WAKE_KEYWORDS) or
-                (self.use_wakeword and self._is_wake_hit(raw_text))
-            )
-
-            if wake_hit:
+            # ===== L2：仅允许【系统级唤醒指令】=====
+            if any(k in norm_raw for k in SYSTEM_WAKE_KEYWORDS):
                 self.sleeping = False
 
-                # 👉 唤醒时：让机器人看向你（一次性动作）
+                # 👉 系统唤醒时，让机器人抬头看向用户（一次性）
                 msg_ctrl = String()
                 msg_ctrl.data = "resume"
                 self.face_ctrl_pub.publish(msg_ctrl)
-                self.get_logger().info(
-                    f"🌅 唤醒命中 | wakeword={self._is_wake_hit(raw_text)} | keywords={norm_raw}"
-                )
 
-                self._say("我回来了。")
-                self._set_state("active")
+                self.get_logger().info("🌅 L2 系统唤醒成功")
 
-                # 👉 打开注意力窗口（L3）
+                self._say("系统已启动。")
+                self._set_state("system_active")
+
+                return
+
+            # ❗L2 sleeping 状态下，其它所有语音一律忽略
+            self.get_logger().debug("💤 L2 sleeping，忽略非系统唤醒语音")
+            return
+            
+        # ---- 系统级休眠 ----
+        if any(k in norm_raw for k in SYSTEM_SLEEP_KEYWORDS):
+            self.sleeping = True
+            msg_ctrl = String()
+            msg_ctrl.data = "pause"
+            self.face_ctrl_pub.publish(msg_ctrl)
+            self._say("好的，我先休息了。")
+            self._set_state("system_sleeping")
+            return
+        
+        # =====================================================
+        # “清空上下文 / 重置对话”
+        if self._maybe_handle_memory_commands(norm):
+            return
+
+        # =====================================================
+        # L3-State：对话静音 / 恢复（不影响系统态）
+        # =====================================================
+
+        # ---- L3 unmute：允许唤醒词或明确恢复指令 ----
+        if self.l3_muted:
+            # 允许两种方式解除静音：
+            # 1️⃣ 明确的 unmute 语义
+            # 2️⃣ 唤醒词（jack）
+            if (
+                any(k in norm_raw for k in L3_UNMUTE_KEYWORDS) or
+                (self.use_wakeword and self._is_wake_hit(raw_text))
+            ):
+                self.l3_muted = False
+                self.get_logger().info("🔊 L3 unmute：恢复对话")
+
+                # 👉 恢复时，让机器人看向用户（一次性）
+                msg_ctrl = String()
+                msg_ctrl.data = "resume"
+                self.face_ctrl_pub.publish(msg_ctrl)
+
+                self._say("好的，我可以说话了。")
+                self._set_state("chat_active")
+
+                # 👉 同时打开 L3 注意力窗口
                 self._last_wake_ts = now
                 self._wake_until = now + self.wake_window_s
 
-                self.get_logger().info("🌅 从 sleeping 唤醒 → 抬头看向用户")
                 return
 
-            # ❗睡眠中，其它语音全部忽略
-            self.get_logger().debug("💤 sleeping=True，忽略语音")
+            # ❗ 静音状态下，其它输入一律忽略
+            self.get_logger().debug("🔇 L3 muted，忽略语音输入")
             return
-            
-        # ---- 进入休眠 ----
-        if any(k in norm_raw for k in SLEEP_KEYWORDS):
-            self.sleeping = True
 
-            # 暂停 face_follow
+        # ---- L3 mute：进入静音（系统不休眠）----
+        if any(k in norm_raw for k in L3_MUTE_KEYWORDS):
+            self.l3_muted = True
+
+            # 👉 静音时：暂停 face_follow（但系统仍在线）
             msg_ctrl = String()
             msg_ctrl.data = "pause"
             self.face_ctrl_pub.publish(msg_ctrl)
 
-            self._say("好的，我等你叫我。")
-            self._set_state("sleeping")
-            self.get_logger().info("💤进入 sleeping 状态")
+            self._say("好的，我先不说话。")
+            self._set_state("chat_muted")
+
+            self.get_logger().info("🔇 进入 L3 muted 状态")
             return
 
-        # 去掉中文标点和空白，用于模糊匹配
-        # norm_raw = re.sub(r'[，。！!？?\s]+', '', raw_text)
-        
-        
         # =====================================================
         # L1：语义动作控制（不影响系统态）
         # =====================================================
@@ -521,29 +577,58 @@ class LlmVoiceAgent(Node):
             if hit and (now - self._last_wake_ts) >= self.wake_cooldown_s:
                 
                 first_wake = (now > self._wake_until)
+
+                self.get_logger().info(
+                    f"🟢 L3_WAKE detected | "
+                    f"source=wakeword | "
+                    f"first_wake={first_wake} | "
+                    f"now={now:.2f}"
+                )
                 
+                # 打开注意力窗口
                 self._last_wake_ts = now
                 self._wake_until = now + self.wake_window_s
+                self.get_logger().info(
+                    f"🕓 L3_WAKE window opened | "
+                    f"until={self._wake_until:.2f} "
+                    f"(duration={self.wake_window_s:.1f}s)"
+                )
                 
                 # ✅ 只在“第一次唤醒”时，叫醒机械臂
                 if first_wake:
                     msg = String()
                     msg.data = "resume"
                     self.face_ctrl_pub.publish(msg)
-                    self.get_logger().info("👀 唤醒词 → face_follow resume（一次性）")
+                    self.get_logger().info(
+                        "🤖 L3_WAKE first_wake=True → "
+                        "face_follow resume issued"
+                    )
+                else:
+                    self.get_logger().debug(
+                        "🤖 L3_WAKE within window → "
+                        "no face_follow action"
+                    )
 
                 # 可选：打断当前 TTS
                 self.tts_interrupt_pub.publish(Bool(data=True))
+                self.get_logger().debug("🔕 TTS interrupt issued")
 
+                # 去除唤醒词本体
                 stripped = self._strip_wakewords(raw_text)
                 if not stripped:
                     self._say("在的。")
+                    self.get_logger().info("🗣️ L3_WAKE empty payload → short ack")
                     return
 
                 raw_text = stripped
+                self.get_logger().debug(
+                    f"🧹 L3_WAKE stripped_text='{raw_text}'"
+                )
 
             elif hit:
-                # 冷却中，忽略
+                self.get_logger().debug(
+                    "⏱️ L3_WAKE ignored (cooldown active)"
+                )
                 return
 
             elif now > self._wake_until:
