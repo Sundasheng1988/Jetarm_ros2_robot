@@ -68,10 +68,10 @@ class FaceTracker:
                 dy = cy / h
                 
                 # ★★★★★ 调试日志（核心） ★★★★★
-                print("\n=== FACE TRACK DEBUG ===")
-                print(f"center = ({cx:.1f}, {cy:.1f})  normalized = ({dx:.3f}, {dy:.3f})")
-                print(f"dy_err={dy-0.5:.3f}  dx_err={dx-0.5:.3f}")
-                print(f"before update: pitch={self.pitch}, yaw={self.yaw}")
+                # print("\n=== FACE TRACK DEBUG ===")
+                # print(f"center = ({cx:.1f}, {cy:.1f})  normalized = ({dx:.3f}, {dy:.3f})")
+                # print(f"dy_err={dy-0.5:.3f}  dx_err={dx-0.5:.3f}")
+                # print(f"before update: pitch={self.pitch}, yaw={self.yaw}")
 
                 # --- pitch (上下) ---
                 if abs(dy - 0.5) > 0.01:

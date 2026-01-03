@@ -104,8 +104,8 @@ class FunASREngine:
 def _read_str_array_param(node: Node, name: str, default: list[str] | None = None) -> list[str]:
     """
     读取字符串数组参数：
-    - YAML: wake_words: ["jack", "杰克"]  ✅
-    - 字符串: wake_words: "jack,杰克"     ✅
+    - YAML: wake_words: ["rebecca", "瑞贝卡"]  ✅
+    - 字符串: wake_words: "rebecca,瑞贝卡"     ✅
     - 未提供：使用 default
     """
     if default is None:
@@ -205,7 +205,7 @@ class SpeechDialogFunASR(Node):
         self.active_extend_s   = float(self.declare_parameter("active_extend_s", 10.0).get_parameter_value().double_value)
 
         # 唤醒词（含常见识别变体）
-        self.wake_words = _read_str_array_param(self, "wake_words", default=["jack"])
+        self.wake_words = _read_str_array_param(self, "wake_words", default=["rebecca", "瑞贝卡"])
         
         # ===== 过滤阈值 =====
         self.min_avg_conf = float(self.declare_parameter("min_avg_conf", 0.70).get_parameter_value().double_value)

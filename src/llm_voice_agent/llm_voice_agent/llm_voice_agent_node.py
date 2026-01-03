@@ -181,14 +181,19 @@ RESUME_KEYWORDS = [
 
 # ===== 25/12/21 L2 系统级唤醒 / 休眠（必须带 jack）=====
 SYSTEM_WAKE_KEYWORDS = [
-    "jack启动系统",
-    "jack唤醒系统",
-    "jack恢复系统",
+    "rebecca启动系统",
+    "rebecca唤醒系统",
+    "rebecca恢复系统",
+    "瑞贝卡启动系统",
+    "瑞贝卡唤醒系统",
+    "瑞贝卡恢复系统",
 ]
 
 SYSTEM_SLEEP_KEYWORDS = [
-    "jack请先休息吧",
-    "jack系统休眠",
+    "rebecca请先休息吧",
+    "rebecca系统休眠",
+    "瑞贝卡请先休息吧",
+    "瑞贝卡系统休眠",
 ]
 
 SYSTEM_WAKE_KEYWORDS = [k.lower() for k in SYSTEM_WAKE_KEYWORDS]
@@ -311,7 +316,7 @@ class LlmVoiceAgent(Node):
         )
         self.chat_system_prompt = self.declare_parameter(
             'chat_system_prompt',
-            '你是中文语音助手，只输出给用户的最终答案：最多两句、合计不超过40字。禁止出现“用户/我需要/首先/接下来/然后/最后/我的计划/思路”等任何元叙述，不得出现<think>标签。'
+            '你叫Rebecca，是中文语音助手，只输出给用户的最终答案：最多两句、合计不超过40字。禁止出现“用户/我需要/首先/接下来/然后/最后/我的计划/思路”等任何元叙述，不得出现<think>标签。'
         ).get_parameter_value().string_value
 
         # ===== 记忆参数（新增）=====
@@ -360,6 +365,7 @@ class LlmVoiceAgent(Node):
         self.system_active = False   # 🚨 新增：系统是否已启动
         # self.sleeping = False   # 💤 25/12/14 新增：语音节点休眠态
         self.l3_muted = False #  25/12/21 新增： L3-State Layer： muted 
+        self._action_paused_face_follow = False   # ✅ 由 L1 pause_for_action 置 True
 
         # —— 稳定参数：输入/输出去重+时间节流 ——
         self._reply_dedup_window = float(self.declare_parameter('reply_dedup_window_s', 2.0).get_parameter_value().double_value)
@@ -409,24 +415,29 @@ class LlmVoiceAgent(Node):
         #self.tts_is_speaking = False
         
         # 11/9 新增：监听 TTS 结束/打断等价完成信号，立刻开窗
-        #self.sub_tts_done = self.create_subscription(
-        #    Bool, '/tts/done', self._on_tts_done, 10
-        #)
+        self.sub_tts_done = self.create_subscription(
+           Bool, '/tts/done', self._on_tts_done, 10
+        )
         # self.pending_wake_activation = False   # 命中唤醒后，等待播报结束再真正开启窗口
         # self._ignore_tts_false_until = 0.0     # 避免“打断导致的短促 False”误触发
         
         # === 唤醒词：由参数/YAML加载 ===
         self.wake_words = list(
-            self.declare_parameter('wake_words', ['jack'])
+            self.declare_parameter('wake_words', ['rebecca', '瑞贝卡'])
                 .get_parameter_value().string_array_value
         )
         self.wake_regex = list(
-            self.declare_parameter('wake_regex', ['j\\s*a\\s*c\\s*k'])
+            self.declare_parameter('wake_regex', [r'r\s*e\s*b\s*e\s*c\s*c\s*a', r'瑞\s*贝\s*卡'])
                 .get_parameter_value().string_array_value
         )
         self.strip_patterns = list(
-            self.declare_parameter('strip_patterns', ['j\\s*a\\s*c\\s*k'])
+            self.declare_parameter('strip_patterns', [r'r\s*e\s*b\s*e\s*c\s*c\s*a', r'瑞\s*贝\s*卡'])
                 .get_parameter_value().string_array_value
+        )
+
+        self.after_tts_window_s = float(
+            self.declare_parameter('after_tts_window_s', 15.0)
+                .get_parameter_value().double_value
         )
 
         # 预编译
@@ -434,9 +445,12 @@ class LlmVoiceAgent(Node):
         self._wake_regex_compiled  = [re.compile(p, re.IGNORECASE) for p in self.wake_regex]
         self._strip_regex_compiled = [re.compile(p, re.IGNORECASE) for p in self.strip_patterns]
         
-        # === 11/24新增：gesture + face_follow 控制 ===
+        # === 25/11/24新增：gesture + face_follow 控制 ===
         self.gesture_pub = self.create_publisher(String, "/gesture/cmd", 10)
         self.face_ctrl_pub = self.create_publisher(String, "/face_follow/control", 10)
+        
+        # === 26/1/3 新增：gesture + face_follow 控制 ===
+        self._task_paused_face_follow = False
         
         # === 语音节点启动 → face_follow 进入“准备状态” ===
         #msg = String()
@@ -444,7 +458,7 @@ class LlmVoiceAgent(Node):
         #self.face_ctrl_pub.publish(msg)
         #self.get_logger().info("📢 已通知 face_follow：voice_ready")
 
-        # === 11/24新增 舵机控制（用于唤醒时回到初始姿态）
+        # === 25/11/24新增 舵机控制（用于唤醒时回到初始姿态）
         from servo_controller_msgs.msg import ServosPosition
         self.joints_pub = self.create_publisher(ServosPosition, "/servo_controller", 10)
         
@@ -488,9 +502,12 @@ class LlmVoiceAgent(Node):
             self.system_active = False
             # self.sleeping = True
 
-            # self.face_ctrl_pub.publish(String(data="pause"))
+            self.face_ctrl_pub.publish(String(data="pause"))
             self._say("好的，我先休息了。")
             self._set_state("system_sleeping")
+
+            self._task_paused_face_follow = False
+            self._action_paused_face_follow = False
 
             self.get_logger().info("🌙 L2 SYSTEM_SLEEP (active → inactive)")
             return
@@ -510,21 +527,21 @@ class LlmVoiceAgent(Node):
             if any(k in norm_raw for k in L3_UNMUTE_KEYWORDS):
                 self.l3_muted = False
 
-                self.get_logger().info(
-                    f"🔊 L3 unmute by command | text='{raw_text}'"
-                )
-
-                msg_ctrl = String()
-                msg_ctrl.data = "resume"
-                self.face_ctrl_pub.publish(msg_ctrl)
-
+                # 解除静音 ≠ 必然恢复 face_follow
+                if self.mode == 'chat' and not self._task_paused_face_follow:
+                    if self._action_paused_face_follow:
+                        self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                        self._action_paused_face_follow = False
+                    else:
+                        self.face_ctrl_pub.publish(String(data="resume"))
                 self._say("好的，我可以说话了。")
                 self._set_state("chat_active")
-
                 return
 
             self.get_logger().debug("🔇 L3 muted，忽略语音输入")
             return
+
+        
 
         # ---- L3 mute：进入静音（系统不休眠）----
         if any(k in norm_raw for k in L3_MUTE_KEYWORDS):
@@ -532,8 +549,9 @@ class LlmVoiceAgent(Node):
 
             # 👉 静音时：暂停 face_follow（但系统仍在线）
             msg_ctrl = String()
-            msg_ctrl.data = "pause"
+            msg_ctrl.data = "pause_for_action"
             self.face_ctrl_pub.publish(msg_ctrl)
+            self._action_paused_face_follow = True   # ✅ 
 
             self._say("好的，我先不说话。")
             self._set_state("chat_muted")
@@ -548,31 +566,46 @@ class LlmVoiceAgent(Node):
         # ---- 语义触发 pause ----
         if any(k in norm_raw for k in PAUSE_KEYWORDS):
             msg_ctrl = String()
-            msg_ctrl.data = "pause"
+            msg_ctrl.data = "pause_for_action"
             self.face_ctrl_pub.publish(msg_ctrl)
+            self._action_paused_face_follow = True     # ✅ 记住是 action freeze
             self._say("好的，我先不动。")
             self.get_logger().info("🎯 L1：语义 pause")
             return
 
         # ---- 语义触发 resume ----
         if any(k in norm_raw for k in RESUME_KEYWORDS):
-            msg_ctrl = String()
-            msg_ctrl.data = "resume"
-            self.face_ctrl_pub.publish(msg_ctrl)
-            self._say("好的，我看着你。")
+            if self.mode == 'chat':
+                if self._action_paused_face_follow:
+                    self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                    self._action_paused_face_follow = False
+                else:
+                    self.face_ctrl_pub.publish(String(data="resume"))
+                self._task_paused_face_follow = False
+                self._say("好的，我看着你。")
+            else:
+                # task 模式不允许跟随
+                self._say("任务模式下不跟随，你说任务即可。")
             self.get_logger().info("🎯 L1：语义 resume")
             return
         
         # =====================================================
+        # 先允许“模式切换口令”绕过 L3 唤醒窗（否则会被 window closed 直接 return）
+        # =====================================================
+        if self._maybe_switch_mode(norm):
+            return
+
+        # =====================================================
         # L3：唤醒词注意力窗口（只控制“是否处理输入”）
         # =====================================================
-        if self.use_wakeword and self.system_active and not self.l3_muted:
+        if (self.mode == 'chat') and self.use_wakeword and self.system_active and not self.l3_muted:
             
             hit = self._is_wake_hit(raw_text)
 
             if hit and (now - self._last_wake_ts) >= self.wake_cooldown_s:
                 
-                first_wake = (now > self._wake_until)
+                # ✅ first_wake 只由“上一次唤醒命中时间”决定，不受 /tts/done 续窗影响
+                first_wake = (now - self._last_wake_ts) > self.wake_window_s
 
                 self.get_logger().info(
                     f"🟢 L3_WAKE detected | "
@@ -591,18 +624,35 @@ class LlmVoiceAgent(Node):
                 )
                 
                 # ✅ 只在“第一次唤醒”时，叫醒机械臂
-                if first_wake:
-                    msg = String()
-                    msg.data = "resume"
-                    self.face_ctrl_pub.publish(msg)
-                    self.get_logger().info(
-                        "🤖 L3_WAKE first_wake=True → "
-                        "face_follow resume issued"
-                    )
+                # if first_wake and self.mode == 'chat':
+                #     if self._action_paused_face_follow:
+                #         self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                #         self._action_paused_face_follow = False   # ✅ 建议补上
+                #         self.get_logger().info("🤖 L3_WAKE → resume_from_action (respect action freeze)")
+                #     else:
+                #         self.face_ctrl_pub.publish(String(data="resume"))
+                #         self.get_logger().info("🤖 L3_WAKE → resume")
+                # ✅ 唤醒时：chat 模式下“按需恢复”
+                
+                # 触发条件：
+                # - 第一次唤醒（first_wake）
+                # - 或者当前处于 action_pause / task_pause（需要恢复）
+                if self.mode == 'chat' and (first_wake or self._action_paused_face_follow or self._task_paused_face_follow):
+
+                    if self._action_paused_face_follow:
+                        self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                        self._action_paused_face_follow = False
+                        self.get_logger().info("🤖 L3_WAKE → resume_from_action (action_paused)")
+                    else:
+                        self.face_ctrl_pub.publish(String(data="resume"))
+                        self.get_logger().info("🤖 L3_WAKE → resume")
+
+                    # ✅ 如果是 task 模式导致的暂停，也一并清掉
+                    self._task_paused_face_follow = False
+
                 else:
                     self.get_logger().debug(
-                        "🤖 L3_WAKE within window → "
-                        "no face_follow action"
+                        "🤖 L3_WAKE: skip face_follow resume (mode!=chat or not needed)"
                     )
 
                 # 可选：打断当前 TTS
@@ -619,6 +669,7 @@ class LlmVoiceAgent(Node):
                     return
 
                 raw_text = stripped
+                norm = norm_text(raw_text)  # ✅ 这里才是正确位置：后续语义识别用去掉唤醒词的文本
                 self.get_logger().debug(f"🧹 L3_WAKE stripped_text='{raw_text}'")
 
             elif hit:
@@ -698,10 +749,18 @@ class LlmVoiceAgent(Node):
     #            pass
     #        self._wake_fallback_timer = None
                 
-    #def _on_tts_done(self, msg: Bool):
-    #    if not msg or not msg.data:
-    #        return
-    #    now = time.time()
+    def _on_tts_done(self, msg: Bool):
+        if not msg or not msg.data:
+            return
+        if not (self.use_wakeword and self.system_active and not self.l3_muted):
+           return
+        now = time.time()
+
+        # ✅ 播放结束后自动续窗（给用户“接话”的时间）
+        # 你可以用参数控制，比如 after_tts_window_s，默认 10~20 秒
+        after = float(self.after_tts_window_s)
+        self._wake_until = max(self._wake_until, now + after)
+        self.get_logger().info(f"🕓 /tts/done → extend wake window to {self._wake_until:.2f} (+{after:.1f}s)")
     
     #    if self.pending_wake_activation:
             # 唤醒词路径：开长窗
@@ -731,7 +790,7 @@ class LlmVoiceAgent(Node):
     
     # =====12/6 新增 环境扫描结果回调 =====
     def _on_env_objects(self, msg):
-        
+        # 只在“用户主动请求环境播报”时，播报一次 env_objects
         # 🚨 休眠状态：禁止任何环境播报
         if not self.system_active:
             return
@@ -817,12 +876,56 @@ class LlmVoiceAgent(Node):
     #    except Exception:
     #        pass
     #    self._wake_fallback_timer = None
+    
+    def _maybe_switch_mode(self, normed: str) -> bool:
+        # start/stop_keywords 里的词本身通常没有标点，这里直接用包含判断即可
+        if any(k in normed for k in self.start_keywords):
+            if self.mode != 'task':
+                self.mode = 'task'
+                self.waiting_confirm = False
+                self.pending_cmd_text = ''
+                self.slots = {'color': None, 'klass': None, 'side': None}
+
+                # ✅ 进入任务模式：暂停 face_follow，避免“看着我”干扰抓取
+                self.face_ctrl_pub.publish(String(data="pause"))
+                self._task_paused_face_follow = True
+                self.get_logger().info("🤖 mode->task: face_follow pause issued")
+
+                self._say("好的，已进入机械臂任务模式。请说你的任务。")
+                self._set_state("mode:task")
+            else:
+                self._say("我已经在机械臂任务模式了。")
+            return True
+
+        if any(k in normed for k in self.stop_keywords):
+            if self.mode != 'chat':
+                self.mode = 'chat'
+                self.waiting_confirm = False
+                self.pending_cmd_text = ''
+                self.slots = {'color': None, 'klass': None, 'side': None}
+
+                # ✅ 退出任务模式：如果是任务模式暂停的，就恢复 face_follow
+                if self._task_paused_face_follow:
+                    if self._action_paused_face_follow:
+                        self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                        self._action_paused_face_follow = False
+                    else:
+                        self.face_ctrl_pub.publish(String(data="resume"))
+                    self._task_paused_face_follow = False
+                    self.get_logger().info("🤖 mode->chat: face_follow resume issued")
+
+                self._say("好的，已退出任务模式，回到聊天模式。")
+                self._set_state("mode:chat")
+            else:
+                self._say("我现在就是聊天模式。")
+            return True
+        return False
 
 
     # ===== Chat 模式 =====
     def _handle_chat(self, norm_text: str, raw_text: str = None):
         if is_smalltalk(norm_text):
-            self._say('在的～🙂 您想聊点什么？')
+            self._say('在的。 您想聊点什么？')
             self._set_state('chat_idle'); return
         
         # === 新增：识别查看面前物体 ===
