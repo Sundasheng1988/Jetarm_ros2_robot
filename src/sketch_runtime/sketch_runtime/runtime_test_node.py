@@ -24,6 +24,9 @@ class RuntimeTestNode(Node):
         self.declare_parameter("approach_z", 0.015)
         self.declare_parameter("lift_height", 0.08)
         self.declare_parameter("auto_confirm", True)
+        self.declare_parameter("run_once", True)
+        self.declare_parameter("interval_sec", 1.0)
+        self.declare_parameter("dry_run", True)
 
         self.test_command = str(
             self.get_parameter("test_command").value
@@ -32,6 +35,9 @@ class RuntimeTestNode(Node):
         self.approach_z = float(self.get_parameter("approach_z").value)
         self.lift_height = float(self.get_parameter("lift_height").value)
         self.auto_confirm = bool(self.get_parameter("auto_confirm").value)
+        self.run_once = bool(self.get_parameter("run_once").value)
+        self.interval_sec = float(self.get_parameter("interval_sec").value)
+        self.dry_run = bool(self.get_parameter("dry_run").value)
 
         # Runtime outputs
         self.pub_state = self.create_publisher(String, "/runtime/state", 10)
@@ -42,20 +48,31 @@ class RuntimeTestNode(Node):
         self.done_pub = self.create_publisher(Bool, "/executor/done", 10)
 
         # Adapter + SkillManager
-        self.adapter = RuntimeAdapter(node=self, dry_run=True)
+        self.adapter = RuntimeAdapter(node=self, dry_run=self.dry_run)
         self.skill_mgr = SkillManager(adapter=self.adapter)
         SkillRegistry.register(PickSkill)
 
+        mode_label = "ONCE" if self.run_once else "LOOP"
+        dry_label = "DRY_RUN" if self.dry_run else "REAL"
         self.get_logger().info("=" * 60)
-        self.get_logger().info(" RuntimeTestNode started — DRY_RUN mode")
+        self.get_logger().info(f" RuntimeTestNode started — {dry_label} — {mode_label}")
         self.get_logger().info(f" test_command  = {self.test_command}")
-        self.get_logger().info(f" hover_height = {self.hover_height}")
-        self.get_logger().info(f" approach_z   = {self.approach_z}")
-        self.get_logger().info(f" lift_height  = {self.lift_height}")
+        self.get_logger().info(f" hover_height  = {self.hover_height}")
+        self.get_logger().info(f" approach_z    = {self.approach_z}")
+        self.get_logger().info(f" lift_height   = {self.lift_height}")
+        self.get_logger().info(f" run_once      = {self.run_once}")
+        self.get_logger().info(f" interval_sec  = {self.interval_sec}")
+        self.get_logger().info(f" dry_run       = {self.dry_run}")
         self.get_logger().info(" Registered skills: " + str(SkillRegistry.list_all()))
         self.get_logger().info("=" * 60)
 
-        self.create_timer(1.0, self.run_test)
+        self._timer = self.create_timer(self.interval_sec, self._on_tick)
+        if self.run_once:
+            self._timer.cancel()
+            self.create_timer(0.5, self.run_test)  # fire once after startup
+
+    def _on_tick(self):
+        self.run_test()
 
     def _emit_state(self, ctx: TaskContext):
         self.pub_state.publish(

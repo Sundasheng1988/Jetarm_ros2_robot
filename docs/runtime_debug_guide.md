@@ -42,7 +42,7 @@ ros2 pkg executables sketch_runtime
 
 ## 3. 启动
 
-### 3.1 启动 runtime_test_node（干运行模式）
+### 3.1 启动 runtime_test_node（单次执行，默认模式）
 
 ```bash
 ros2 run sketch_runtime runtime_test_node
@@ -52,8 +52,11 @@ ros2 run sketch_runtime runtime_test_node
 
 ```
 [INFO] [runtime_test_node]: ============================================================
-[INFO] [runtime_test_node]:  RuntimeTestNode started --- DRY_RUN mode
+[INFO] [runtime_test_node]:  RuntimeTestNode started --- DRY_RUN --- ONCE
 [INFO] [runtime_test_node]:  test_command  = pick red cup to right side
+[INFO] [runtime_test_node]:  run_once      = True
+[INFO] [runtime_test_node]:  interval_sec  = 1.0
+[INFO] [runtime_test_node]:  dry_run       = True
 [INFO] [runtime_test_node]:  Registered skills: ['pick_skill']
 [INFO] [runtime_test_node]: ============================================================
 ```
@@ -67,25 +70,57 @@ ros2 run sketch_runtime runtime_test_node --ros-args \
   -p approach_z:=0.02
 ```
 
-### 3.3 通过 launch 启动
+### 3.3 通过 launch 单次执行
 
 ```bash
-ros2 launch sketch_runtime runtime_test.launch.py
+ros2 launch sketch_runtime runtime_test.launch.py run_once:=true
 ```
 
-自定义指令：
+自定义指令 + 单次：
 ```bash
 ros2 launch sketch_runtime runtime_test.launch.py \
-  test_command:="pick yellow box center"
+  test_command:="pick yellow box center" \
+  run_once:=true
 ```
+
+### 3.4 循环执行模式
+
+```bash
+ros2 launch sketch_runtime runtime_test.launch.py run_once:=false interval_sec:=2.0
+```
+
+每 2 秒执行一次完整 Runtime 链路，持续运行直到 Ctrl+C。
+
+自定义指令 + 循环：
+```bash
+ros2 launch sketch_runtime runtime_test.launch.py \
+  test_command:="grasp blue ball" \
+  run_once:=false \
+  interval_sec:=3.0
+```
+
+### 3.5 非 dry_run 模式（慎用 — 会连接真实硬件）
+
+```bash
+ros2 launch sketch_runtime runtime_test.launch.py dry_run:=false
+```
+
+> ⚠ 仅在确认 servo_controller 和 IK service 安全可用时使用。
 
 ---
 
 ## 4. Topic 监听命令（另开终端）
 
-### 终端 A: 运行测试节点
+### 终端 A: 运行测试节点（单次）
+
 ```bash
-ros2 run sketch_runtime runtime_test_node
+ros2 launch sketch_runtime runtime_test.launch.py run_once:=true
+```
+
+循环模式：
+
+```bash
+ros2 launch sketch_runtime runtime_test.launch.py run_once:=false interval_sec:=2.0
 ```
 
 ### 终端 B: 监听 Runtime state
