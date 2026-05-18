@@ -85,6 +85,9 @@ class GroundingNode(Node):
         self.sub_cmd = self.create_subscription(String, "/parsed_command", self.on_cmd, 10)
         self.sub_wm  = self.create_subscription(String, "/world_model/roi_objects", self.on_world_model, qos_profile_sensor_data)
         self.pub_goal = self.create_publisher(String, "/grounded_goal", 10)
+        self.pub_runtime = None
+        if self.publish_runtime:
+            self.pub_runtime = self.create_publisher(String, "/grounded_task_context", 10)
         self.create_service(Trigger, "/grounding/clear_memory", self.on_reset)
 
         # 参数
@@ -92,11 +95,13 @@ class GroundingNode(Node):
         self.declare_parameter("allow_side_inference", True)        # 允许从原句推断左右
         self.declare_parameter("default_side_when_missing", "")      # 无法确定时的默认槽位（空=不默认）
         self.declare_parameter("raw_text_topic", "/keyboard_input/input")  # ⬅️ 新增：原句话题
+        self.declare_parameter("publish_runtime", False)              # 是否额外发布 runtime TaskContext
 
         self.reuse_last = bool(self.get_parameter("reuse_last_object").value)
         self.allow_side_infer = bool(self.get_parameter("allow_side_inference").value)
         self.default_side_when_missing = str(self.get_parameter("default_side_when_missing").value).strip()
         self.raw_text_topic = str(self.get_parameter("raw_text_topic").value).strip()
+        self.publish_runtime = bool(self.get_parameter("publish_runtime").value)
 
         # 订阅原始输入文本（可选）
         self.last_raw_text: str = ""
@@ -217,6 +222,29 @@ class GroundingNode(Node):
 
         self.pub_goal.publish(String(data=json.dumps(out, ensure_ascii=False)))
         self.get_logger().info(f"🎯 grounded_goal: {out}")
+
+        if self.pub_runtime is not None:
+            rto = None
+            if obj:
+                rto = {
+                    "class_name": (obj.get("class_name") or "").lower(),
+                    "color": (obj.get("color") or "").lower(),
+                    "source": "grounding",
+                    "world_frame": (obj.get("pose") or {}).get("frame", "base"),
+                    "world_x": float((obj.get("pose") or {}).get("xyz", [0,0,0])[0]),
+                    "world_y": float((obj.get("pose") or {}).get("xyz", [0,0,0])[1]),
+                    "world_z": float((obj.get("pose") or {}).get("xyz", [0,0,0])[2]),
+                    "object_id": str(obj.get("id", "")),
+                }
+            rt = {
+                "intent": intent,
+                "parsed_command": data,
+                "target_object": rto,
+                "target_pose": target_pose,
+                "status": out.get("status", ""),
+                "detail": out.get("detail", ""),
+            }
+            self.pub_runtime.publish(String(data=json.dumps(rt, ensure_ascii=False)))
 
     def _select_object(self, cls: Optional[str], color: Optional[str]) -> Optional[Dict[str, Any]]:
         cand: List[Dict[str,Any]] = []

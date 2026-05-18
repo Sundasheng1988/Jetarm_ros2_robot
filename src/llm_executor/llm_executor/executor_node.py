@@ -180,6 +180,13 @@ class GroundExecutorNode(Node):
         self.confirm_str_sub = self.create_subscription(
             String, self.confirm_str_topic, self.on_confirm_str, 10, callback_group=self.cbgroup)
 
+        # 执行完成信号：/executor/done（供 executor_done_sayer 等消费）
+        self.declare_parameter('publish_done', True)
+        self.publish_done = bool(self.get_parameter('publish_done').value)
+        self.done_pub = None
+        if self.publish_done:
+            self.done_pub = self.create_publisher(Bool, '/executor/done', 10)
+
         # 舵机发布（实际执行）
         self.servo_pub = None
         if ServosPosition is not None:
@@ -497,6 +504,9 @@ class GroundExecutorNode(Node):
                 self._exec_gripper(st)
 
         self.get_logger().info("[done] 执行完成")
+
+        if self.done_pub is not None:
+            self.done_pub.publish(Bool(data=True))
 
     def _mk_move(self, name: str, pos: List[float], rpy: List[float],
                  dz: Optional[float] = None, set_z: Optional[float] = None) -> Dict[str, Any]:
