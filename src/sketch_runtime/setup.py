@@ -17,7 +17,6 @@ setup(
     maintainer_email='sundasheng@todo.todo',
     description='Robot Runtime v0.1: TaskContext, TargetObject, Skill system abstraction layer',
     license='Apache-2.0',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'runtime_test_node = sketch_runtime.runtime_test_node:main',
