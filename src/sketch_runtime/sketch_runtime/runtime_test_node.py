@@ -66,13 +66,21 @@ class RuntimeTestNode(Node):
         self.get_logger().info(" Registered skills: " + str(SkillRegistry.list_all()))
         self.get_logger().info("=" * 60)
 
+        self._has_run = False
         self._timer = self.create_timer(self.interval_sec, self._on_tick)
-        if self.run_once:
-            self._timer.cancel()
-            self.create_timer(0.5, self.run_test)  # fire once after startup
 
     def _on_tick(self):
+        if self.run_once and self._has_run:
+            return
+
+        self._has_run = True
         self.run_test()
+
+        if self.run_once:
+            self.get_logger().info(
+                "run_once=True, stopping runtime test timer after first execution"
+            )
+            self._timer.cancel()
 
     def _emit_state(self, ctx: TaskContext):
         self.pub_state.publish(
