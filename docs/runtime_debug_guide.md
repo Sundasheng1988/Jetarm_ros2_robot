@@ -195,19 +195,31 @@ ros2 topic echo /runtime/preview
 }
 ```
 
-**确认执行**（从 `/runtime/preview` 中复制 `task_id`）：
+**确认执行（简单方式 — 推荐）**：
+```bash
+ros2 topic pub --once /runtime/confirm std_msgs/msg/String 'data: "yes"'
+# 支持: yes y true ok confirm go
+```
+
+**取消执行（简单方式）**：
+```bash
+ros2 topic pub --once /runtime/confirm std_msgs/msg/String 'data: "no"'
+# 支持: no n false cancel stop
+```
+
+**确认执行（task_id 精确方式）**：
 ```bash
 ros2 topic pub --once /runtime/confirm std_msgs/msg/String \
   'data: "{\"task_id\":\"task_a1b2c3d4_1715900000\",\"confirm\":true}"'
 ```
 
-**取消执行**：
+**取消执行（task_id 精确方式）**：
 ```bash
 ros2 topic pub --once /runtime/confirm std_msgs/msg/String \
   'data: "{\"task_id\":\"task_a1b2c3d4_1715900000\",\"confirm\":false}"'
 ```
 
-**超时**：`confirm_timeout_sec` 秒内未收到确认即自动取消（默认 30 秒）。
+**超时**：`confirm_timeout_sec` 秒内未收到确认即自动取消（默认 300 秒 = 5 分钟）。
 
 **跳过确认**（直接自动执行）：
 ```bash

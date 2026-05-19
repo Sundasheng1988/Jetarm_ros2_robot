@@ -60,7 +60,7 @@ def generate_launch_description():
         DeclareLaunchArgument("dry_run", default_value="true"),
         DeclareLaunchArgument("run_once", default_value="true"),
         DeclareLaunchArgument("require_confirm", default_value="true"),
-        DeclareLaunchArgument("confirm_timeout_sec", default_value="30.0"),
+        DeclareLaunchArgument("confirm_timeout_sec", default_value="300.0"),
 
         # ── grounding bringup ──
         IncludeLaunchDescription(

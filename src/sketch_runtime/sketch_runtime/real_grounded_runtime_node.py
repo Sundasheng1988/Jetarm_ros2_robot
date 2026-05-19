@@ -23,7 +23,7 @@ class RealGroundedRuntimeNode(Node):
         self.declare_parameter("run_once", True)
         self.declare_parameter("input_topic", "/grounded_task_context")
         self.declare_parameter("require_confirm", True)
-        self.declare_parameter("confirm_timeout_sec", 30.0)
+        self.declare_parameter("confirm_timeout_sec", 300.0)
 
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.run_once = bool(self.get_parameter("run_once").value)
@@ -232,16 +232,34 @@ class RealGroundedRuntimeNode(Node):
         if self._pending_ctx is None:
             return
 
+        raw = (msg.data or "").strip()
+
+        # 1) Try JSON confirm with task_id
         try:
-            data = json.loads(msg.data)
+            data = json.loads(raw)
         except Exception:
-            return
+            data = None
 
-        confirm_id = data.get("task_id", "")
-        if confirm_id != self._pending_ctx.task_id:
-            return
+        if data is not None and isinstance(data, dict) and "task_id" in data:
+            confirm_id = data.get("task_id", "")
+            if confirm_id != self._pending_ctx.task_id:
+                return
+            confirmed = bool(data.get("confirm", False))
+        else:
+            # 2) Simple string confirm — applies to current pending task only
+            lower = raw.lower()
+            CONFIRM = {"yes", "y", "true", "ok", "confirm", "go"}
+            CANCEL  = {"no", "n", "false", "cancel", "stop"}
+            if lower in CONFIRM:
+                confirmed = True
+            elif lower in CANCEL:
+                confirmed = False
+            else:
+                self.get_logger().warn(
+                    f"[confirm] unrecognized input: '{raw}'"
+                )
+                return
 
-        confirmed = bool(data.get("confirm", False))
         ctx = self._pending_ctx
         skill = self._pending_skill
         self._pending_ctx = None
