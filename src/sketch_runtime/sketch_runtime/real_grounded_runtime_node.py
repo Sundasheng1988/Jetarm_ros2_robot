@@ -22,13 +22,22 @@ class RealGroundedRuntimeNode(Node):
         self.declare_parameter("dry_run", True)
         self.declare_parameter("run_once", True)
         self.declare_parameter("input_topic", "/grounded_task_context")
+        self.declare_parameter("require_confirm", True)
+        self.declare_parameter("confirm_timeout_sec", 30.0)
 
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.run_once = bool(self.get_parameter("run_once").value)
         self.input_topic = str(self.get_parameter("input_topic").value)
+        self.require_confirm = bool(self.get_parameter("require_confirm").value)
+        self.confirm_timeout_sec = float(
+            self.get_parameter("confirm_timeout_sec").value
+        )
 
         self._has_run = False
         self._busy = False
+        self._pending_ctx = None
+        self._pending_skill = None
+        self._pending_deadline = 0.0
 
         self.pub_state = self.create_publisher(String, "/runtime/state", 10)
         self.pub_log = self.create_publisher(String, "/runtime/log", 10)
@@ -36,6 +45,9 @@ class RealGroundedRuntimeNode(Node):
             String, "/runtime/execution_result", 10
         )
         self.done_pub = self.create_publisher(Bool, "/executor/done", 10)
+        self.preview_pub = self.create_publisher(
+            String, "/runtime/preview", 10
+        )
 
         self.adapter = RuntimeAdapter(node=self, dry_run=self.dry_run)
         self.skill_mgr = SkillManager(adapter=self.adapter)
@@ -44,15 +56,27 @@ class RealGroundedRuntimeNode(Node):
         self.create_subscription(
             String, self.input_topic, self._on_grounded_task, 10
         )
+        self.create_subscription(
+            String, "/runtime/confirm", self._on_confirm, 10
+        )
+
+        self._confirm_timer = self.create_timer(0.5, self._check_confirm_timeout)
 
         mode_label = "ONCE" if self.run_once else "CONTINUOUS"
         dry_label = "DRY_RUN" if self.dry_run else "REAL_HARDWARE"
+        confirm_label = "CONFIRM_REQUIRED" if self.require_confirm else "AUTO_EXECUTE"
         self.get_logger().info("=" * 60)
-        self.get_logger().info(f" RealGroundedRuntimeNode — {dry_label} — {mode_label}")
-        self.get_logger().info(f" input_topic   = {self.input_topic}")
-        self.get_logger().info(f" dry_run       = {self.dry_run}")
-        self.get_logger().info(f" run_once      = {self.run_once}")
-        self.get_logger().info(" Registered skills: " + str(SkillRegistry.list_all()))
+        self.get_logger().info(
+            f" RealGroundedRuntimeNode — {dry_label} — {mode_label} — {confirm_label}"
+        )
+        self.get_logger().info(f" input_topic         = {self.input_topic}")
+        self.get_logger().info(f" dry_run             = {self.dry_run}")
+        self.get_logger().info(f" run_once            = {self.run_once}")
+        self.get_logger().info(f" require_confirm     = {self.require_confirm}")
+        self.get_logger().info(f" confirm_timeout_sec = {self.confirm_timeout_sec}")
+        self.get_logger().info(
+            " Registered skills: " + str(SkillRegistry.list_all())
+        )
         if not self.dry_run:
             self.get_logger().warn(
                 "=" * 60 + "\n"
@@ -60,7 +84,15 @@ class RealGroundedRuntimeNode(Node):
                 " Confirm servo_controller and IK service are available and safe.\n"
                 + "=" * 60
             )
+        if self.require_confirm:
+            self.get_logger().info(
+                " Confirm via: ros2 topic pub --once /runtime/confirm "
+                "std_msgs/msg/String 'data: "
+                "'{\"task_id\":\"<ID>\",\"confirm\":true}' '"
+            )
         self.get_logger().info("=" * 60)
+
+    # ── publishers ──
 
     def _emit_state(self, ctx: TaskContext):
         self.pub_state.publish(
@@ -77,12 +109,41 @@ class RealGroundedRuntimeNode(Node):
         }
         self.pub_log.publish(String(data=json.dumps(msg, ensure_ascii=False)))
 
+    def _publish_preview(self, ctx: TaskContext):
+        preview = {
+            "task_id": ctx.task_id,
+            "intent": (ctx.parsed_command or {}).get("action", ""),
+            "selected_skill": ctx.selected_skill,
+            "target_object": ctx.target_object,
+            "target_pose": ctx.target_pose,
+            "dry_run": self.dry_run,
+            "require_confirm": self.require_confirm,
+            "summary": (
+                f"{ctx.selected_skill}: "
+                f"{ctx.target_object.get('class_name','?') if ctx.target_object else '?'}"
+                f" ({ctx.target_object.get('color','?') if ctx.target_object else '?'})"
+            ),
+            "status": "waiting_confirm",
+            "timestamp": time.time(),
+        }
+        self.preview_pub.publish(
+            String(data=json.dumps(preview, ensure_ascii=False))
+        )
+        self.get_logger().info(
+            f"[preview] task_id={ctx.task_id} skill={ctx.selected_skill} "
+            f"waiting for /runtime/confirm"
+        )
+
+    # ── incoming grounded_task_context ──
+
     def _on_grounded_task(self, msg: String):
         if self.run_once and self._has_run:
             return
 
-        if self._busy:
-            self.get_logger().warn("busy — skipping incoming grounded_task_context")
+        if self._busy or self._pending_ctx is not None:
+            self.get_logger().warn(
+                "busy or pending confirm — skipping incoming grounded_task_context"
+            )
             return
 
         try:
@@ -91,15 +152,6 @@ class RealGroundedRuntimeNode(Node):
             self.get_logger().error(f"JSON parse failed: {e}")
             return
 
-        self._busy = True
-        try:
-            self._execute_task(data)
-        except Exception as e:
-            self.get_logger().error(f"Task execution exception: {e}")
-        finally:
-            self._busy = False
-
-    def _execute_task(self, data: dict):
         status = data.get("status", "")
         if status not in ("ok", ""):
             self.get_logger().info(f"skip — status={status}")
@@ -116,10 +168,7 @@ class RealGroundedRuntimeNode(Node):
 
         self.get_logger().info(f"\n[>] received intent={intent}")
 
-        # Build TaskContext
-        ctx = TaskBuilder.from_parsed_command(
-            parsed, source="grounding"
-        )
+        ctx = TaskBuilder.from_parsed_command(parsed, source="grounding")
         grounded = {
             "intent": intent,
             "object_hints": {
@@ -133,7 +182,7 @@ class RealGroundedRuntimeNode(Node):
                     tgt_obj.get("world_y", 0.0),
                     tgt_obj.get("world_z", 0.0),
                 ],
-                "rpy": [0.0, 0.0, 0.0],
+                "rpy": [0.0, 0.0, tgt_obj.get("world_yaw", 0.0)],
             },
             "target_pose": tgt_pose,
             "status": "ok",
@@ -142,7 +191,6 @@ class RealGroundedRuntimeNode(Node):
         self._emit_state(ctx)
         self._emit_log(ctx, "grounded_task_received", {"intent": intent})
 
-        # Skill selection
         skill_name = self.skill_mgr.select(ctx)
         self.get_logger().info(f"  skill = {skill_name}")
         if skill_name == "unknown_skill":
@@ -152,67 +200,145 @@ class RealGroundedRuntimeNode(Node):
         ctx.transition(TaskState.SKILL_SELECTED)
         self._emit_state(ctx)
 
-        # Instantiate
         skill = self.skill_mgr.instantiate(skill_name)
         if skill is None:
             self.get_logger().error("skill instantiation returned None")
             return
 
-        # Precheck
         pre = skill.precheck(ctx)
         if pre is not None:
             self.get_logger().warn(f"precheck blocked: {pre.reason}")
             self._emit_log(ctx, "precheck_failed", pre.to_dict())
             return
 
-        # Execute
-        ctx.transition(TaskState.EXECUTING)
-        self._emit_state(ctx)
-        self._emit_log(ctx, "execution_started", {"skill": skill_name})
-
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(skill.execute(ctx))
-        except Exception as e:
-            result = ExecutionResult(
-                task_id=ctx.task_id,
-                success=False,
-                reason="exception",
-                error_detail=str(e),
-            )
-        finally:
-            loop.close()
-
-        # Postcheck + cleanup
-        result = skill.postcheck(ctx, result)
-        skill.cleanup(ctx)
-
-        if result.success:
-            ctx.transition(TaskState.DONE)
-        else:
-            ctx.transition(TaskState.FAILED)
-        ctx.result = result.to_dict()
-        self._emit_state(ctx)
-        self._emit_log(ctx, "execution_result", result.to_dict())
-        self.pub_result.publish(
-            String(data=json.dumps(result.to_dict(), ensure_ascii=False))
-        )
-        self.done_pub.publish(Bool(data=result.success))
-
-        self.get_logger().info(
-            f"[done] success={result.success} reason={result.reason} "
-            f"elapsed_ms={ctx.elapsed_ms:.1f}"
-        )
-
-        # Adapter call log
-        for i, call in enumerate(self.adapter._call_log[-8:]):
+        if self.require_confirm:
+            self._publish_preview(ctx)
+            ctx.transition(TaskState.WAITING_CONFIRM)
+            self._emit_state(ctx)
+            self._pending_ctx = ctx
+            self._pending_skill = skill
+            self._pending_deadline = time.time() + self.confirm_timeout_sec
             self.get_logger().info(
-                f"  adapter[{i+1}] {call['method']}: "
-                f"{json.dumps(call['args'], ensure_ascii=False)}"
+                f"[confirm] waiting for /runtime/confirm "
+                f"(timeout={self.confirm_timeout_sec}s)"
+            )
+        else:
+            self._publish_preview(ctx)
+            self._execute_skill(ctx, skill)
+
+    # ── confirm ──
+
+    def _on_confirm(self, msg: String):
+        if self._pending_ctx is None:
+            return
+
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+
+        confirm_id = data.get("task_id", "")
+        if confirm_id != self._pending_ctx.task_id:
+            return
+
+        confirmed = bool(data.get("confirm", False))
+        ctx = self._pending_ctx
+        skill = self._pending_skill
+        self._pending_ctx = None
+        self._pending_skill = None
+
+        if confirmed:
+            self.get_logger().info(
+                f"[confirm] task_id={ctx.task_id} CONFIRMED — executing"
+            )
+            self._emit_log(ctx, "user_confirmed")
+            self._execute_skill(ctx, skill)
+        else:
+            self.get_logger().info(
+                f"[confirm] task_id={ctx.task_id} CANCELLED by user"
+            )
+            self._cancel_task(ctx)
+
+    def _check_confirm_timeout(self):
+        if self._pending_ctx is None:
+            return
+        if time.time() < self._pending_deadline:
+            return
+
+        ctx = self._pending_ctx
+        self._pending_ctx = None
+        self._pending_skill = None
+        self.get_logger().warn(
+            f"[confirm] task_id={ctx.task_id} TIMEOUT after "
+            f"{self.confirm_timeout_sec}s"
+        )
+        self._cancel_task(ctx)
+
+    def _cancel_task(self, ctx: TaskContext):
+        ctx.transition(TaskState.CANCELLED)
+        ctx.result = {
+            "success": False,
+            "reason": "cancelled_by_user",
+            "evidence": {},
+        }
+        self._emit_state(ctx)
+        self._emit_log(ctx, "execution_cancelled", {"reason": "user_cancelled_or_timeout"})
+        self.done_pub.publish(Bool(data=False))
+        self.get_logger().info(f"[cancel] task_id={ctx.task_id}")
+        self._has_run = True
+
+    # ── execution ──
+
+    def _execute_skill(self, ctx: TaskContext, skill):
+        self._busy = True
+        try:
+            ctx.transition(TaskState.EXECUTING)
+            self._emit_state(ctx)
+            self._emit_log(ctx, "execution_started", {"skill": ctx.selected_skill})
+
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(skill.execute(ctx))
+            except Exception as e:
+                result = ExecutionResult(
+                    task_id=ctx.task_id,
+                    success=False,
+                    reason="exception",
+                    error_detail=str(e),
+                )
+            finally:
+                loop.close()
+
+            result = skill.postcheck(ctx, result)
+            skill.cleanup(ctx)
+
+            if result.success:
+                ctx.transition(TaskState.DONE)
+            else:
+                ctx.transition(TaskState.FAILED)
+            ctx.result = result.to_dict()
+            self._emit_state(ctx)
+            self._emit_log(ctx, "execution_result", result.to_dict())
+            self.pub_result.publish(
+                String(data=json.dumps(result.to_dict(), ensure_ascii=False))
+            )
+            self.done_pub.publish(Bool(data=result.success))
+
+            self.get_logger().info(
+                f"[done] success={result.success} reason={result.reason} "
+                f"elapsed_ms={ctx.elapsed_ms:.1f}"
             )
 
-        self._has_run = True
-        self.adapter._call_log.clear()
+            for i, call in enumerate(self.adapter._call_log[-8:]):
+                self.get_logger().info(
+                    f"  adapter[{i+1}] {call['method']}: "
+                    f"{json.dumps(call['args'], ensure_ascii=False)}"
+                )
+
+            self._has_run = True
+            self.adapter._call_log.clear()
+        finally:
+            self._busy = False
 
 
 def main(args=None):

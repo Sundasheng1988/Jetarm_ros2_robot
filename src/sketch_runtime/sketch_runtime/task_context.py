@@ -10,6 +10,7 @@ class TaskState(Enum):
     PARSED = "parsed"
     GROUNDED = "grounded"
     SKILL_SELECTED = "skill_selected"
+    WAITING_CONFIRM = "waiting_confirm"
     EXECUTING = "executing"
     DONE = "done"
     FAILED = "failed"

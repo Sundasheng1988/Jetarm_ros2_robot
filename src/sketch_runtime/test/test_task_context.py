@@ -10,6 +10,7 @@ class TestTaskState:
         assert TaskState.PARSED.value == "parsed"
         assert TaskState.GROUNDED.value == "grounded"
         assert TaskState.SKILL_SELECTED.value == "skill_selected"
+        assert TaskState.WAITING_CONFIRM.value == "waiting_confirm"
         assert TaskState.EXECUTING.value == "executing"
         assert TaskState.DONE.value == "done"
         assert TaskState.FAILED.value == "failed"

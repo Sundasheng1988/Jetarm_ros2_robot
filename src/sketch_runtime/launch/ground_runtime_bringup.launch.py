@@ -32,6 +32,8 @@ def generate_launch_description():
 
     dry_run = LaunchConfiguration("dry_run")
     run_once = LaunchConfiguration("run_once")
+    require_confirm = LaunchConfiguration("require_confirm")
+    confirm_timeout_sec = LaunchConfiguration("confirm_timeout_sec")
 
     return LaunchDescription([
         # ── grounding pipeline args (passthrough) ──
@@ -57,6 +59,8 @@ def generate_launch_description():
         # ── runtime node args ──
         DeclareLaunchArgument("dry_run", default_value="true"),
         DeclareLaunchArgument("run_once", default_value="true"),
+        DeclareLaunchArgument("require_confirm", default_value="true"),
+        DeclareLaunchArgument("confirm_timeout_sec", default_value="30.0"),
 
         # ── grounding bringup ──
         IncludeLaunchDescription(
@@ -86,6 +90,8 @@ def generate_launch_description():
                 "dry_run": dry_run,
                 "run_once": run_once,
                 "input_topic": "/grounded_task_context",
+                "require_confirm": require_confirm,
+                "confirm_timeout_sec": confirm_timeout_sec,
             }],
         ),
     ])

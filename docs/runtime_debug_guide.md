@@ -170,6 +170,59 @@ ros2 topic echo /grounded_task_context
 }
 ```
 
+### 3.8 Preview / Confirm 安全层（默认开启）
+
+`real_grounded_runtime_node` 在 `require_confirm=True`（默认）时，接收到 `/grounded_task_context` 后会先发布预览，等待用户确认后才执行 Skill。
+
+**监听预览**：
+```bash
+ros2 topic echo /runtime/preview
+```
+
+期望输出：
+```json
+{
+  "task_id": "task_a1b2c3d4_1715900000",
+  "intent": "pick",
+  "selected_skill": "pick_skill",
+  "target_object": {"class_name":"cup","color":"red",...},
+  "target_pose": {...},
+  "dry_run": true,
+  "require_confirm": true,
+  "summary": "pick_skill: cup (red)",
+  "status": "waiting_confirm",
+  "timestamp": 1715900005.0
+}
+```
+
+**确认执行**（从 `/runtime/preview` 中复制 `task_id`）：
+```bash
+ros2 topic pub --once /runtime/confirm std_msgs/msg/String \
+  'data: "{\"task_id\":\"task_a1b2c3d4_1715900000\",\"confirm\":true}"'
+```
+
+**取消执行**：
+```bash
+ros2 topic pub --once /runtime/confirm std_msgs/msg/String \
+  'data: "{\"task_id\":\"task_a1b2c3d4_1715900000\",\"confirm\":false}"'
+```
+
+**超时**：`confirm_timeout_sec` 秒内未收到确认即自动取消（默认 30 秒）。
+
+**跳过确认**（直接自动执行）：
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py require_confirm:=false
+```
+
+**完整安全流**：
+```
+/grounded_task_context
+  → /runtime/preview  (waiting_confirm)
+  → /runtime/confirm  (用户确认)
+  → Skill execution   (dry_run)
+  → /executor/done
+```
+
 ---
 
 ## 4. Topic 监听命令（另开终端）
