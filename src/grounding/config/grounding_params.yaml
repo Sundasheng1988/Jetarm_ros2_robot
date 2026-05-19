@@ -1,6 +1,7 @@
 grounding_node:
   ros__parameters:
     reuse_last_object: false
+    publish_runtime: true
 
     place_map.left_side.frame: "table"
     place_map.left_side.xyz:   [-0.25,  0.20, 0.02]

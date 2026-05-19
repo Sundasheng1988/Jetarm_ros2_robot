@@ -9,7 +9,10 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/runtime_test.launch.py']),
+        ('share/' + package_name + '/launch', [
+            'launch/runtime_test.launch.py',
+            'launch/ground_runtime_bringup.launch.py',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'runtime_test_node = sketch_runtime.runtime_test_node:main',
+            'real_grounded_runtime_node = sketch_runtime.real_grounded_runtime_node:main',
         ],
     },
 )

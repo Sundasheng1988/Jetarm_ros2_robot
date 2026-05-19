@@ -107,6 +107,69 @@ ros2 launch sketch_runtime runtime_test.launch.py dry_run:=false
 
 > ⚠ 仅在确认 servo_controller 和 IK service 安全可用时使用。
 
+### 3.6 集成 ground + runtime bringup（推荐调试方式）
+
+一次性启动 parser + grounding + world_model + runtime 桥接节点：
+
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py
+```
+
+默认参数：`dry_run:=true` `run_once:=true` `use_dummy_wm:=true`
+
+自定义指令 + 单次执行：
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
+  use_dummy_wm:=true \
+  dry_run:=true \
+  run_once:=true
+```
+
+> 与 `ground_bringup.launch.py` 的区别：
+> - `ground_bringup.launch.py` 只启动 parser / grounding / world_model
+> - `ground_runtime_bringup.launch.py` 额外启动 `real_grounded_runtime_node`，将 grounding 输出接入 Runtime Skill 执行链
+
+### 3.7 启用 publish_runtime（grounding → Runtime 桥接）
+
+`real_grounded_runtime_node` 订阅 `/grounded_task_context`，该 topic 由 `grounding_node` 在 `publish_runtime=true` 时发布。
+
+**方式 1 — grounding_params.yaml（推荐，已默认开启）**：
+```yaml
+# grounding/config/grounding_params.yaml
+grounding_node:
+  ros__parameters:
+    publish_runtime: true    # ← 已在 Sprint 4.1 设为 true
+```
+
+**方式 2 — 命令行覆盖**：
+```bash
+ros2 run sketch_runtime real_grounded_runtime_node --ros-args -p dry_run:=true
+# 另开终端：
+ros2 run grounding grounding_node --ros-args -p publish_runtime:=true
+```
+
+**方式 3 — 带参数的 launch**：
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py
+# grounding_params.yaml 已默认 publish_runtime:=true
+```
+
+**验证发布**：
+```bash
+ros2 topic echo /grounded_task_context
+```
+
+期望看到 grounding 匹配到对象后发布的 JSON:
+```json
+{
+  "intent": "pick",
+  "parsed_command": {"action":"pick","from":"red_cup",...},
+  "target_object": {"class_name":"cup","color":"red","world_x":0.15,...},
+  "target_pose": {"frame":"table","xyz":[0.2,-0.15,0.02],...},
+  "status": "ok"
+}
+```
+
 ---
 
 ## 4. Topic 监听命令（另开终端）
