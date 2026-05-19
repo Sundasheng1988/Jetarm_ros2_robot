@@ -85,9 +85,6 @@ class GroundingNode(Node):
         self.sub_cmd = self.create_subscription(String, "/parsed_command", self.on_cmd, 10)
         self.sub_wm  = self.create_subscription(String, "/world_model/roi_objects", self.on_world_model, qos_profile_sensor_data)
         self.pub_goal = self.create_publisher(String, "/grounded_goal", 10)
-        self.pub_runtime = None
-        if self.publish_runtime:
-            self.pub_runtime = self.create_publisher(String, "/grounded_task_context", 10)
         self.create_service(Trigger, "/grounding/clear_memory", self.on_reset)
 
         # 参数
@@ -102,6 +99,10 @@ class GroundingNode(Node):
         self.default_side_when_missing = str(self.get_parameter("default_side_when_missing").value).strip()
         self.raw_text_topic = str(self.get_parameter("raw_text_topic").value).strip()
         self.publish_runtime = bool(self.get_parameter("publish_runtime").value)
+
+        self.pub_runtime = None
+        if self.publish_runtime:
+            self.pub_runtime = self.create_publisher(String, "/grounded_task_context", 10)
 
         # 订阅原始输入文本（可选）
         self.last_raw_text: str = ""
