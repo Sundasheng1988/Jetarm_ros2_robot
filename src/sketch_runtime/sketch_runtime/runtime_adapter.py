@@ -1,4 +1,6 @@
 from typing import List, Optional
+import asyncio
+import time as _time
 
 try:
     from kinematics_msgs.srv import SetRobotPose as IKSetRobotPose
@@ -27,6 +29,10 @@ class RuntimeAdapter:
             self._ik_cli = node.create_client(
                 IKSetRobotPose, "/kinematics/set_pose_target"
             )
+            if self._ik_cli.wait_for_service(timeout_sec=3.0):
+                self._log("IK service /kinematics/set_pose_target ready")
+            else:
+                self._log("WARN: IK service /kinematics/set_pose_target not ready after 3s")
 
     def _log(self, msg: str):
         if self._log_fn:
@@ -59,16 +65,21 @@ class RuntimeAdapter:
         resolution: float = 1.0,
         timeout_sec: float = 8.0,
     ) -> Optional[List[int]]:
+        if pitch_range is None:
+            pitch_range = [-90.0, 90.0]
+
         self._log(
             f"ik_solve position={position} rpy={rpy} pitch={pitch} "
-            f"resolution={resolution} mode={self.mode_summary()}"
+            f"pitch_range={pitch_range} resolution={resolution} "
+            f"mode={self.mode_summary()}"
         )
 
         if self.dry_run:
             result = [500, 500, 500, 500, 500]
             self._record("ik_solve", {
                 "position": position, "rpy": rpy or [0, 0, 0],
-                "pitch": pitch, "resolution": resolution,
+                "pitch": pitch, "pitch_range": pitch_range,
+                "resolution": resolution,
             }, result)
             return result
 
@@ -88,47 +99,84 @@ class RuntimeAdapter:
             }, error=msg)
             return None
 
-        try:
-            req = IKSetRobotPose.Request()
-            req.position = [float(p) for p in position[:3]]
-            req.pitch = float(pitch)
-            req.pitch_range = list(pitch_range or [-180.0, 180.0])
-            req.resolution = float(resolution)
-
-            future = self._ik_cli.call_async(req)
-            import time as _time
-            deadline = _time.time() + timeout_sec
-            import rclpy
-            while rclpy.ok() and _time.time() < deadline:
-                if future.done():
-                    res = future.result()
-                    if res is not None and res.success:
-                        pulses = []
-                        for attr in ("pulse", "pulses", "positions"):
-                            val = getattr(res, attr, None)
-                            if val:
-                                pulses = [int(p) for p in list(val)]
-                                break
-                        if pulses:
-                            self._record("ik_solve", {
-                                "position": position, "rpy": rpy or [0, 0, 0],
-                                "pitch": pitch, "resolution": resolution,
-                            }, pulses)
-                            self._log(f"ik_solve OK → pulses={pulses}")
-                            return pulses
-                    msg = f"IK service returned success=false or None"
-                    self._log(f"FAIL: {msg}")
-                    self._record("ik_solve", {
-                        "position": position, "rpy": rpy or [0, 0, 0],
-                    }, error=msg)
-                    return None
-                rclpy.spin_once(self._node, timeout_sec=0.02)
-            msg = f"IK timeout after {timeout_sec}s"
+        if not self._ik_cli.service_is_ready():
+            msg = "IK service /kinematics/set_pose_target not ready"
             self._log(f"FAIL: {msg}")
             self._record("ik_solve", {
                 "position": position, "rpy": rpy or [0, 0, 0],
             }, error=msg)
             return None
+
+        try:
+            req = IKSetRobotPose.Request()
+            req.position = [float(p) for p in position[:3]]
+            req.pitch = float(pitch)
+            req.pitch_range = [float(v) for v in pitch_range[:2]]
+            req.resolution = float(resolution)
+
+            self._log(
+                f"  IK request → position={req.position} pitch={req.pitch} "
+                f"pitch_range={req.pitch_range} resolution={req.resolution}"
+            )
+
+            future = self._ik_cli.call_async(req)
+            import rclpy
+            deadline = _time.time() + timeout_sec
+            while rclpy.ok() and not future.done() and _time.time() < deadline:
+                rclpy.spin_once(self._node, timeout_sec=0.02)
+                await asyncio.sleep(0)
+
+            if not future.done():
+                msg = f"IK timeout after {timeout_sec}s"
+                self._log(f"FAIL: {msg}  target={req.position}")
+                self._record("ik_solve", {
+                    "position": list(req.position), "pitch": pitch,
+                    "pitch_range": pitch_range,
+                }, error=msg)
+                return None
+
+            res = future.result()
+            if res is None:
+                msg = "IK service returned None"
+                self._log(f"FAIL: {msg}")
+                self._record("ik_solve", {
+                    "position": list(req.position), "pitch": pitch,
+                }, error=msg)
+                return None
+
+            self._log(
+                f"  IK response → success={res.success}"
+                + (f" pulse={list(res.pulse)}" if hasattr(res, 'pulse') and res.pulse else "")
+                + (f" current_pulse={list(res.current_pulse)}" if hasattr(res, 'current_pulse') and res.current_pulse else "")
+                + (f" rpy={list(res.rpy)}" if hasattr(res, 'rpy') and res.rpy else "")
+                + (f" min_variation={res.min_variation}" if hasattr(res, 'min_variation') else "")
+            )
+
+            if not res.success:
+                msg = "IK service returned success=false"
+                self._log(f"FAIL: {msg}")
+                self._record("ik_solve", {
+                    "position": list(req.position), "pitch": pitch,
+                    "pitch_range": pitch_range,
+                }, error=msg)
+                return None
+
+            if hasattr(res, 'pulse') and res.pulse:
+                pulses = [int(p) for p in list(res.pulse)]
+                self._record("ik_solve", {
+                    "position": list(req.position), "pitch": pitch,
+                    "pitch_range": pitch_range, "resolution": resolution,
+                }, {"pulse": pulses, "rpy": list(res.rpy) if hasattr(res, 'rpy') and res.rpy else None})
+                self._log(f"ik_solve OK → pulses={pulses}")
+                return pulses
+
+            msg = "IK response has no pulse field"
+            self._log(f"FAIL: {msg}")
+            self._record("ik_solve", {
+                "position": list(req.position), "pitch": pitch,
+            }, error=msg)
+            return None
+
         except Exception as e:
             msg = f"IK exception: {e}"
             self._log(f"FAIL: {msg}")
