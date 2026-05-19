@@ -126,7 +126,7 @@ class TestBaseSkillLifecycle:
         adapter = RuntimeAdapter(dry_run=True)
         mgr = SkillManager(adapter=adapter)
         skill = mgr.instantiate("dummy_skill")
-        ctx = TaskContext(target_object={"pose": {"xyz": [0, 0, 0]}})
+        ctx = TaskContext(target_object={"source_pose": {"xyz": [0, 0, 0]}})
         result = skill.precheck(ctx)
         assert result is None
 
@@ -187,7 +187,7 @@ class TestPickSkill:
             user_command="pick red cup",
             parsed_command={"action": "pick", "from": "red_cup"},
             target_object={
-                "pose": {
+                "source_pose": {
                     "frame": "table",
                     "xyz": [0.15, -0.10, 0.03],
                     "rpy": [0.0, 0.0, 1.57],
@@ -222,7 +222,7 @@ class TestPickSkill:
         ctx = TaskContext(
             parsed_command={"action": "pick"},
             target_object={
-                "pose": {"xyz": [1, 2, 3], "rpy": [0, 0, 0]}
+                "source_pose": {"xyz": [1, 2, 3], "rpy": [0, 0, 0]}
             },
             skill_params={
                 "hover_height": 0.12,

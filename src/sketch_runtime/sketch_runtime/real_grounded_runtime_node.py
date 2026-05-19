@@ -24,6 +24,8 @@ class RealGroundedRuntimeNode(Node):
         self.declare_parameter("input_topic", "/grounded_task_context")
         self.declare_parameter("require_confirm", True)
         self.declare_parameter("confirm_timeout_sec", 300.0)
+        self.declare_parameter("enable_real_ik", False)
+        self.declare_parameter("enable_real_servo", False)
 
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.run_once = bool(self.get_parameter("run_once").value)
@@ -32,6 +34,8 @@ class RealGroundedRuntimeNode(Node):
         self.confirm_timeout_sec = float(
             self.get_parameter("confirm_timeout_sec").value
         )
+        self.enable_real_ik = bool(self.get_parameter("enable_real_ik").value)
+        self.enable_real_servo = bool(self.get_parameter("enable_real_servo").value)
 
         self._has_run = False
         self._busy = False
@@ -49,7 +53,11 @@ class RealGroundedRuntimeNode(Node):
             String, "/runtime/preview", 10
         )
 
-        self.adapter = RuntimeAdapter(node=self, dry_run=self.dry_run)
+        self.adapter = RuntimeAdapter(
+            node=self, dry_run=self.dry_run,
+            enable_real_ik=self.enable_real_ik,
+            enable_real_servo=self.enable_real_servo,
+        )
         self.skill_mgr = SkillManager(adapter=self.adapter)
         SkillRegistry.register(PickSkill)
 
@@ -71,9 +79,12 @@ class RealGroundedRuntimeNode(Node):
         )
         self.get_logger().info(f" input_topic         = {self.input_topic}")
         self.get_logger().info(f" dry_run             = {self.dry_run}")
+        self.get_logger().info(f" enable_real_ik      = {self.enable_real_ik}")
+        self.get_logger().info(f" enable_real_servo   = {self.enable_real_servo}")
         self.get_logger().info(f" run_once            = {self.run_once}")
         self.get_logger().info(f" require_confirm     = {self.require_confirm}")
         self.get_logger().info(f" confirm_timeout_sec = {self.confirm_timeout_sec}")
+        self.get_logger().info(f" adapter mode        = {self.adapter.mode_summary()}")
         self.get_logger().info(
             " Registered skills: " + str(SkillRegistry.list_all())
         )

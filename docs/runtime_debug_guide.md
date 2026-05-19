@@ -235,6 +235,43 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py require_confirm:=fal
   → /executor/done
 ```
 
+### 3.9 RuntimeAdapter 安全状态（新增）
+
+`RuntimeAdapter` 通过 3 个参数控制硬件连接级别：
+
+| dry_run | enable_real_ik | enable_real_servo | IK 行为 | Servo 行为 | 用途 |
+|---------|---------------|-------------------|---------|-----------|------|
+| `true` | 忽略 | 忽略 | mock `[500,500,500,500,500]` | 日志不发布 | 默认调试 |
+| `false` | `false` | `false` | 报错: enable_real_ik false | 报错 | 无效组合 |
+| `false` | `true` | `false` | 调用真实 IK 服务，记录脉冲 | 日志不发布 | **IK 验证模式（推荐用于实机调试）** |
+| `false` | `true` | `true` | 调用真实 IK 服务 | 发布到 `/servo_controller` | ⚠ 全实物（慎用） |
+
+**IK 验证模式示例**（调用真实 IK 但不发 servo）：
+
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
+  dry_run:=false \
+  enable_real_ik:=true \
+  enable_real_servo:=false \
+  require_confirm:=true
+```
+
+期望在 adapter 日志中看到真实脉冲值：
+```
+[RuntimeAdapter] ik_solve OK → pulses=[512, 580, 145, 130, 512]
+[RuntimeAdapter] servo_move pulses=[512, 580, 145, 130, 512] duration_ms=2000 mode=LIVE: ik=REAL servo=OFF
+```
+
+**全实物模式**（⚠ 仅确认硬件安全后使用）：
+
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
+  dry_run:=false \
+  enable_real_ik:=true \
+  enable_real_servo:=true \
+  require_confirm:=true
+```
+
 ---
 
 ## 4. Topic 监听命令（另开终端）

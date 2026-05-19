@@ -34,6 +34,8 @@ def generate_launch_description():
     run_once = LaunchConfiguration("run_once")
     require_confirm = LaunchConfiguration("require_confirm")
     confirm_timeout_sec = LaunchConfiguration("confirm_timeout_sec")
+    enable_real_ik = LaunchConfiguration("enable_real_ik")
+    enable_real_servo = LaunchConfiguration("enable_real_servo")
 
     return LaunchDescription([
         # ── grounding pipeline args (passthrough) ──
@@ -61,6 +63,8 @@ def generate_launch_description():
         DeclareLaunchArgument("run_once", default_value="true"),
         DeclareLaunchArgument("require_confirm", default_value="true"),
         DeclareLaunchArgument("confirm_timeout_sec", default_value="300.0"),
+        DeclareLaunchArgument("enable_real_ik", default_value="false"),
+        DeclareLaunchArgument("enable_real_servo", default_value="false"),
 
         # ── grounding bringup ──
         IncludeLaunchDescription(
@@ -92,6 +96,8 @@ def generate_launch_description():
                 "input_topic": "/grounded_task_context",
                 "require_confirm": require_confirm,
                 "confirm_timeout_sec": confirm_timeout_sec,
+                "enable_real_ik": enable_real_ik,
+                "enable_real_servo": enable_real_servo,
             }],
         ),
     ])

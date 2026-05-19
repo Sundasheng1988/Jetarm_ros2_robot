@@ -21,8 +21,17 @@ class PickSkill(BaseSkill):
 
     async def execute(self, ctx: TaskContext) -> ExecutionResult:
         src = ctx.target_object or {}
-        src_pose = src.get("pose", src) if isinstance(src, dict) else {}
-        s_xyz = list(map(float, src_pose.get("xyz", [0.0, 0.0, 0.0])))
+        src_pose = src.get("source_pose", {}) if isinstance(src, dict) else {}
+
+        if not src_pose or not src_pose.get("xyz"):
+            return ExecutionResult(
+                task_id=ctx.task_id,
+                success=False,
+                reason="missing_source_pose",
+                error_detail="target_object has no source_pose with xyz — cannot compute pick trajectory",
+            )
+
+        s_xyz = list(map(float, src_pose["xyz"]))
         s_rpy = list(map(float, src_pose.get("rpy", [0.0, 0.0, 0.0])))
 
         hover_h = self._param(ctx, "hover_height")
