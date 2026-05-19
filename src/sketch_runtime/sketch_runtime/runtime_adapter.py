@@ -23,16 +23,7 @@ class RuntimeAdapter:
             self._log_fn = node.get_logger().info
         self._call_log: List[dict] = []
 
-        self._ik_cli = None
         self._servo_pub = None
-        if node is not None and not dry_run and enable_real_ik and _HAS_IK_SRV:
-            self._ik_cli = node.create_client(
-                IKSetRobotPose, "/kinematics/set_pose_target"
-            )
-            if self._ik_cli.wait_for_service(timeout_sec=3.0):
-                self._log("IK service /kinematics/set_pose_target ready")
-            else:
-                self._log("WARN: IK service /kinematics/set_pose_target not ready after 3s")
 
     def _log(self, msg: str):
         if self._log_fn:
@@ -91,16 +82,8 @@ class RuntimeAdapter:
             }, error=msg)
             return None
 
-        if self._ik_cli is None:
-            msg = "IK client not created (kinematics_msgs unavailable or node is None)"
-            self._log(f"FAIL: {msg}")
-            self._record("ik_solve", {
-                "position": position, "rpy": rpy or [0, 0, 0],
-            }, error=msg)
-            return None
-
-        if not self._ik_cli.service_is_ready():
-            msg = "IK service /kinematics/set_pose_target not ready"
+        if not _HAS_IK_SRV:
+            msg = "kinematics_msgs not available"
             self._log(f"FAIL: {msg}")
             self._record("ik_solve", {
                 "position": position, "rpy": rpy or [0, 0, 0],
@@ -108,77 +91,27 @@ class RuntimeAdapter:
             return None
 
         try:
-            req = IKSetRobotPose.Request()
-            req.position = [float(p) for p in position[:3]]
-            req.pitch = float(pitch)
-            req.pitch_range = [float(v) for v in pitch_range[:2]]
-            req.resolution = float(resolution)
+            self._log(f"  IK request → position={position} pitch={pitch} "
+                      f"pitch_range={pitch_range} resolution={resolution}")
 
-            self._log(
-                f"  IK request → position={req.position} pitch={req.pitch} "
-                f"pitch_range={req.pitch_range} resolution={req.resolution}"
+            # Offload blocking ROS2 service call to a background thread.
+            # Creates a dedicated temporary rclpy node each call to avoid
+            # executor conflicts with the main real_grounded_runtime_node.
+            res = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._call_ik_blocking,
+                    position, pitch, pitch_range, resolution, timeout_sec,
+                ),
+                timeout=timeout_sec + 1.0,
             )
-
-            future = self._ik_cli.call_async(req)
-
-            # RuntimeAdapter currently assumes one IK request at a time.
-            # Spin the ROS2 future in a background thread via asyncio.to_thread()
-            # so the main asyncio event loop stays alive and callbacks can fire.
-            try:
-                res = await asyncio.wait_for(
-                    asyncio.to_thread(self._spin_wait, future, timeout_sec),
-                    timeout=timeout_sec + 1.0,
-                )
-            except asyncio.TimeoutError:
-                msg = f"IK timeout after {timeout_sec}s"
-                self._log(f"FAIL: {msg}  target={req.position}")
-                self._record("ik_solve", {
-                    "position": list(req.position), "pitch": pitch,
-                    "pitch_range": pitch_range,
-                }, error=msg)
-                return None
-
-            if res is None:
-                msg = "IK service returned None"
-                self._log(f"FAIL: {msg}")
-                self._record("ik_solve", {
-                    "position": list(req.position), "pitch": pitch,
-                }, error=msg)
-                return None
-
-            self._log(
-                f"  IK response → success={res.success}"
-                + (f" pulse={list(res.pulse)}" if hasattr(res, 'pulse') and res.pulse else "")
-                + (f" current_pulse={list(res.current_pulse)}" if hasattr(res, 'current_pulse') and res.current_pulse else "")
-                + (f" rpy={list(res.rpy)}" if hasattr(res, 'rpy') and res.rpy else "")
-                + (f" min_variation={res.min_variation}" if hasattr(res, 'min_variation') else "")
-            )
-
-            if not res.success:
-                msg = "IK service returned success=false"
-                self._log(f"FAIL: {msg}")
-                self._record("ik_solve", {
-                    "position": list(req.position), "pitch": pitch,
-                    "pitch_range": pitch_range,
-                }, error=msg)
-                return None
-
-            if hasattr(res, 'pulse') and res.pulse:
-                pulses = [int(p) for p in list(res.pulse)]
-                self._record("ik_solve", {
-                    "position": list(req.position), "pitch": pitch,
-                    "pitch_range": pitch_range, "resolution": resolution,
-                }, {"pulse": pulses, "rpy": list(res.rpy) if hasattr(res, 'rpy') and res.rpy else None})
-                self._log(f"ik_solve OK → pulses={pulses}")
-                return pulses
-
-            msg = "IK response has no pulse field"
-            self._log(f"FAIL: {msg}")
+        except asyncio.TimeoutError:
+            msg = f"IK timeout after {timeout_sec}s"
+            self._log(f"FAIL: {msg}  target={position}")
             self._record("ik_solve", {
-                "position": list(req.position), "pitch": pitch,
+                "position": position, "pitch": pitch,
+                "pitch_range": pitch_range,
             }, error=msg)
             return None
-
         except Exception as e:
             msg = f"IK exception: {e}"
             self._log(f"FAIL: {msg}")
@@ -187,14 +120,78 @@ class RuntimeAdapter:
             }, error=msg)
             return None
 
-    def _spin_wait(self, future, timeout_sec: float):
+        if res is None:
+            msg = "IK service returned None"
+            self._log(f"FAIL: {msg}")
+            self._record("ik_solve", {
+                "position": position, "pitch": pitch,
+            }, error=msg)
+            return None
+
+        self._log(
+            f"  IK response → success={res.success}"
+            + (f" pulse={list(res.pulse)}" if hasattr(res, 'pulse') and res.pulse else "")
+            + (f" rpy={list(res.rpy)}" if hasattr(res, 'rpy') and res.rpy else "")
+        )
+
+        if not res.success:
+            msg = "IK service returned success=false"
+            self._log(f"FAIL: {msg}")
+            self._record("ik_solve", {
+                "position": position, "pitch": pitch,
+                "pitch_range": pitch_range,
+            }, error=msg)
+            return None
+
+        if hasattr(res, 'pulse') and res.pulse:
+            pulses = [int(p) for p in list(res.pulse)]
+            self._record("ik_solve", {
+                "position": position, "pitch": pitch,
+                "pitch_range": pitch_range, "resolution": resolution,
+            }, {"pulse": pulses,
+                "rpy": list(res.rpy) if hasattr(res, 'rpy') and res.rpy else None})
+            self._log(f"ik_solve OK → pulses={pulses}")
+            return pulses
+
+        msg = "IK response has no pulse field"
+        self._log(f"FAIL: {msg}")
+        self._record("ik_solve", {
+            "position": position, "pitch": pitch,
+        }, error=msg)
+        return None
+
+    def _call_ik_blocking(self, position, pitch, pitch_range,
+                          resolution, timeout_sec):
         import rclpy
-        deadline = _time.time() + timeout_sec
-        while rclpy.ok() and not future.done():
-            if _time.time() >= deadline:
+        self._log("  creating temp IK node ...")
+        ik_node = rclpy.create_node("runtime_adapter_ik_client")
+        try:
+            client = ik_node.create_client(
+                IKSetRobotPose, "/kinematics/set_pose_target"
+            )
+            if not client.wait_for_service(timeout_sec=3.0):
+                self._log("  WARN: temp IK client wait_for_service failed")
                 return None
-            rclpy.spin_once(self._node, timeout_sec=0.02)
-        return future.result()
+            self._log("  temp IK client wait_for_service OK")
+
+            req = IKSetRobotPose.Request()
+            req.position = [float(p) for p in position[:3]]
+            req.pitch = float(pitch)
+            req.pitch_range = [float(v) for v in pitch_range[:2]]
+            req.resolution = float(resolution)
+
+            future = client.call_async(req)
+            deadline = _time.time() + timeout_sec
+            while rclpy.ok() and not future.done() and _time.time() < deadline:
+                rclpy.spin_once(ik_node, timeout_sec=0.02)
+
+            if not future.done():
+                self._log(f"  IK future not done after {timeout_sec}s")
+                return None
+
+            return future.result()
+        finally:
+            ik_node.destroy_node()
 
     async def servo_move(self, pulses: List[int], duration_ms: int = 2000):
         self._log(
