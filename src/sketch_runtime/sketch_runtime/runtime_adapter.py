@@ -120,13 +120,16 @@ class RuntimeAdapter:
             )
 
             future = self._ik_cli.call_async(req)
-            import rclpy
-            deadline = _time.time() + timeout_sec
-            while rclpy.ok() and not future.done() and _time.time() < deadline:
-                rclpy.spin_once(self._node, timeout_sec=0.02)
-                await asyncio.sleep(0)
 
-            if not future.done():
+            # RuntimeAdapter currently assumes one IK request at a time.
+            # Spin the ROS2 future in a background thread via asyncio.to_thread()
+            # so the main asyncio event loop stays alive and callbacks can fire.
+            try:
+                res = await asyncio.wait_for(
+                    asyncio.to_thread(self._spin_wait, future, timeout_sec),
+                    timeout=timeout_sec + 1.0,
+                )
+            except asyncio.TimeoutError:
                 msg = f"IK timeout after {timeout_sec}s"
                 self._log(f"FAIL: {msg}  target={req.position}")
                 self._record("ik_solve", {
@@ -135,7 +138,6 @@ class RuntimeAdapter:
                 }, error=msg)
                 return None
 
-            res = future.result()
             if res is None:
                 msg = "IK service returned None"
                 self._log(f"FAIL: {msg}")
@@ -184,6 +186,15 @@ class RuntimeAdapter:
                 "position": position, "rpy": rpy or [0, 0, 0],
             }, error=msg)
             return None
+
+    def _spin_wait(self, future, timeout_sec: float):
+        import rclpy
+        deadline = _time.time() + timeout_sec
+        while rclpy.ok() and not future.done():
+            if _time.time() >= deadline:
+                return None
+            rclpy.spin_once(self._node, timeout_sec=0.02)
+        return future.result()
 
     async def servo_move(self, pulses: List[int], duration_ms: int = 2000):
         self._log(
