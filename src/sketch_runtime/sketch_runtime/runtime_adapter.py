@@ -9,6 +9,14 @@ except Exception:
     IKSetRobotPose = None
     _HAS_IK_SRV = False
 
+try:
+    from servo_controller_msgs.msg import ServosPosition, ServoPosition
+    _HAS_SERVO_MSGS = True
+except Exception:
+    ServosPosition = None
+    ServoPosition = None
+    _HAS_SERVO_MSGS = False
+
 
 class RuntimeAdapter:
     def __init__(self, node=None, dry_run: bool = True,
@@ -204,32 +212,28 @@ class RuntimeAdapter:
         if self.dry_run or not self.enable_real_servo:
             return
 
-        if self._servo_pub is None and self._node is not None:
-            try:
-                from servo_controller_msgs.msg import ServosPosition, ServoPosition
-                self._servo_pub = self._node.create_publisher(
-                    ServosPosition, "/servo_controller", 10
-                )
-            except Exception:
-                pass
-
-        if self._servo_pub is None:
-            self._log("WARN: servo publisher not available, real servo move skipped")
+        if not _HAS_SERVO_MSGS:
+            self._log("WARN: servo_controller_msgs not available, servo move skipped")
             return
 
-        try:
-            from servo_controller_msgs.msg import ServosPosition, ServoPosition
-            msg = ServosPosition()
-            msg.duration = float(duration_ms) / 1000.0
-            msg.position_unit = "pulse"
-            for i, p in enumerate(pulses[:5], start=1):
-                sp = ServoPosition()
-                sp.id = i
-                sp.position = max(0, min(1000, int(p)))
-                msg.position.append(sp)
-            self._servo_pub.publish(msg)
-        except Exception as e:
-            self._log(f"servo_move publish failed: {e}")
+        if self._servo_pub is None and self._node is not None:
+            self._servo_pub = self._node.create_publisher(
+                ServosPosition, "/servo_controller", 10
+            )
+
+        if self._servo_pub is None:
+            self._log("WARN: servo publisher not available, servo move skipped")
+            return
+
+        msg = ServosPosition()
+        msg.duration = float(duration_ms) / 1000.0
+        msg.position_unit = "pulse"
+        for i, p in enumerate(pulses[:5], start=1):
+            sp = ServoPosition()
+            sp.id = i
+            sp.position = float(max(0, min(1000, int(p))))
+            msg.position.append(sp)
+        self._servo_pub.publish(msg)
 
     async def gripper_set(self, servo_id: int, pulse: int, duration_ms: int = 300):
         self._log(
@@ -242,7 +246,27 @@ class RuntimeAdapter:
         if self.dry_run or not self.enable_real_servo:
             return
 
-        await self.servo_move([pulse], duration_ms)
+        if not _HAS_SERVO_MSGS:
+            self._log("WARN: servo_controller_msgs not available, gripper set skipped")
+            return
+
+        if self._servo_pub is None and self._node is not None:
+            self._servo_pub = self._node.create_publisher(
+                ServosPosition, "/servo_controller", 10
+            )
+
+        if self._servo_pub is None:
+            self._log("WARN: servo publisher not available, gripper set skipped")
+            return
+
+        msg = ServosPosition()
+        msg.duration = float(duration_ms) / 1000.0
+        msg.position_unit = "pulse"
+        sp = ServoPosition()
+        sp.id = servo_id
+        sp.position = float(max(0, min(1000, int(pulse))))
+        msg.position = [sp]
+        self._servo_pub.publish(msg)
 
     async def get_joint_state(self):
         self._log(f"get_joint_state mode={self.mode_summary()}")
