@@ -1,6 +1,8 @@
 from sketch_runtime.base_skill import BaseSkill
 from sketch_runtime.task_context import TaskContext
 from sketch_runtime.execution_result import ExecutionResult
+from sketch_runtime.actions import MoveAction, GripperAction
+from sketch_runtime.action_executor import ActionExecutor
 
 
 class PickSkill(BaseSkill):
@@ -14,6 +16,7 @@ class PickSkill(BaseSkill):
         "grip_close_pulse": 700,
         "move_duration_ms": 2000,
         "gripper_id": 10,
+        "execution_stage": "full_pick",
     }
 
     def _param(self, ctx: TaskContext, key: str):
@@ -41,80 +44,29 @@ class PickSkill(BaseSkill):
         grip_close = self._param(ctx, "grip_close_pulse")
         gripper_id = self._param(ctx, "gripper_id")
         move_dur = self._param(ctx, "move_duration_ms")
+        stage = self._param(ctx, "execution_stage")
 
-        ev = {
-            "ik_calls": 0,
-            "ik_failures": 0,
-            "steps_completed": 0,
-            "steps_total": 5,
-        }
+        if stage == "hover_only":
+            actions = [
+                MoveAction("hover_source",
+                           [s_xyz[0], s_xyz[1], s_xyz[2] + hover_h],
+                           s_rpy, duration_ms=move_dur),
+            ]
+        else:  # full_pick (default)
+            actions = [
+                MoveAction("hover_source",
+                           [s_xyz[0], s_xyz[1], s_xyz[2] + hover_h],
+                           s_rpy, duration_ms=move_dur),
+                GripperAction("gripper_open", servo_id=gripper_id,
+                              pulse=grip_open),
+                MoveAction("approach_pick",
+                           [s_xyz[0], s_xyz[1], approach_z],
+                           s_rpy, duration_ms=move_dur),
+                GripperAction("gripper_close", servo_id=gripper_id,
+                              pulse=grip_close),
+                MoveAction("lift_after_pick",
+                           [s_xyz[0], s_xyz[1], s_xyz[2] + lift_h],
+                           s_rpy, duration_ms=move_dur),
+            ]
 
-        try:
-            pulses = await self.adapter.ik_solve(
-                [s_xyz[0], s_xyz[1], s_xyz[2] + hover_h], s_rpy
-            )
-            ev["ik_calls"] += 1
-            if pulses is None:
-                ev["ik_failures"] += 1
-                return ExecutionResult(
-                    task_id=ctx.task_id,
-                    success=False,
-                    reason="ik_failed_hover",
-                    evidence=ev,
-                )
-            await self.adapter.servo_move(pulses, move_dur)
-            ev["steps_completed"] += 1
-
-            await self.adapter.gripper_set(gripper_id, grip_open, 300)
-            ev["steps_completed"] += 1
-
-            pulses = await self.adapter.ik_solve(
-                [s_xyz[0], s_xyz[1], approach_z], s_rpy
-            )
-            ev["ik_calls"] += 1
-            if pulses is None:
-                ev["ik_failures"] += 1
-                return ExecutionResult(
-                    task_id=ctx.task_id,
-                    success=False,
-                    reason="ik_failed_approach",
-                    evidence=ev,
-                )
-            await self.adapter.servo_move(pulses, move_dur)
-            ev["steps_completed"] += 1
-
-            await self.adapter.gripper_set(gripper_id, grip_close, 300)
-            ev["steps_completed"] += 1
-
-            pulses = await self.adapter.ik_solve(
-                [s_xyz[0], s_xyz[1], s_xyz[2] + lift_h], s_rpy
-            )
-            ev["ik_calls"] += 1
-            if pulses is None:
-                ev["ik_failures"] += 1
-                return ExecutionResult(
-                    task_id=ctx.task_id,
-                    success=False,
-                    reason="ik_failed_lift",
-                    evidence=ev,
-                    error_detail="Pick succeeded but lift failed, object may be dropped",
-                )
-            await self.adapter.servo_move(pulses, move_dur)
-            ev["steps_completed"] += 1
-
-            return ExecutionResult(
-                task_id=ctx.task_id,
-                success=True,
-                reason="pick_completed",
-                confidence=0.95,
-                evidence=ev,
-            )
-
-        except Exception as e:
-            return ExecutionResult(
-                task_id=ctx.task_id,
-                success=False,
-                reason="exception",
-                error_detail=str(e),
-                evidence=ev,
-            )
+        return await ActionExecutor.run(actions, self.adapter, ctx)

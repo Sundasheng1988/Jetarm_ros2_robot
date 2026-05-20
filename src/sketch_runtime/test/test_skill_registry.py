@@ -197,7 +197,7 @@ class TestPickSkill:
 
         result = await skill.execute(ctx)
         assert result.success is True
-        assert result.reason == "pick_completed"
+        assert result.reason == "all_steps_completed"
         assert result.evidence["steps_completed"] == 5
         assert result.evidence["ik_calls"] == 3
         assert result.evidence["ik_failures"] == 0
