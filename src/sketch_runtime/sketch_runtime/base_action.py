@@ -10,6 +10,7 @@ class StepResult:
     step_name: str = ""
     success: bool = False
     reason: str = ""
+    wait_after_sec: float = 0.0
     evidence: Dict[str, Any] = field(default_factory=dict)
 
 

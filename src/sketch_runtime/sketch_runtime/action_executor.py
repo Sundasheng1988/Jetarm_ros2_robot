@@ -1,4 +1,5 @@
 from typing import List
+import asyncio
 
 from sketch_runtime.base_action import BaseAction
 from sketch_runtime.task_context import TaskContext
@@ -27,6 +28,8 @@ class ActionExecutor:
                     evidence=ev,
                 )
             ev["steps_completed"] += 1
+            if step.wait_after_sec > 0:
+                await asyncio.sleep(step.wait_after_sec)
         return ExecutionResult(
             task_id=ctx.task_id,
             success=True,

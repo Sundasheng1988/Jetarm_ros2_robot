@@ -43,6 +43,7 @@ class MoveAction(BaseAction):
             step_name=self.step_name,
             success=True,
             reason="move_completed",
+            wait_after_sec=self.duration_ms / 1000.0,
             evidence={"ik_calls": 1, "ik_failures": 0},
         )
 
@@ -63,5 +64,6 @@ class GripperAction(BaseAction):
             step_name=self.step_name,
             success=True,
             reason="gripper_completed",
+            wait_after_sec=self.duration_ms / 1000.0,
             evidence={},
         )

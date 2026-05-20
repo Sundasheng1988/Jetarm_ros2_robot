@@ -192,3 +192,57 @@ class TestPickSkillActionSequence:
         result = await skill.execute(ctx)
         assert result.success is False
         assert result.reason == "missing_source_pose"
+
+
+class TestActionTiming:
+    @pytest.mark.asyncio
+    async def test_move_action_returns_wait_after_sec(self):
+        adapter = RuntimeAdapter(dry_run=True)
+        action = MoveAction("move", [0, 0, 0], duration_ms=2000)
+        result = await action.execute(adapter, TaskContext())
+        assert result.wait_after_sec == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
+    async def test_move_action_custom_duration_wait(self):
+        adapter = RuntimeAdapter(dry_run=True)
+        action = MoveAction("move", [0, 0, 0], duration_ms=500)
+        result = await action.execute(adapter, TaskContext())
+        assert result.wait_after_sec == pytest.approx(0.5)
+
+    @pytest.mark.asyncio
+    async def test_gripper_action_returns_wait_after_sec(self):
+        adapter = RuntimeAdapter(dry_run=True)
+        action = GripperAction("open", duration_ms=300)
+        result = await action.execute(adapter, TaskContext())
+        assert result.wait_after_sec == pytest.approx(0.3)
+
+    @pytest.mark.asyncio
+    async def test_gripper_close_pulse_is_700(self):
+        adapter = RuntimeAdapter(dry_run=True)
+        action = GripperAction("close", pulse=700)
+        result = await action.execute(adapter, TaskContext())
+        assert result.success is True
+        assert adapter._call_log[0]["args"]["pulse"] == 700
+
+    @pytest.mark.asyncio
+    async def test_gripper_open_pulse_is_200(self):
+        adapter = RuntimeAdapter(dry_run=True)
+        action = GripperAction("open", pulse=200)
+        result = await action.execute(adapter, TaskContext())
+        assert result.success is True
+        assert adapter._call_log[0]["args"]["pulse"] == 200
+
+    @pytest.mark.asyncio
+    async def test_action_executor_full_pick_total_wait(self):
+        adapter = RuntimeAdapter(dry_run=True)
+        actions = [
+            MoveAction("s1", [0, 0, 0], duration_ms=1000),   # wait 1.0
+            GripperAction("s2", duration_ms=300),              # wait 0.3
+            MoveAction("s3", [0, 0, 0], duration_ms=500),     # wait 0.5
+        ]
+        ctx = TaskContext()
+        start = __import__("time").time()
+        await ActionExecutor.run(actions, adapter, ctx)
+        elapsed = __import__("time").time() - start
+        expected = 1.0 + 0.3 + 0.5
+        assert elapsed >= expected * 0.9  # allow 10% timing tolerance
