@@ -2,6 +2,8 @@
 
 > 合并原始 Roadmap + 当前实施进度 + Sprint 4.4→9 计划
 > 状态标记: ✅ COMPLETED | 🔶 IN_PROGRESS | ⬜ PLANNED | ⏸ DEFERRED
+> 最后更新：2026-05-20
+> **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
 
 ---
 
@@ -99,69 +101,252 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 4.4: Servo Message Adapter 🔶 IN_PROGRESS
+## Sprint 4.4: Servo Message Adapter ✅ COMPLETED
 
 **目标**: 修复 servo 消息格式，使 `enable_real_servo=true` 能正确发布。
 
-**未解决问题**: 发布到 `/servo_controller` 时报错 `"The 'position' field must be of type 'float'"`。
-
-**任务**:
-1. 检查旧代码中工作 servo 发布格式 (`executor_node.py`, `grasp.py`, `actions.py`)
-2. 确认正确的 servo 消息类型和字段 (`servo_controller_msgs` vs `ros_robot_controller_msgs`)
-3. 映射 arm 脉冲到正确 servo ID (1-5 for arm, 10 for gripper)
-4. 修复消息字段类型
-5. 发布失败应返回 task failure
+**完成内容**:
+- RuntimeAdapter `sp.position` 改为 `float()` 显式转换
+- Servo imports 移至顶层 (`_HAS_SERVO_MSGS` guard)
+- `gripper_set` 独立发布 (非通过 `servo_move`)
+- 移除 silent exception swallowing
 
 ---
 
-## Sprint 4.5: Hover-Only Safety Test ⬜ PLANNED
+## Sprint 4.5: Hover-Only Safety Test ✅ COMPLETED
 
 **目标**: 最小实物运动测试 — 仅移动到物体上方悬停。
 
-**任务**:
-1. 启用 `enable_real_servo=true`
-2. 仅执行 hover_source 步骤
-3. 不下降、不抓取、不移动夹爪
-4. 验证机械臂到达正确悬停位置
-5. 保持 Preview/Confirm 启用
+**完成内容**:
+- PickSkill 支持 `execution_stage: hover_only`
+- 仅执行 1 个 MoveAction (不下降、不抓取)
+- 实物验证通过
 
 ---
 
-## Sprint 4.6: Gripper Standalone Test ⬜ PLANNED
+## Sprint 4.6: Action Sequence Architecture ✅ COMPLETED
 
-**目标**: 夹爪独立测试 — 仅控制 ID10。
+**目标**: 从 PickSkill 硬编码中提取可组合的 Action 抽象。
 
-**任务**:
-1. 发送仅含 servo ID 10 的命令
-2. 验证张开/闭合脉冲方向和范围
-3. 确认 200=开放, 700=闭合 或当前项目约定
-4. 不移动 arm 关节
-
----
-
-## Sprint 4.7: Full Pick Minimal Execution ⬜ PLANNED
-
-**目标**: 完成一次最小完整抓取 — 不含放置。
-
-**任务**:
-1. 依次执行: hover → open gripper → approach → close gripper → lift
-2. 每次运动间等待静止确认
-3. Preview/Confirm 每个子步骤或整体流程
-4. 记录完整执行轨迹
+**完成内容**:
+- `BaseAction` ABC + `StepResult` dataclass
+- `MoveAction` (ik_solve → servo_move)
+- `GripperAction` (gripper_set)
+- `ActionExecutor.run()` — 顺序执行，失败即停
+- PickSkill 85 行委托给 ActionExecutor
 
 ---
 
-## Sprint 5: Verification Runtime ⬜ PLANNED
+## Sprint 4.7: Full Pick 真实硬件执行 ✅ COMPLETED
+
+**目标**: 完成一次最小完整抓取 (不含放置)。
+
+**完成内容**:
+- ActionExecutor 时序同步 (`await asyncio.sleep(wait_after_sec)`)
+- `wait_after_sec = duration_ms/1000.0` for MoveAction and GripperAction
+- 完整 pick 序列在真实硬件上验证通过
+
+---
+
+## Sprint 4.8: 文档更新 + 里程碑标记 ✅ COMPLETED
+
+**目标**: 更新文档反映当前状态。
+
+**完成内容**:
+- runtime_index.md / runtime_session_summary.md / jetarm_runtime_roadmap.md 更新
+- 里程碑标记: "首次 Runtime 驱动的真实机械臂 pick 执行验证通过"
+- Current Known Limitations 记录
+
+---
+
+## Sprint 5: Verification Runtime 🔶 IN_PROGRESS
 
 **目标**: 不只知道"执行了"，更要知道"成功了"。
 
-**任务**:
-- 抓取前: 目标是否存在 (vision query)
-- 抓取后: 目标是否从原位置消失
-- 夹爪状态: ID10 是否闭合到预期位置
-- 放置后: 目标是否出现在目标区域
-- 超时检测
-- `VerificationResult`: task_id, success, confidence, reason, evidence
+---
+
+### Sprint 5.1 — Verification Architecture Plan ⬜ PLANNED
+
+**目标**: 定义 VerificationResult 数据结构与验证阶段。
+
+**VerificationResult 数据结构**:
+```python
+@dataclass
+class VerificationResult:
+    task_id: str
+    stage: str              # "pre_pick" | "post_pick" | "post_place"
+    success: bool
+    confidence: float       # 0.0 ~ 1.0
+    reason: str             # "target_found" | "target_missing" | "target_still_at_source" | ...
+    evidence: dict          # {object_count_before, object_count_after, distance_m, ...}
+    timestamp: float
+```
+
+**验证阶段**:
+| 阶段 | 时机 | 检查内容 |
+|------|------|----------|
+| `precheck_target_exists` | Skill.execute 之前 | 目标物体是否在世界模型中存在 |
+| `after_pick_target_removed` | 抓取 + lift 完成后 | 目标是否从原位置消失 |
+| `after_place_target_present` | 放置完成后 | 目标是否出现在目标区域 |
+
+**失败原因枚举**:
+```python
+class VerificationReason:
+    TARGET_NOT_FOUND = "target_not_found"
+    TARGET_STILL_AT_SOURCE = "target_still_at_source"
+    TARGET_NOT_AT_DESTINATION = "target_not_at_destination"
+    VISION_UNAVAILABLE = "vision_unavailable"
+    VERIFICATION_TIMEOUT = "verification_timeout"
+    VISION_CONFIDENCE_TOO_LOW = "vision_confidence_too_low"
+    OK = "verification_passed"
+```
+
+**新建文件**: `src/sketch_runtime/sketch_runtime/verification_result.py`
+
+**验收标准**:
+- `VerificationResult` dataclass 可独立 import
+- 与 `ExecutionResult` 不冲突
+- 可与 `TaskContext` 关联
+
+---
+
+### Sprint 5.2 — World Model Reader ⬜ PLANNED
+
+**目标**: 从 ROS2 topic 读取并解析世界模型 JSON。
+
+**功能**:
+1. 订阅 `/world_model/objects` 或 `/world_model/roi_objects`（通过参数）
+2. 解析 JSON → `[TargetObject]` 列表
+3. 查询接口: `find_by_class(class_name)` / `find_by_color(color)` / `find_by_id(object_id)`
+4. 距离阈值: 判断物体是否在源位置附近（例如 ±0.05m 内认为"仍在原位"）
+
+**新建文件**: `src/sketch_runtime/sketch_runtime/world_model_reader.py`
+
+**ROS2 接口**:
+- 订阅: `/world_model/objects` (可配置)
+- 不发布 — 纯 reader
+
+**验收标准**:
+- 能从 JSON 解析出 `TargetObject` 列表
+- 能按 class/color/id 查询
+- 能判断物体是否仍在源位置（距离阈值）
+
+---
+
+### Sprint 5.3 — Precheck Verification ⬜ PLANNED
+
+**目标**: 执行前确认目标存在。
+
+**流程**:
+```
+PickSkill.precheck() 或 SkillManager 调用时
+  → VerificationNode.precheck_target_exists(ctx)
+    → WorldModelReader.query(class=ctx.target_object.class_name, color=...)
+    → 目标存在? → VerificationResult(success=True, reason="target_found")
+    → 目标不存在? → VerificationResult(success=False, reason="target_not_found")
+```
+
+**集成点**: 插入到 `real_grounded_runtime_node._execute_skill()` 的 precheck 阶段之后、execute 之前。
+
+**参数**: `require_precheck_verification` (默认 `false` — 先默认关闭，逐步开启)
+
+**验收标准**:
+- 开启后，目标不存在时返回 `ExecutionResult(success=False, reason="target_not_found")`
+- 目标存在时正常执行
+
+---
+
+### Sprint 5.4 — After Pick Verification ⬜ PLANNED
+
+**目标**: 抓取后确认目标从原位置消失。
+
+**流程**:
+```
+PickSkill 完成 lift 后
+  → VerificationNode.after_pick(ctx)
+    → 等待 0.5s (视觉刷新)
+    → WorldModelReader.query(class=..., space=source_area)
+    → 目标消失? → success=True, reason="target_removed_from_source"
+    → 目标仍在? → success=False, reason="target_still_at_source", confidence=0.5
+    → 视觉不可用? → success=None (不确定), reason="vision_unavailable"
+```
+
+**保守策略**:
+- 第一版仅报告 evidence，不自动判定任务失败
+- 记录 `object_count_before`, `object_count_after`, `distance_remaining`
+- 在 `/runtime/verification` 发布结果但不阻断执行
+
+**验收标准**:
+- 抓取后发布 `/runtime/verification` 
+- 真实硬件抓取成功后，日志显示 `target_removed_from_source`
+- 视觉不可用时返回 `vision_unavailable` 而非崩溃
+
+---
+
+### Sprint 5.5 — Verification Logs ⬜ PLANNED
+
+**目标**: 结构化发布验证结果。
+
+**ROS2 Topic**: `/runtime/verification` (`String` JSON)
+
+**消息格式**:
+```json
+{
+  "task_id": "task_a1b2c3_1715900000",
+  "stage": "after_pick",
+  "success": true,
+  "confidence": 0.85,
+  "reason": "target_removed_from_source",
+  "evidence": {
+    "object_count_before": 3,
+    "object_count_after": 2,
+    "missing_class": "cube",
+    "missing_color": "red",
+    "source_distance_m": 0.0,
+    "vision_age_ms": 320
+  },
+  "timestamp": 1715900010.0
+}
+```
+
+**发布节点**: `real_grounded_runtime_node` 或独立 `verification_node`
+
+**验收标准**:
+- `/runtime/verification` topic 可用
+- 至少 precheck 和 post_pick 两个阶段的消息格式一致
+
+---
+
+### Sprint 5.6 — Retry Plan ⬜ PLANNED (Planning Only)
+
+**目标**: 设计 retry 机制但不在 Sprint 5 实现。
+
+**设计方案**:
+1. Verification 返回 `success=False` → Executor 决策 retry
+2. Retry 策略:
+   - `offset_retry`: 轻微偏移目标位姿重试 (最多 3 次)
+   - `ask_user`: 发布 `/runtime/confirm_retry` 等待用户确认
+3. `TaskContext.retry_count` 追踪重试次数
+4. `max_retries` 默认为 2
+
+**Sprint 5 不实现 retry** — 仅记录 evidence，供后续决策。
+
+**验收标准**:
+- `retry_count` / `max_retries` 字段已在 TaskContext 中
+- 设计方案文档化供 Sprint 6 实现
+
+---
+
+### Sprint 5 总体验收标准
+
+- [ ] VerificationResult 数据结构定义完成
+- [ ] WorldModelReader 可读取 /world_model/objects 并解析
+- [ ] precheck 可阻断"目标不存在"的任务
+- [ ] after_pick 可发布 evidence（不阻断）
+- [ ] `/runtime/verification` topic 发布标准化 JSON
+- [ ] verification 默认关闭，通过参数开启
+- [ ] 不影响现有 real pick flow
+- [ ] 0 行修改到 servo_controller / kinematics / ros_robot_controller
 
 ---
 

@@ -1,6 +1,9 @@
 # JetArm Robot Runtime — Session Summary
 
-> Sprint 1 → 4.3 实现状态快照 | 2026-05-18 | 分支: `feature/sketch_runtime_sprint3`
+> Sprint 1 → 4.8 实现状态快照 | 2026-05-20 | 分支: `feature/sketch_runtime_sprint3`
+>
+> **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
+> **📋 下一个 Sprint: 5 — Verification Runtime (5.1~5.6 已规划)**
 
 ---
 
@@ -85,6 +88,10 @@ PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 
 ## Current Unresolved Issue: Servo Message Adapter
 
+~~`enable_real_servo=true` 发布 servo 时消息格式错误~~ **已修复 (Sprint 4.4)**。位置字段已改为 `float()` 显式转换。
+
+## Current Known Limitations
+
 **Symptom**: `enable_real_servo=true` publishes to `/servo_controller` but fails:
 ```
 "The 'position' field must be of type 'float'"
@@ -149,8 +156,44 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 2. **Use temporary IK client nodes** (`rclpy.create_node()` + `destroy_node()` in finally) for real service calls from async context
 3. **Never bypass Preview/Confirm** — always confirm before allowing real hardware motion
 4. **Verify message format before publishing** — servo messages have specific field types that differ between msg packages
+5. **ActionExecutor must wait between steps** — `asyncio.sleep(duration_ms/1000.0)` after each MoveAction and GripperAction
 
 ---
+
+## Current Stable Test Flow
+
+| 模式 | 命令 | 说明 |
+|------|------|------|
+| **Dry-run full chain** | `ros2 launch sketch_runtime ground_runtime_bringup.launch.py` | 默认 safety 全开 |
+| **IK-only** | `... dry_run:=false enable_real_ik:=true enable_real_servo:=false require_confirm:=true` | 真实 IK 不发 servo |
+| **Full pick (实物)** | `... dry_run:=false enable_real_ik:=true enable_real_servo:=true require_confirm:=true` | 完整真实硬件执行 |
+| **Hover only** | 通过 `skill_params: {execution_stage: hover_only}` | 仅悬停至目标上方 |
+| **Auto execute** | `... require_confirm:=false` | 跳过确认直接执行 |
+
+---
+
+## Current Known Limitations
+
+| 领域 | 限制 |
+|------|------|
+| **抓取精度** | grasp precision 尚不稳定，需进一步标定和补偿 |
+| **验证逻辑** | 无 Verification Runtime — 无法自动判断抓取是否成功 |
+| **碰撞检测** | 无碰撞/力矩异常检测 |
+| **重试/恢复** | 无 retry 或 recovery 逻辑，失败后无法自动重试 |
+| **物体检测** | 无 object-loss 检测 — 不知道目标是否掉落 |
+| **放置验证** | 无放置成功判定 — 不知道物体是否到达目标区域 |
+
+---
+
+## Completed Milestones (Sprint 4.4 → 4.8)
+
+| Sprint | Milestone |
+|--------|-----------|
+| 4.4 | Servo Message Adapter 修复 — `float()` position cast |
+| 4.5 | Hover-only safety test |
+| 4.6 | Action Sequence 架构 — MoveAction/GripperAction/ActionExecutor |
+| 4.7 | Full pick 真实硬件执行验证 — 首次 Runtime 驱动真实机械臂 |
+| 4.8 | **🎯 里程碑达成** — 文档更新，标记完整验证闭环 |
 
 ## Package Snapshot
 

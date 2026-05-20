@@ -1,6 +1,6 @@
 # JetArm Robot Runtime — Documentation Index
 
-> 最后更新：2026-05-18 | 当前 Sprint: 4.3 完成 → 4.4 (Servo Message Adapter)
+> 最后更新：2026-05-20 | 当前 Sprint: 4.8 — Milestone 达成 | 下一个 Sprint: 5 (Verification Runtime)
 
 ---
 
@@ -8,8 +8,10 @@
 
 | 项 | 状态 |
 |----|------|
-| **当前 Sprint** | 4.3 完成 — Runtime Adapter 真实 IK 调用通过（temp node 模式） |
-| **未解决问题** | `enable_real_servo=true` 发布 servo 时消息格式错误：`"The 'position' field must be of type 'float'"` — 机械臂未移动 |
+| **里程碑** | **✅ 首次 Runtime 驱动的真实机械臂抓取执行验证通过** |
+| **当前 Sprint** | 4.8 完成 — Action Sequence + 时序同步 + 真实硬件验证 |
+| **已解决** | Servo Message Adapter 修复 (`float` position)、ActionExecutor 时序同步、真实 IK+Servo 全链路 |
+| **未解决** | grasp precision 尚不稳定、无 Verification Runtime、无碰撞检测、无 retry/logic |
 | **当前分支** | `feature/sketch_runtime_sprint3` |
 | **已实现闭环** | LLM → parser → grounding → Preview/Confirm → SkillManager → PickSkill → RuntimeAdapter(dry_run) → /executor/done |
 | **IK 状态** | 真实 IK 服务可用，返回正确脉冲，temp node 模式通过 |
@@ -96,11 +98,18 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 | 4.1 | **COMPLETED** | real_grounded_runtime_node + 集成 launch |
 | 4.2 | **COMPLETED** | Preview/Confirm 安全层 + timeout + simple yes/no |
 | 4.3 | **COMPLETED** | PickSkill source_pose fix + IK 安全分级 + 真实 IK |
-| 4.4 | **IN_PROGRESS** | Fix Servo Message Adapter |
-| 4.5 | PLANNED | Hover-only safety test |
-| 4.6 | PLANNED | Gripper standalone test |
-| 4.7 | PLANNED | Full pick minimal execution |
-| 5 | PLANNED | Verification Runtime |
+| 4.4 | **COMPLETED** | Servo Message Adapter 修复 |
+| 4.5 | **COMPLETED** | Hover-only safety test |
+| 4.6 | **COMPLETED** | Action Sequence 架构 (MoveAction/GripperAction/ActionExecutor) |
+| 4.7 | **COMPLETED** | Full pick 真实硬件执行验证 |
+| 4.8 | **COMPLETED** | **里程碑: 首次 Runtime 驱动真实硬件抓取** |
+| 5 | **IN_PROGRESS** | Verification Runtime (5.1-5.6 已规划) |
+| 5.1 | PLANNED | Verification Architecture — VerificationResult + stages + reasons |
+| 5.2 | PLANNED | World Model Reader — 订阅/解析 /world_model/objects |
+| 5.3 | PLANNED | Precheck Verification — 执行前确认目标存在 |
+| 5.4 | PLANNED | After Pick Verification — 抓取后确认目标消失 |
+| 5.5 | PLANNED | Verification Logs — /runtime/verification topic |
+| 5.6 | PLANNED | Retry Plan — design only, Sprint 6 implement |
 | 6 | PLANNED | RobotOps / Monitoring |
 | 7 | PLANNED | Teleop / Safety Control |
 | 8 | PLANNED | Skill Library Expansion |
