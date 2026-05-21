@@ -2,6 +2,27 @@
 
 > 基于 runtime_analysis.md 和 topic_service_map.md 的发现
 > 目标：安全、分阶段地将"ROS2 节点拼接系统"升级为"Robot Runtime"
+>
+> **⚠ 本文档为历史重构计划。当前 Roadmap 请见: [jetarm_runtime_roadmap.md](jetarm_runtime_roadmap.md)**
+
+---
+
+## Refactor Status Snapshot (2026-05-20)
+
+| 阶段 | 状态 |
+|------|------|
+| `sketch_runtime` 包 + TaskContext/TargetObject/Skill 骨架 | ✅ COMPLETED |
+| TaskBuilder grounding→Runtime 集成 | ✅ COMPLETED |
+| Preview/Confirm 安全层 | ✅ COMPLETED |
+| RuntimeAdapter (safety split + temp IK node) | ✅ COMPLETED |
+| 真实 IK 调用 | ✅ COMPLETED |
+| 真实 Servo 发布 | ✅ COMPLETED |
+| ActionExecutor + Action Sequence 架构 | ✅ COMPLETED |
+| 真实硬件 pick 执行验证 | ✅ COMPLETED |
+| **当前阻塞** | 🔴 Perception instability — `/world_model/roi_objects` RAW detection unstable |
+| **下一个 Sprint** | Stable World Model (→ Verification Runtime) |
+| **当前分支** | `feature/sketch_runtime_sprint3` |
+| **测试** | 82 tests passing |
 
 ---
 
@@ -215,7 +236,7 @@ class SkillManager:
 
 ---
 
-## 2. Sprint 2（Skill Runtime + Teleop 基础）
+## 2. Sprint 2（Skill Runtime + Teleop 基础）[SUPERSEDED — see jetarm_runtime_roadmap.md]
 
 ### 目标
 
@@ -275,163 +296,21 @@ src/control_arbitration/
 
 ---
 
-## 3. Sprint 3（RobotOps 日志 + 监控）
+## 3. Sprint 3（RobotOps 日志 + 监控）[SUPERSEDED]
 
-### 目标
+## 4. Sprint 4（验证 / 失败检测）[SUPERSEDED]
 
-每个任务可追踪、可复盘。
+## 5. Sprint 5+（IK 精度优化 / 语音 / VLA）[SUPERSEDED]
 
-### 任务
+## 6. 包/模块影响矩阵 [SUPERSEDED]
 
-#### 3.1 robot_ops 包
+## 7. 风险清单 [SUPERSEDED — risks maintained in runtime_risks.md]
 
-```text
-src/robot_ops/
-├── robot_ops/
-│   ├── __init__.py
-│   ├── task_logger_node.py       # 订阅 /runtime/* 写 SQLite
-│   ├── state_monitor_node.py     # 实时状态汇总
-│   ├── event_recorder.py         # 事件时序记录
-│   └── dashboard_api.py          # 最小 REST API (aiohttp)
-└── logs/                          # SQLite 存储
-```
+## 8. 推荐 Git 分支策略 [SUPERSEDED]
 
-#### 3.2 记录字段
+## 9. Sprint 1 具体文件变更清单 [ARCHIVED — historical reference]
 
-每个 `task_id` 记录：user_command → parsed_command → selected_skill → vision_result → target_pose → ik_result → servo_command → execution_status → error_reason → image_snapshot → timestamps
-
-#### 3.3 注意
-
-- `image_snapshot` 可先存路径而非 base64
-- `dashboard_api` 用 aiohttp 最小版本（一个 `/api/tasks` 端点 + 一个 `/api/task/<id>` 端点）
-- DB 用 SQLite 单文件（零配置，适合嵌入式场景，且不需要额外启动服务）
-
----
-
-## 4. Sprint 4（验证 / 失败检测）
-
-### 目标
-
-不只"执行动作"，还要"判断是否成功"。
-
-### 任务
-
-#### 4.1 验证节点
-
-```python
-# verification/verification_node.py
-class VerificationNode(Node):
-    def verify_pick(self, task_ctx: TaskContext) -> VerificationResult:
-        # 1. 抓取前检测目标是否存在
-        # 2. 抓取后检测目标是否从原位置消失
-        # 3. 检测夹爪 ID10 是否闭合到合理位置
-        # 4. 检测 servo 是否到位
-        # 5. 检测是否超时
-```
-
-#### 4.2 验证结果格式
-
-```json
-{
-  "task_id": "task_abc123",
-  "success": false,
-  "confidence": 0.65,
-  "reason": "目标物体抓取后仍存在",
-  "evidence": "gripper_closed=False, object_still_present=True",
-  "timestamp": 1715900000.0
-}
-```
-
-#### 4.3 与 Executor 集成
-
-Executor 在 skill 执行完成后调用 VerificationNode，根据 `success` 决定是否 retry。
-
----
-
-## 5. Sprint 5+（IK 精度优化 / 语音 / VLA）
-
-### 5.1 IK / 抓取精度 (P4)
-
-- 继续使用原厂 IK `.so`
-- 排查抓不准原因：相机标定 → 深度噪声 → 夹爪 tip 补偿 → 抓取高度
-- 每次抓取记录 `target_pose` 和 `ik_result` 用于偏差分析
-
-### 5.2 语音重构 (P5)
-
-- `llm_voice_agent` 回归纯语音入口定位
-- ASR 结果直接发到 `/parsed_command_text`，由统一 parser 处理
-- TTS 支持 interrupt、任务状态自然播报
-
-### 5.3 VLA 接入 (P6)
-
-- VLA 作为高级策略模块接入 Runtime，不绕过 ROS2/IK/Servo/仲裁
-- 遥控数据采集 → 轨迹记录 → 图像-动作对齐 → 数据集构建
-
----
-
-## 6. 包/模块影响矩阵
-
-| 包 | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 |
-|----|----------|----------|----------|----------|
-| `grounding` | Fix topic | — | — | — |
-| `llm_executor` | Add task_id | Full refactor | Log integration | Verification integration |
-| `llm_parser` | — | Standardize ParsedCommand | — | — |
-| `vision_yolo` | — | — | Image snapshot | Object detection query |
-| `app` | — | — | — | — |
-| `servo_controller` | — | — | — | — |
-| **新建** `sketch_runtime` | ✅ | Expand | — | — |
-| **新建** `teleop_input` | — | ✅ | — | — |
-| **新建** `control_arbitration` | — | ✅ | — | — |
-| **新建** `robot_ops` | — | — | ✅ | — |
-| **新建** `verification` | — | — | — | ✅ |
-
----
-
-## 7. 风险清单
-
-| 风险 | 缓解策略 |
-|------|----------|
-| ground_executor 重构引入 regression | 保留 `dry_run=True` 模式；先并存不切换 |
-| 仲裁节点增加延迟 | 默认模式 `AUTO` 无锁，仅在冲突时介入 |
-| logging 增加 I/O 压力 | 异步写，batch flush |
-| 验证结果误判 | 先跑 "保守模式"：只有高置信度才判定失败 |
-| 新包安装/构建错误 | 每个 Sprint 独立测试 launch 可运行 |
-| `sketch_runtime` 命名模糊 | Sprint 2 前决定最终命名 (`runtime_core` / `agent_runtime`)，用 remap 保持一致 |
-
----
-
-## 8. 推荐 Git 分支策略
-
-```bash
-git checkout -b feature/robot_runtime_v1          # Sprint 总体分支
-# 每个 Sprint 从 v1 分出
-git checkout -b feature/runtime_task_id            # Sprint 1
-git checkout -b feature/skill_runtime              # Sprint 2
-git checkout -b feature/teleop_runtime             # Sprint 2b
-git checkout -b feature/robotops_logger            # Sprint 3
-git checkout -b feature/task_verification          # Sprint 4
-```
-
-当前稳定基线：`debug/llm_voice_agent`（冻结为旧架构参考）
-
----
-
-## 9. Sprint 1 具体文件变更清单
-
-| 变更类型 | 文件 | 说明 |
-|----------|------|------|
-| **Launch 修改** | `grounding/launch/ground_bringup.launch.py` | 增加 remap: `/world_model/roi_objects` → `/world_model/objects` |
-| **新建包** | `src/sketch_runtime/` | 新建 package 骨架 |
-| **新建文件** | `src/sketch_runtime/sketch_runtime/runtime_state_node.py` | RuntimeStateNode — 负责 task_id 生成、状态追踪、事件日志 |
-| **新建文件** | `src/sketch_runtime/config/runtime_params.yaml` | 参数文件 |
-| **新建文件** | `src/sketch_runtime/launch/runtime_bringup.launch.py` | launch 文件 |
-| **修改** | `llm_executor/executor_node.py` | 最小注入：task_id 生成、`/runtime/log` 发布、执行结果发布（不改变动作序列） |
-| **新建文件** | `src/sketch_runtime/sketch_runtime/skill_manager.py` | SkillManager 骨架（纯语意映射，不连接控制回路） |
-| **新建文件** | `src/vision_interfaces/msg/TargetObject.msg` | 标准化目标对象消息（新增而不修改现有 DetectionResult.msg） |
-
----
-
-## 10. 最终架构目标
+## 10. 最终架构目标 [SUPERSEDED]
 
 ```
 user command → parser → grounding → executor → skill runtime

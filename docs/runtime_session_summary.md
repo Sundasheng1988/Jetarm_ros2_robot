@@ -91,10 +91,6 @@ PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 
 ROI debug overlay 揭示: 同一物理物体跨帧 class/color 跳变 (`cup red` → `cup black` → `cylinder red`)。`/world_model/roi_objects` 是原始检测流，Verification Runtime 需要稳定世界模型。详见 [Sprint 5: Stable World Model](jetarm_runtime_roadmap.md).
 
-## Current Known Limitations
-
-**Next Sprint (4.4)**: Inspect working servo publish format from old code (`executor_node.py`, `grasp.py`, `actions.py`), map arm pulses to correct servo IDs, fix message field types.
-
 ---
 
 ## Safety Defaults
