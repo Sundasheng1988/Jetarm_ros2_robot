@@ -3,7 +3,8 @@
 > Sprint 1 → 4.8 实现状态快照 | 2026-05-20 | 分支: `feature/sketch_runtime_sprint3`
 >
 > **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
-> **📋 下一个 Sprint: 5 — Verification Runtime (5.1~5.6 已规划)**
+> **🔴 新发现: ROI 感知不稳定 — 同一物体跨帧 class/color 跳变**
+> **📋 下一个 Sprint: 5 — Stable World Model / Perception Runtime**
 
 ---
 
@@ -157,6 +158,7 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 3. **Never bypass Preview/Confirm** — always confirm before allowing real hardware motion
 4. **Verify message format before publishing** — servo messages have specific field types that differ between msg packages
 5. **ActionExecutor must wait between steps** — `asyncio.sleep(duration_ms/1000.0)` after each MoveAction and GripperAction
+6. **Runtime success does NOT imply perception stability** — `/world_model/roi_objects` is a RAW detection stream. Same physical object may be labeled differently across frames (cup red → cup black → cylinder red). A StableObjectTracker with temporal voting must precede Verification Runtime.
 
 ---
 

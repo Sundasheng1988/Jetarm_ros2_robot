@@ -24,6 +24,7 @@
 | R12 | social_robot SDK 与主系统紧耦合 | P2 | 代码复杂度 |
 | R13 | IK 误差链未测量 | P2 | Precision |
 | R14 | grounding 模糊匹配 | P2 | Grounding |
+| R15 | 原始感知不稳定 | **P0** | Grounding / Verification / Skill Runtime |
 
 ---
 
@@ -806,5 +807,54 @@ graph TD
 | R12: social_robot 冗余 | — | ✅ 拆分 | — | — |
 | R13: IK 误差链 | — | — | ✅ log 记录 | ✅ 偏差分析 |
 | R14: grounding 模糊匹配 | — | ✅ 精确匹配 | — | — |
+| R15: 原始感知不稳定 | — | ✅ StableObjectTracker | ✅ stable_objects | ✅ 稳定世界模型 |
 
 > ✅ = 修复 | 🔶 = 部分缓解 | — = 不涉及
+
+---
+
+### R15: 原始感知不稳定 / 不稳定世界模型
+
+**问题描述**
+
+`roi_color_detector_node` 的 debug overlay 显示：同一物理物体在不同帧之间的 class/color 发生跳变：
+- Frame 1: `cup red`
+- Frame 2: `cup black`
+- Frame 3: `cylinder red`
+
+这是 LAB 颜色空间分类、光照变化、轮廓形状判断的综合结果。当前 `/world_model/roi_objects` 是**逐帧原始检测流**，不包含任何时间平滑。
+
+**影响范围**
+
+- **Grounding**: 物体 class/color 可能在某帧匹配失败 → `_select_object()` 返回 `None` → `status: no_match`
+- **Skill 执行**: 如果 grounding 由于不稳定检测而选错物体，PickSkill 会抓取错误的目标
+- **Verification**: 抓取前后检测同一物体，由于 class 不同被判定为"不同物体" → 误报 `target_not_removed`
+- **Retry**: 不稳定世界模型导致重试无意义（每次决策基础都不可信）
+- **RobotOps**: 日志中记录的 `target_object` 可能不是实际抓取的物体
+
+**当前症状**
+
+ROI debug window 观察: 同一静止物体在 30fps 流中 label 在 2-3 种 class/color 组合之间快速切换。confidence 在 0.5-0.9 之间抖动。
+
+**根因**
+
+LAB 阈值受光照影响；类名判断依赖 circularity / right_angle_count / aspect_ratio 等几何特征，这些特征在遮挡或角度变化时不稳定；无时间平滑。
+
+**推荐修复方案**
+
+Sprint 5 引入 StableObjectTracker：
+
+1. 每帧接收 RAW detections → 与已知 tracks 进行 IoU/距离匹配
+2. 同一 track 的 class/color 做 Temporal Voting（最近 10 帧多数投票）
+3. confidence 做 EMA 平滑（α=0.3）
+4. 连续 N 帧未检测到 → TTL 超时移除
+5. 输出 `/world_model/stable_objects` topic
+6. grounding_node 可切换使用 stable_objects
+
+**对 Teleop / RobotOps / Skill Runtime / Verification 的影响**
+
+- **Verification**: 这是一个阻断项 — Verification Runtime 不能建立在不稳定世界模型上
+- **Skill Runtime**: 不影响执行链路，但抓取成功率受 unstable grounding 影响
+- **RobotOps**: 日志中需要记录 RAW 和 STABLE 两个版本用于审计
+
+**优先级**: HIGH — 阻塞 Sprint 6 Verification Runtime

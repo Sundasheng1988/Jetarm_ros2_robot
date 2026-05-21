@@ -552,6 +552,49 @@ graph TD
 
 ---
 
+## 6. 感知链路重构 — Raw Detection → Stable World Model
+
+> **现状**: `/world_model/roi_objects` 是原始检测流 — 同一物体在不同帧之间 class/color 跳变（cup red → cup black → cylinder red）。
+> **目标**: 在 Grounding 之前插入 StableObjectTracker，提供时间稳定的物体表达。
+
+```mermaid
+graph TD
+    subgraph CURRENT["🔴 当前 (Superseded after Sprint 5)"]
+        CAM1["深度相机"]
+        ROI1["roi_color_detector_node"]
+        WM_RAW1["/world_model/roi_objects<br/>RAW JSON"]
+        GND1["grounding_node"]
+        RT1["Runtime"]
+    end
+
+    subgraph TARGET["🟢 目标架构 (Sprint 5)"]
+        CAM2["深度相机"]
+        ROI2["roi_color_detector_node"]
+        WM_RAW2["/world_model/roi_objects<br/>RAW Detection Stream"]
+        TRACKER["StableObjectTracker<br/>═════════════<br/>Temporal Voting<br/>EMA Confidence Smoothing<br/>Object TTL (timeout)<br/>ID Persistence"]
+        WM_STABLE["/world_model/stable_objects<br/>Stable JSON"]
+        GND2["grounding_node<br/>(改用 stable_objects)"]
+        RT2["Runtime → ActionExecutor → IK/Servo"]
+    end
+
+    CAM1 --> ROI1 --> WM_RAW1 --> GND1 --> RT1
+    CAM2 --> ROI2 --> WM_RAW2 --> TRACKER --> WM_STABLE --> GND2 --> RT2
+
+    style CURRENT fill:#f8d7da,stroke:#dc3545
+    style TARGET fill:#d4edda,stroke:#28a745
+    style TRACKER fill:#d1ecf1,stroke:#0c5460
+    style WM_STABLE fill:#fff3cd,stroke:#ffc107
+```
+
+**StableObjectTracker 核心逻辑**:
+- 每帧接收 RAW detections → 与已知 track 匹配 (IoU / 距离)
+- 同一 track 的 class/color 做多数投票 (Temporal Voting)
+- confidence 做 EMA 平滑 (α=0.3)
+- 连续 N 帧未被检测 → TTL 超时移除
+- 输出 `/world_model/stable_objects`
+
+---
+
 ## 图例说明
 
 | 颜色 | 含义 |

@@ -1,6 +1,6 @@
 # JetArm Robot Runtime — Documentation Index
 
-> 最后更新：2026-05-20 | 当前 Sprint: 4.8 — Milestone 达成 | 下一个 Sprint: 5 (Verification Runtime)
+> 最后更新：2026-05-20 | 当前 Sprint: 5 (Stable World Model) | 下一个 Sprint: 6 (Verification Runtime)
 
 ---
 
@@ -9,14 +9,10 @@
 | 项 | 状态 |
 |----|------|
 | **里程碑** | **✅ 首次 Runtime 驱动的真实机械臂抓取执行验证通过** |
-| **当前 Sprint** | 4.8 完成 — Action Sequence + 时序同步 + 真实硬件验证 |
-| **已解决** | Servo Message Adapter 修复 (`float` position)、ActionExecutor 时序同步、真实 IK+Servo 全链路 |
-| **未解决** | grasp precision 尚不稳定、无 Verification Runtime、无碰撞检测、无 retry/logic |
-| **当前分支** | `feature/sketch_runtime_sprint3` |
-| **已实现闭环** | LLM → parser → grounding → Preview/Confirm → SkillManager → PickSkill → RuntimeAdapter(dry_run) → /executor/done |
-| **IK 状态** | 真实 IK 服务可用，返回正确脉冲，temp node 模式通过 |
-| **Servo 状态** | 消息格式待修复，硬件尚未运动 |
-| **安全默认** | dry_run=true, require_confirm=true, enable_real_ik=false, enable_real_servo=false |
+| **当前 Sprint** | 5 — Stable World Model / Perception Runtime (`🔴` 阻塞 Sprint 6) |
+| **已解决** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI debug overlay |
+| **未解决** | **ROI 感知不稳定** — 同一物体跨帧 class/color 跳变 (cup red → cup black → cylinder red)；无 Verification Runtime；无 retry/logic |
+| **Servo 状态** | ✅ 已修复 — `/servo_controller` 正常发布 |
 
 ---
 
@@ -92,28 +88,15 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 
 | Sprint | 状态 | 目标 |
 |--------|------|------|
-| 1 | **COMPLETED** | sketch_runtime 包 + TaskContext/TargetObject/Skill 骨架 |
-| 2 | **COMPLETED** | TaskBuilder 集成 grounding→TaskContext |
-| 3 | **COMPLETED** | runtime_test_node + ground_runtime_bringup |
-| 4.1 | **COMPLETED** | real_grounded_runtime_node + 集成 launch |
-| 4.2 | **COMPLETED** | Preview/Confirm 安全层 + timeout + simple yes/no |
-| 4.3 | **COMPLETED** | PickSkill source_pose fix + IK 安全分级 + 真实 IK |
-| 4.4 | **COMPLETED** | Servo Message Adapter 修复 |
-| 4.5 | **COMPLETED** | Hover-only safety test |
-| 4.6 | **COMPLETED** | Action Sequence 架构 (MoveAction/GripperAction/ActionExecutor) |
-| 4.7 | **COMPLETED** | Full pick 真实硬件执行验证 |
-| 4.8 | **COMPLETED** | **里程碑: 首次 Runtime 驱动真实硬件抓取** |
-| 5 | **IN_PROGRESS** | Verification Runtime (5.1-5.6 已规划) |
-| 5.1 | PLANNED | Verification Architecture — VerificationResult + stages + reasons |
-| 5.2 | PLANNED | World Model Reader — 订阅/解析 /world_model/objects |
-| 5.3 | PLANNED | Precheck Verification — 执行前确认目标存在 |
-| 5.4 | PLANNED | After Pick Verification — 抓取后确认目标消失 |
-| 5.5 | PLANNED | Verification Logs — /runtime/verification topic |
-| 5.6 | PLANNED | Retry Plan — design only, Sprint 6 implement |
-| 6 | PLANNED | RobotOps / Monitoring |
-| 7 | PLANNED | Teleop / Safety Control |
-| 8 | PLANNED | Skill Library Expansion |
-| 9 | PLANNED | Data Logger / VLA readiness |
+| 1-2 | **COMPLETED** | sketch_runtime 骨架 + TaskBuilder 集成 |
+| 3-4.3 | **COMPLETED** | 测试节点 + Preview/Confirm + IK 安全分级 |
+| 4.4-4.8 | **COMPLETED** | Servo adapter fix + Action Sequence + 真实硬件 pick |
+| 5 | **IN_PROGRESS** | Stable World Model / Perception Runtime (5.1-5.7) |
+| 6 | PLANNED | Verification Runtime (depends on Sprint 5) |
+| 7 | PLANNED | Retry / Recovery |
+| 8 | PLANNED | RobotOps Dashboard |
+| 9 | PLANNED | Teleop / Safety Control |
+| 10 | PLANNED | Data Logger / VLA readiness |
 
 ---
 

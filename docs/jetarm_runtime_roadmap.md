@@ -159,13 +159,116 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 5: Verification Runtime 🔶 IN_PROGRESS
+## Sprint 5: Stable World Model / Perception Runtime 🔶 IN_PROGRESS
 
-**目标**: 不只知道"执行了"，更要知道"成功了"。
+**目标**: 将原始检测流 (`/world_model/roi_objects`) 转换为时间稳定的世界模型 (`/world_model/stable_objects`)。
+
+**Context**: ROI debug overlay 揭示同一物体跨帧 class/color 跳变 (cup red → cup black → cylinder red)。Verification Runtime 必须在稳定世界模型基础上构建。
 
 ---
 
-### Sprint 5.1 — Verification Architecture Plan ⬜ PLANNED
+### Sprint 5.1 — Raw Detection Audit ⬜ PLANNED
+
+**目标**: 量化当前感知不稳定程度。
+
+**任务**:
+- 订阅 `/world_model/roi_objects` 记录 100 帧
+- 统计同一物理物体的 class/color/confidence 变化频率
+- 输出 audit report: 每类物体的稳定率、误检率
+
+**文件**: `docs/roi_perception_audit.md` (documentation only)
+
+---
+
+### Sprint 5.2 — StableObjectTracker ⬜ PLANNED
+
+**目标**: 新建 `StableObjectTracker` 节点。
+
+**核心逻辑**:
+1. 每帧接收 JSON `{"objects": [...]}`
+2. 与已知 tracks 匹配 (IoU 或空间距离 < 0.05m)
+3. 新检测 → 创建 track；未匹配 → TTL 递减
+4. 每个 track 维护 class/color 的历史窗口 (最近 N=10 帧)
+
+**新建文件**: `src/sketch_runtime/sketch_runtime/stable_object_tracker.py`
+
+---
+
+### Sprint 5.3 — Temporal Voting ⬜ PLANNED
+
+**目标**: 同一 track 的 class/color 跨帧投票。
+
+**算法**:
+- 维护最近 10 帧的 class_name 和 color
+- 多数投票决定最终 class_name / color
+- 最小窗口帧数 (min_window=5) – 不足则不发布
+
+**输出**: track 的 stable class_name 和 color
+
+---
+
+### Sprint 5.4 — Confidence Smoothing ⬜ PLANNED
+
+**目标**: 平滑 confidence 减少单帧噪声。
+
+**算法**: EMA (Exponential Moving Average) — `conf_smooth = α*new_conf + (1-α)*old_conf`，α=0.3
+
+---
+
+### Sprint 5.5 — Object TTL ⬜ PLANNED
+
+**目标**: 超时移除不再被检测到的物体。
+
+**逻辑**: `ttl_sec = 2.0`，连续 2 秒未匹配 → 从 tracks 中移除。
+
+---
+
+### Sprint 5.6 — Stable Object Publisher ⬜ PLANNED
+
+**目标**: 新建 `/world_model/stable_objects` topic。
+
+**格式**: 与 `/world_model/roi_objects` 相同的 JSON 结构，增加:
+```json
+{
+  "track_id": "trk_001",
+  "frames_tracked": 15,
+  "class_votes": {"cup": 12, "cylinder": 3},
+  "confidence_smooth": 0.82,
+  "ttl_remaining": 1.8
+}
+```
+
+---
+
+### Sprint 5.7 — Debug Visualization ⬜ PLANNED
+
+**目标**: 在 OpenCV 窗口并排显示 RAW vs STABLE 标签。
+
+**标签格式**: `RAW: cup red 0.73` → `STABLE: cup red 0.78 (15f)` (含跟踪帧数)
+
+---
+
+### Sprint 5 验收标准
+
+- [ ] StableObjectTracker 订阅 RAW 并发布 STABLE
+- [ ] 同一物体跨帧 class/color 稳定
+- [ ] 物体消失后 2 秒内移除
+- [ ] /world_model/stable_objects topic 发布中
+- [ ] grounding_node 可切换使用 stable_objects
+- [ ] 不修改 ROI 检测逻辑
+
+---
+
+## Sprint 6: Verification Runtime ⬜ PLANNED
+
+**目标**: 不只知道"执行了"，更要知道"成功了"。
+
+> **前置条件**: Sprint 5 Stable World Model 完成。
+> **原始 Sprint 5 设计已移至此处** — 见下方 5.1-5.6 原计划。
+
+---
+
+### Sprint 6.1 — Verification Architecture Plan
 
 **目标**: 定义 VerificationResult 数据结构与验证阶段。
 
@@ -177,180 +280,58 @@ class VerificationResult:
     stage: str              # "pre_pick" | "post_pick" | "post_place"
     success: bool
     confidence: float       # 0.0 ~ 1.0
-    reason: str             # "target_found" | "target_missing" | "target_still_at_source" | ...
-    evidence: dict          # {object_count_before, object_count_after, distance_m, ...}
+    reason: str
+    evidence: dict
     timestamp: float
 ```
 
-**验证阶段**:
-| 阶段 | 时机 | 检查内容 |
-|------|------|----------|
-| `precheck_target_exists` | Skill.execute 之前 | 目标物体是否在世界模型中存在 |
-| `after_pick_target_removed` | 抓取 + lift 完成后 | 目标是否从原位置消失 |
-| `after_place_target_present` | 放置完成后 | 目标是否出现在目标区域 |
-
-**失败原因枚举**:
-```python
-class VerificationReason:
-    TARGET_NOT_FOUND = "target_not_found"
-    TARGET_STILL_AT_SOURCE = "target_still_at_source"
-    TARGET_NOT_AT_DESTINATION = "target_not_at_destination"
-    VISION_UNAVAILABLE = "vision_unavailable"
-    VERIFICATION_TIMEOUT = "verification_timeout"
-    VISION_CONFIDENCE_TOO_LOW = "vision_confidence_too_low"
-    OK = "verification_passed"
-```
+**验证阶段**: precheck_target_exists / after_pick_target_removed / after_place_target_present
 
 **新建文件**: `src/sketch_runtime/sketch_runtime/verification_result.py`
 
-**验收标准**:
-- `VerificationResult` dataclass 可独立 import
-- 与 `ExecutionResult` 不冲突
-- 可与 `TaskContext` 关联
-
 ---
 
-### Sprint 5.2 — World Model Reader ⬜ PLANNED
+### Sprint 6.2 — World Model Reader
 
-**目标**: 从 ROS2 topic 读取并解析世界模型 JSON。
-
-**功能**:
-1. 订阅 `/world_model/objects` 或 `/world_model/roi_objects`（通过参数）
-2. 解析 JSON → `[TargetObject]` 列表
-3. 查询接口: `find_by_class(class_name)` / `find_by_color(color)` / `find_by_id(object_id)`
-4. 距离阈值: 判断物体是否在源位置附近（例如 ±0.05m 内认为"仍在原位"）
+**功能**: 订阅 `/world_model/stable_objects` → 解析 JSON → 按 class/color/id 查询 → 距离阈值判断
 
 **新建文件**: `src/sketch_runtime/sketch_runtime/world_model_reader.py`
 
-**ROS2 接口**:
-- 订阅: `/world_model/objects` (可配置)
-- 不发布 — 纯 reader
+---
 
-**验收标准**:
-- 能从 JSON 解析出 `TargetObject` 列表
-- 能按 class/color/id 查询
-- 能判断物体是否仍在源位置（距离阈值）
+### Sprint 6.3 — Precheck Verification
+
+**流程**: PickSkill 执行前 → verify target exists in stable_objects
 
 ---
 
-### Sprint 5.3 — Precheck Verification ⬜ PLANNED
+### Sprint 6.4 — After Pick Verification
 
-**目标**: 执行前确认目标存在。
+**流程**: lift 完成后 → 等待 0.5s → check target disappeared from source area
 
-**流程**:
-```
-PickSkill.precheck() 或 SkillManager 调用时
-  → VerificationNode.precheck_target_exists(ctx)
-    → WorldModelReader.query(class=ctx.target_object.class_name, color=...)
-    → 目标存在? → VerificationResult(success=True, reason="target_found")
-    → 目标不存在? → VerificationResult(success=False, reason="target_not_found")
-```
-
-**集成点**: 插入到 `real_grounded_runtime_node._execute_skill()` 的 precheck 阶段之后、execute 之前。
-
-**参数**: `require_precheck_verification` (默认 `false` — 先默认关闭，逐步开启)
-
-**验收标准**:
-- 开启后，目标不存在时返回 `ExecutionResult(success=False, reason="target_not_found")`
-- 目标存在时正常执行
+**保守策略**: 第一版仅报告 evidence，不自动阻断
 
 ---
 
-### Sprint 5.4 — After Pick Verification ⬜ PLANNED
+### Sprint 6.5 — Verification Logs
 
-**目标**: 抓取后确认目标从原位置消失。
-
-**流程**:
-```
-PickSkill 完成 lift 后
-  → VerificationNode.after_pick(ctx)
-    → 等待 0.5s (视觉刷新)
-    → WorldModelReader.query(class=..., space=source_area)
-    → 目标消失? → success=True, reason="target_removed_from_source"
-    → 目标仍在? → success=False, reason="target_still_at_source", confidence=0.5
-    → 视觉不可用? → success=None (不确定), reason="vision_unavailable"
-```
-
-**保守策略**:
-- 第一版仅报告 evidence，不自动判定任务失败
-- 记录 `object_count_before`, `object_count_after`, `distance_remaining`
-- 在 `/runtime/verification` 发布结果但不阻断执行
-
-**验收标准**:
-- 抓取后发布 `/runtime/verification` 
-- 真实硬件抓取成功后，日志显示 `target_removed_from_source`
-- 视觉不可用时返回 `vision_unavailable` 而非崩溃
+**Topic**: `/runtime/verification` (String JSON)
 
 ---
 
-### Sprint 5.5 — Verification Logs ⬜ PLANNED
+### Sprint 6.6 — Retry Plan (Design Only)
 
-**目标**: 结构化发布验证结果。
-
-**ROS2 Topic**: `/runtime/verification` (`String` JSON)
-
-**消息格式**:
-```json
-{
-  "task_id": "task_a1b2c3_1715900000",
-  "stage": "after_pick",
-  "success": true,
-  "confidence": 0.85,
-  "reason": "target_removed_from_source",
-  "evidence": {
-    "object_count_before": 3,
-    "object_count_after": 2,
-    "missing_class": "cube",
-    "missing_color": "red",
-    "source_distance_m": 0.0,
-    "vision_age_ms": 320
-  },
-  "timestamp": 1715900010.0
-}
-```
-
-**发布节点**: `real_grounded_runtime_node` 或独立 `verification_node`
-
-**验收标准**:
-- `/runtime/verification` topic 可用
-- 至少 precheck 和 post_pick 两个阶段的消息格式一致
+**方案**: offset_retry / ask_user_confirm，Sprint 7 实现
 
 ---
 
-### Sprint 5.6 — Retry Plan ⬜ PLANNED (Planning Only)
+## Sprint 7: Retry / Recovery ⬜ PLANNED
 
-**目标**: 设计 retry 机制但不在 Sprint 5 实现。
-
-**设计方案**:
-1. Verification 返回 `success=False` → Executor 决策 retry
-2. Retry 策略:
-   - `offset_retry`: 轻微偏移目标位姿重试 (最多 3 次)
-   - `ask_user`: 发布 `/runtime/confirm_retry` 等待用户确认
-3. `TaskContext.retry_count` 追踪重试次数
-4. `max_retries` 默认为 2
-
-**Sprint 5 不实现 retry** — 仅记录 evidence，供后续决策。
-
-**验收标准**:
-- `retry_count` / `max_retries` 字段已在 TaskContext 中
-- 设计方案文档化供 Sprint 6 实现
+**目标**: 验证失败后自动或手动重试。
 
 ---
 
-### Sprint 5 总体验收标准
-
-- [ ] VerificationResult 数据结构定义完成
-- [ ] WorldModelReader 可读取 /world_model/objects 并解析
-- [ ] precheck 可阻断"目标不存在"的任务
-- [ ] after_pick 可发布 evidence（不阻断）
-- [ ] `/runtime/verification` topic 发布标准化 JSON
-- [ ] verification 默认关闭，通过参数开启
-- [ ] 不影响现有 real pick flow
-- [ ] 0 行修改到 servo_controller / kinematics / ros_robot_controller
-
----
-
-## Sprint 6: RobotOps / Monitoring ⬜ PLANNED
+## Sprint 8: RobotOps / Monitoring ⬜ PLANNED
 
 **目标**: 每个任务可追踪、可复盘。
 
@@ -364,7 +345,7 @@ PickSkill 完成 lift 后
 
 ---
 
-## Sprint 7: Teleop / Safety Control ⬜ PLANNED
+## Sprint 9: Teleop / Safety Control ⬜ PLANNED
 
 **目标**: 遥控输入 + 控制权仲裁。
 
@@ -372,35 +353,12 @@ PickSkill 完成 lift 后
 - 控制状态: `AUTO` / `MANUAL` / `PAUSED` / `EMERGENCY_STOP`
 - 键盘/手柄/Web 遥控输入
 - `control_arbiter_node` — 所有权仲裁
-- Manual 模式下自动任务被阻塞
-- 每次控制权切换记录日志
 
 ---
 
-## Sprint 8: Skill Library Expansion ⬜ PLANNED
-
-**目标**: 从单一 PickSkill 扩展到完整 Skill 库。
-
-**计划 Skill**:
-- `MoveToSkill` — 移动到指定位姿
-- `OpenGripperSkill` — 张开夹爪
-- `CloseGripperSkill` — 闭合夹爪
-- `PlaceSkill` — 放置 (hover→approach→open→lift)
-- `HomeSkill` — 回到初始位姿
-- `ScanSkill` — 环境扫描 (未来)
-
----
-
-## Sprint 9: Data Logger / VLA Readiness ⬜ PLANNED
+## Sprint 10: Data Logger / VLA Readiness ⬜ PLANNED
 
 **目标**: 为 VLA 数据集构建准备数据采集管道。
-
-**任务**:
-- 记录: 视觉帧 → target_pose → IK pulse → servo trajectory → 操作员干预
-- 任务成功/失败标签
-- 轨迹回放
-- VLA 数据集格式导出
-- 数据版本控制
 
 ---
 
