@@ -87,23 +87,11 @@ PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 
 ---
 
-## Current Unresolved Issue: Servo Message Adapter
+## Current Blocking Issue: Perception Instability
 
-~~`enable_real_servo=true` 发布 servo 时消息格式错误~~ **已修复 (Sprint 4.4)**。位置字段已改为 `float()` 显式转换。
+ROI debug overlay 揭示: 同一物理物体跨帧 class/color 跳变 (`cup red` → `cup black` → `cylinder red`)。`/world_model/roi_objects` 是原始检测流，Verification Runtime 需要稳定世界模型。详见 [Sprint 5: Stable World Model](jetarm_runtime_roadmap.md).
 
 ## Current Known Limitations
-
-**Symptom**: `enable_real_servo=true` publishes to `/servo_controller` but fails:
-```
-"The 'position' field must be of type 'float'"
-```
-Mechanical arm does not move.
-
-**Root cause**: The `ServoPosition` message definition differs between `servo_controller_msgs` and `ros_robot_controller_msgs`:
-- `servo_controller_msgs/ServoPosition`: `uint16 id`, `float32 position`
-- `ros_robot_controller_msgs/ServoPosition`: `uint16 id`, `uint16 position`
-
-RuntimeAdapter currently imports from `servo_controller_msgs` but the `controller_manager` may expect a different format or field type.
 
 **Next Sprint (4.4)**: Inspect working servo publish format from old code (`executor_node.py`, `grasp.py`, `actions.py`), map arm pulses to correct servo IDs, fix message field types.
 

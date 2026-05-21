@@ -1,6 +1,6 @@
 # JetArm Robot Runtime v0.1 — 开发路线图
 
-> 合并原始 Roadmap + 当前实施进度 + Sprint 4.4→9 计划
+> 合并原始 Roadmap + 当前实施进度 + Sprint 5→10 计划
 > 状态标记: ✅ COMPLETED | 🔶 IN_PROGRESS | ⬜ PLANNED | ⏸ DEFERRED
 > 最后更新：2026-05-20
 > **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
@@ -263,8 +263,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 **目标**: 不只知道"执行了"，更要知道"成功了"。
 
-> **前置条件**: Sprint 5 Stable World Model 完成。
-> **原始 Sprint 5 设计已移至此处** — 见下方 5.1-5.6 原计划。
+> **前置条件**: Sprint 5 Stable World Model 完成 (`/world_model/stable_objects`)。
 
 ---
 
