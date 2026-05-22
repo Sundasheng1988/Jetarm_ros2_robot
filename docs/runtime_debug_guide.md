@@ -643,3 +643,57 @@ cat /tmp/runtime_test.log | grep -E "\[[0-9]/7\]|success|FAIL|evidence"
 - `runtime_test_node` 发布到 `/executor/done`（与 `executor_done_sayer` 兼容）
 - 所有 adapter 调用均为 `dry_run=True`，不触碰 `/servo_controller` 或 `/ros_robot_controller/bus_servo/set_position`
 - 与 `ground_executor_node` 可同时运行，互不干扰
+
+---
+
+## 13. Perception Audit (ROI Detection Stability)
+
+审计 ROI 检测输出的类名/颜色/置信度稳定性。
+
+```bash
+# 构建 app 包
+cd ~/ros2_ws
+colcon build --packages-select app --symlink-install
+source install/setup.bash
+
+# 运行审计（默认 100 帧，最大 30 秒）
+ros2 run app roi_detection_audit_node
+
+# 自定义样本数
+ros2 run app roi_detection_audit_node --ros-args -p sample_count:=200
+
+# 自定义输出目录
+ros2 run app roi_detection_audit_node --ros-args -p output_dir:=/tmp/my_audit
+
+# 查看结果
+cat artifacts/perception_audit/roi_perception_audit.md
+cat artifacts/perception_audit/audit_summary.json
+cat artifacts/perception_audit/raw_samples.jsonl
+```
+
+**产出文件**：
+
+| 文件 | 用途 |
+|------|------|
+| `artifacts/perception_audit/raw_samples.jsonl` | 逐帧原始检测数据 |
+| `artifacts/perception_audit/audit_summary.json` | 结构化审计指标 (JSON) |
+| `artifacts/perception_audit/roi_perception_audit.md` | 可读审计报告 (Markdown) |
+
+**审计指标说明**：
+
+- `label_stability_ratio` — 主导标签占比，< 0.75 标记为 UNSTABLE
+- `class_stability_ratio` — 主导类名占比
+- `color_stability_ratio` — 主导颜色占比
+- `label_switch_count` — 标签跨帧切换次数
+- `confidence_mean` — 该物体在所有帧中的平均置信度
+- `xyz_std` — 世界坐标离散度
+
+**关键参数**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `sample_count` | 100 | 采集帧数 |
+| `max_duration_sec` | 30.0 | 最大采集时长 |
+| `distance_threshold` | 0.05 | 同物体空间匹配阈值 (m) |
+| `topic` | `/world_model/roi_objects` | 审计源 topic |
+| `output_dir` | `artifacts/perception_audit` | 输出目录 |

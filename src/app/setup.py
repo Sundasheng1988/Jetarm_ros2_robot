@@ -32,6 +32,7 @@ setup(
             'test_calculation = app.test_calculation: main',
             'object_detection = app.object_detection_node: main',
             'roi_color_detector_node = app.roi_color_detector_node:main',
+            'roi_detection_audit_node = app.roi_detection_audit_node:main',
         ]
     },
 )
