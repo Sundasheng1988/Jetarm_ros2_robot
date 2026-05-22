@@ -697,3 +697,39 @@ cat artifacts/perception_audit/raw_samples.jsonl
 | `distance_threshold` | 0.05 | 同物体空间匹配阈值 (m) |
 | `topic` | `/world_model/roi_objects` | 审计源 topic |
 | `output_dir` | `artifacts/perception_audit` | 输出目录 |
+
+---
+
+## 14. Stable Object Tracker
+
+对 RAW 检测进行空间匹配 + 时间投票平滑，输出稳定的 world_model。
+
+```bash
+# 构建 app 包
+cd ~/ros2_ws
+colcon build --packages-select app --symlink-install
+source install/setup.bash
+
+# 启动稳定化层
+ros2 run app stable_object_tracker_node
+
+# 自定义参数
+ros2 run app stable_object_tracker_node --ros-args \
+  -p voting_window:=30 -p ttl_sec:=5.0 -p ema_alpha:=0.15
+
+# 对比 RAW vs STABLE
+ros2 topic echo /world_model/roi_objects --once
+ros2 topic echo /world_model/stable_objects --once
+```
+
+**关键参数**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `input_topic` | `/world_model/roi_objects` | 原始检测流 |
+| `output_topic` | `/world_model/stable_objects` | 稳定化输出 |
+| `distance_threshold` | 0.05 | 空间匹配阈值 (m) |
+| `voting_window` | 20 | 投票窗口帧数 |
+| `min_frames` | 5 | 最少帧数才发布 |
+| `ttl_sec` | 3.0 | 物体消失超时 (s) |
+| `ema_alpha` | 0.2 | 置信度 EMA 系数 |
