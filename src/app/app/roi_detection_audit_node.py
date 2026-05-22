@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 from app.audit_utils import (
@@ -44,7 +45,12 @@ class RoiDetectionAuditNode(Node):
         self.start_ts: float = time.time()
 
         self.create_subscription(
-            String, self.audit_topic, self._on_msg, 10
+            String, self.audit_topic, self._on_msg,
+            QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=10,
+            ),
         )
         self._check_timer = self.create_timer(0.5, self._check_complete)
 
