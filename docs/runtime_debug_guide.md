@@ -733,3 +733,39 @@ ros2 topic echo /world_model/stable_objects --once
 | `min_frames` | 5 | 最少帧数才发布 |
 | `ttl_sec` | 3.0 | 物体消失超时 (s) |
 | `ema_alpha` | 0.2 | 置信度 EMA 系数 |
+
+---
+
+## 15. Perception Fusion Node
+
+融合 YOLO 语义类名与 ROI 颜色/位姿，输出统一的感知表示。
+
+```bash
+# 构建 app 包
+cd ~/ros2_ws
+colcon build --packages-select app --symlink-install
+source install/setup.bash
+
+# 启动融合节点
+ros2 run app perception_fusion_node
+
+# 自定义参数
+ros2 run app perception_fusion_node --ros-args \
+  -p distance_threshold:=0.08 -p publish_rate_hz:=3.0
+
+# 查看融合输出
+ros2 topic echo /world_model/perception_objects
+```
+
+**关键参数**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `yolo_topic` | `/world_model/objects` | YOLO 输入 |
+| `roi_topic` | `/world_model/roi_objects` | ROI 输入 |
+| `output_topic` | `/world_model/perception_objects` | 融合输出 |
+| `distance_threshold` | 0.06 | 空间匹配阈值 (m) |
+| `cache_ttl_sec` | 2.0 | 缓存生命周期 (s) |
+| `publish_rate_hz` | 3.0 | 发布频率 (Hz) |
+
+**融合规则**：YOLO 提供语义类名，ROI 提供颜色和位姿。匹配者输出 `source: yolo_roi_fused`，仅 ROI 输出 `roi_only`，仅 YOLO 输出 `yolo_only` (color=unknown)。

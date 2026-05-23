@@ -341,7 +341,13 @@ class RoiColorDetectorNode(Node):
                 circ = 4.0*np.pi*A/(P*P + 1e-9)
 
                 target_cls = None
-                if circ >= 0.60 and min(w, h) >= self.cup_min_size_px:
+                approx_poly = cv2.approxPolyDP(c, 0.02 * P, True)
+                ar = w / float(h)
+                right_cnt = right_angle_count(approx_poly)
+
+                if right_cnt >= 3 and 0.70 <= ar <= 1.35:
+                    target_cls = 'cube'
+                elif circ >= 0.60 and min(w, h) >= self.cup_min_size_px:
                     target_cls = 'cup'
                 else:
                     is_ball_by_color = (color in self.ball_colors and circ >= self.ball_circ)
@@ -355,14 +361,15 @@ class RoiColorDetectorNode(Node):
                     else:
                         if circ >= self.cyl_circ:
                             target_cls = 'cylinder'
-                if target_cls is None and color == 'red':
-                    ar = w/float(h)
-                    if 0.75 <= ar <= 1.25 and right_angle_count(cv2.approxPolyDP(c, 0.02*P, True)) >= 3:
-                        target_cls = 'cube'
                 if target_cls is None:
                     continue
 
                 true_color = self._dominant_color_key(lab, c)
+                self.get_logger().debug(
+                    f"detect: {target_cls} {true_color} "
+                    f"conf={det.confidence[-1]:.2f} "
+                    f"circ={circ:.3f} ar={ar:.2f} right_cnt={right_cnt}"
+                )
                 xyz = self._pix_to_world(u, v)
 
                 # 估计世界系 yaw

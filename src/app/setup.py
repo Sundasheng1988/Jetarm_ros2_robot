@@ -34,6 +34,7 @@ setup(
             'roi_color_detector_node = app.roi_color_detector_node:main',
             'roi_detection_audit_node = app.roi_detection_audit_node:main',
             'stable_object_tracker_node = app.stable_object_tracker_node:main',
+            'perception_fusion_node = app.perception_fusion_node:main',
         ]
     },
 )
