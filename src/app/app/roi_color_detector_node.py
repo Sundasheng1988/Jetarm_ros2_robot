@@ -1,4 +1,3 @@
-# roi_color_detector_node.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -30,12 +29,24 @@ def rodrigues_rt_from_T(T: np.ndarray):
     return rvec, t
 
 def right_angle_count(poly: np.ndarray) -> int:
+    """Count near-right angles in an approximated contour polygon.
+
+    cv2.approxPolyDP() can return 3, 4, or more points. The previous
+    implementation assumed exactly 4 points and crashed on triangles.
+    """
     pts = poly.reshape(-1, 2)
+    n = len(pts)
+    if n < 4:
+        return 0
+
     right = 0
-    for i in range(4):
-        v1 = pts[(i+1) % 4] - pts[i]
-        v2 = pts[(i-1) % 4] - pts[i]
-        c = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
+    for i in range(n):
+        v1 = pts[(i + 1) % n] - pts[i]
+        v2 = pts[(i - 1) % n] - pts[i]
+        norm = np.linalg.norm(v1) * np.linalg.norm(v2)
+        if norm < 1e-9:
+            continue
+        c = np.dot(v1, v2) / norm
         ang = abs(np.degrees(np.arccos(np.clip(c, -1, 1))))
         if 70 <= ang <= 110:
             right += 1
@@ -367,7 +378,7 @@ class RoiColorDetectorNode(Node):
                 true_color = self._dominant_color_key(lab, c)
                 self.get_logger().debug(
                     f"detect: {target_cls} {true_color} "
-                    f"conf={det.confidence[-1]:.2f} "
+                    f"conf={float(min(0.99, max(0.50, circ))):.2f} "
                     f"circ={circ:.3f} ar={ar:.2f} right_cnt={right_cnt}"
                 )
                 xyz = self._pix_to_world(u, v)
@@ -475,4 +486,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
