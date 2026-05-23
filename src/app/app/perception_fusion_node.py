@@ -15,6 +15,7 @@ from app.perception_fusion_utils import (
     build_fused_object,
     build_roi_only_object,
     build_yolo_only_object,
+    deduplicate_entries,
     match_objects,
     prune_cache,
 )
@@ -104,8 +105,11 @@ class PerceptionFusionNode(Node):
         prune_cache(self._yolo_cache, now, self.cache_ttl_sec)
         prune_cache(self._roi_cache, now, self.cache_ttl_sec)
 
+        roi_unique = deduplicate_entries(self._roi_cache, self.distance_threshold)
+        yolo_unique = deduplicate_entries(self._yolo_cache, self.distance_threshold)
+
         fused, roi_only, yolo_only = match_objects(
-            self._roi_cache, self._yolo_cache, self.distance_threshold
+            roi_unique, yolo_unique, self.distance_threshold
         )
 
         objects_out = []

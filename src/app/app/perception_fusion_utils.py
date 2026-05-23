@@ -45,6 +45,30 @@ def prune_cache(cache: List[Dict[str, Any]], now: float, ttl_sec: float) -> None
     cache[:] = [e for e in cache if (now - e.get("updated_at", 0.0)) <= ttl_sec]
 
 
+def deduplicate_entries(
+    entries: List[Dict[str, Any]], distance_threshold: float
+) -> List[Dict[str, Any]]:
+    if not entries:
+        return []
+
+    sorted_entries = sorted(
+        entries,
+        key=lambda e: (-e.get("updated_at", 0.0), -e.get("confidence", 0.0)),
+    )
+
+    kept = []
+    for entry in sorted_entries:
+        duplicate = False
+        for k in kept:
+            if euclidean_distance(entry["xyz"], k["xyz"]) < distance_threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(entry)
+
+    return kept
+
+
 def match_objects(
     roi_cache: List[Dict[str, Any]],
     yolo_cache: List[Dict[str, Any]],

@@ -8,6 +8,7 @@ from app.perception_fusion_utils import (
     build_fused_object,
     build_roi_only_object,
     build_yolo_only_object,
+    deduplicate_entries,
     match_objects,
     prune_cache,
 )
@@ -206,3 +207,81 @@ def test_confidence_min():
     roi = _make_cache_entry({"confidence": 0.45, "source": "roi"})
     obj = build_fused_object(yolo, roi, 0.01, 1000.0)
     assert obj["confidence"] == 0.45
+
+
+# ============================================================
+# deduplicate_entries
+# ============================================================
+
+def test_deduplicate_identical():
+    entries = [
+        _make_cache_entry({"cache_id": 1, "updated_at": 1000.0, "confidence": 0.8}),
+        _make_cache_entry({"cache_id": 2, "updated_at": 1000.5, "confidence": 0.7}),
+    ]
+    result = deduplicate_entries(entries, 0.06)
+    assert len(result) == 1
+    assert result[0]["cache_id"] == 2  # newer wins
+
+
+def test_deduplicate_different():
+    entries = [
+        _make_cache_entry({"cache_id": 1, "xyz": (0.2, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, 0]}}),
+        _make_cache_entry({"cache_id": 2, "xyz": (0.5, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.5, 0.0, 0.03], "rpy": [0, 0, 0]}}),
+    ]
+    result = deduplicate_entries(entries, 0.06)
+    assert len(result) == 2
+
+
+def test_deduplicate_newest_wins():
+    entries = [
+        _make_cache_entry({"cache_id": 1, "updated_at": 1000.0, "confidence": 0.9}),
+        _make_cache_entry({"cache_id": 2, "updated_at": 1003.0, "confidence": 0.5}),
+    ]
+    result = deduplicate_entries(entries, 0.06)
+    assert len(result) == 1
+    assert result[0]["cache_id"] == 2
+
+
+def test_deduplicate_same_time_higher_conf_wins():
+    entries = [
+        _make_cache_entry({"cache_id": 1, "updated_at": 1000.0, "confidence": 0.6}),
+        _make_cache_entry({"cache_id": 2, "updated_at": 1000.0, "confidence": 0.9}),
+    ]
+    result = deduplicate_entries(entries, 0.06)
+    assert len(result) == 1
+    assert result[0]["cache_id"] == 2
+
+
+def test_deduplicate_empty():
+    result = deduplicate_entries([], 0.06)
+    assert result == []
+
+
+def test_deduplicate_at_threshold_kept():
+    entries = [
+        _make_cache_entry({"cache_id": 1, "xyz": (0.0, 0.0, 0.0),
+                           "pose": {"frame": "base", "xyz": [0.0, 0.0, 0.0], "rpy": [0, 0, 0]}}),
+        _make_cache_entry({"cache_id": 2, "xyz": (0.06, 0.0, 0.0),
+                           "pose": {"frame": "base", "xyz": [0.06, 0.0, 0.0], "rpy": [0, 0, 0]}}),
+    ]
+    result = deduplicate_entries(entries, 0.06)
+    assert len(result) == 2  # exactly at threshold (< not <=)
+
+
+def test_deduplicate_multiple_groups():
+    entries = [
+        _make_cache_entry({"cache_id": 1, "updated_at": 1003.0, "xyz": (0.2, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, 0]}}),
+        _make_cache_entry({"cache_id": 2, "updated_at": 1000.0, "xyz": (0.2, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, 0]}}),
+        _make_cache_entry({"cache_id": 3, "updated_at": 1002.0, "xyz": (0.5, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.5, 0.0, 0.03], "rpy": [0, 0, 0]}}),
+        _make_cache_entry({"cache_id": 4, "updated_at": 1001.0, "xyz": (0.5, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.5, 0.0, 0.03], "rpy": [0, 0, 0]}}),
+    ]
+    result = deduplicate_entries(entries, 0.06)
+    assert len(result) == 2
+    ids = {e["cache_id"] for e in result}
+    assert ids == {1, 3}  # newest per group
