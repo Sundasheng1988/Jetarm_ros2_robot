@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Perception fusion utilities for JetArm ROS2.
+
+Fusion policy:
+  YOLO    - semantic class_name (trusted for object identity)
+  ROI     - color, pose.xyz, pose.rpy (trusted for spatial/color info)
+
+Matching: spatial distance < distance_threshold -> fused output.
+  - yolo_roi_fused:  class_name=YOLO, color/pose=ROI
+  - roi_only:        ROI data (fallback for objects YOLO doesn't detect, e.g. red cubes)
+  - yolo_only:       YOLO data with color="unknown"
+"""
 
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -106,6 +118,7 @@ def match_objects(
 def build_fused_object(
     yolo_entry: Dict[str, Any], roi_entry: Dict[str, Any], match_distance: float, now: float
 ) -> Dict[str, Any]:
+    """Build fused output: YOLO class_name + ROI color/pose + min confidence."""
     return {
         "class_name": yolo_entry["class_name"],
         "color": roi_entry.get("color", "unknown"),
@@ -120,6 +133,7 @@ def build_fused_object(
 
 
 def build_roi_only_object(roi_entry: Dict[str, Any], now: float) -> Dict[str, Any]:
+    """Build ROI-only output: retains ROI class/color/pose (fallback for non-YOLO objects)."""
     return {
         "class_name": roi_entry["class_name"],
         "color": roi_entry.get("color", "unknown"),
@@ -131,6 +145,7 @@ def build_roi_only_object(roi_entry: Dict[str, Any], now: float) -> Dict[str, An
 
 
 def build_yolo_only_object(yolo_entry: Dict[str, Any], now: float) -> Dict[str, Any]:
+    """Build YOLO-only output: retains YOLO class_name/pose, color is 'unknown'."""
     return {
         "class_name": yolo_entry["class_name"],
         "color": "unknown",

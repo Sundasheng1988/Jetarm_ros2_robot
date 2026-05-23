@@ -159,103 +159,92 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 5: Stable World Model / Perception Runtime 🔶 IN_PROGRESS
+## Sprint 5: Stable World Model / Perception Fusion 🔶 IN_PROGRESS
 
-**目标**: 将原始检测流 (`/world_model/roi_objects`) 转换为时间稳定的世界模型 (`/world_model/stable_objects`)。
+**目标**: YOLO + ROI 感知融合 → StableObjectTracker 时序稳定 → 供 Grounding 消费。
 
-**Context**: ROI debug overlay 揭示同一物体跨帧 class/color 跳变 (cup red → cup black → cylinder red)。Verification Runtime 必须在稳定世界模型基础上构建。
+**Context**: ROI 形状分类不稳定，YOLO 语义稳定但无颜色/可靠位姿。Fusion 解决互补问题。ROI 颜色/类名不稳定仍为已知限制。
 
 ---
 
-### Sprint 5.1 — Raw Detection Audit ⬜ PLANNED
+### Sprint 5.1 — Raw Detection Audit ✅ COMPLETED
 
 **目标**: 量化当前感知不稳定程度。
 
-**任务**:
-- 订阅 `/world_model/roi_objects` 记录 100 帧
-- 统计同一物理物体的 class/color/confidence 变化频率
-- 输出 audit report: 每类物体的稳定率、误检率
+**成果**:
+- `roi_detection_audit_node` — 收集 100 帧 ROI 检测，量化 label stability
+- 发现同一物体跨帧 class/color 跳变 (cup red → cup black → cylinder red)，label_stability_ratio ≈ 0.57
+- 输出 `artifacts/perception_audit/roi_perception_audit.md`
 
-**文件**: `docs/roi_perception_audit.md` (documentation only)
+**文件**: `src/app/app/roi_detection_audit_node.py`, `src/app/app/audit_utils.py`
 
 ---
 
-### Sprint 5.2 — StableObjectTracker ⬜ PLANNED
+### Sprint 5.2 — StableObjectTracker 🔶 IMPLEMENTED (integration pending)
 
 **目标**: 新建 `StableObjectTracker` 节点。
 
-**核心逻辑**:
-1. 每帧接收 JSON `{"objects": [...]}`
-2. 与已知 tracks 匹配 (IoU 或空间距离 < 0.05m)
-3. 新检测 → 创建 track；未匹配 → TTL 递减
-4. 每个 track 维护 class/color 的历史窗口 (最近 N=10 帧)
+**成果**:
+- 空间追踪 + 20 帧多数投票 + EMA 置信度平滑 (`α=0.2`) + TTL 3 秒
+- 输入 `/world_model/roi_objects` → 输出 `/world_model/stable_objects`
+- 24 个单元测试通过
+- ⚠ 输入目前为 raw ROI，待 Sprint 5.5 切换到 `/world_model/perception_objects`
 
-**新建文件**: `src/sketch_runtime/sketch_runtime/stable_object_tracker.py`
-
----
-
-### Sprint 5.3 — Temporal Voting ⬜ PLANNED
-
-**目标**: 同一 track 的 class/color 跨帧投票。
-
-**算法**:
-- 维护最近 10 帧的 class_name 和 color
-- 多数投票决定最终 class_name / color
-- 最小窗口帧数 (min_window=5) – 不足则不发布
-
-**输出**: track 的 stable class_name 和 color
+**文件**: `src/app/app/stable_object_tracker_node.py`, `src/app/app/stable_tracker_utils.py`
 
 ---
 
-### Sprint 5.4 — Confidence Smoothing ⬜ PLANNED
+### Sprint 5.3 — ROI Shape/Color Robustness ⏸ DEFERRED / PARTIAL
 
-**目标**: 平滑 confidence 减少单帧噪声。
+**目标**: 修复 ROI 颜色与形状分类不稳定。
 
-**算法**: EMA (Exponential Moving Average) — `conf_smooth = α*new_conf + (1-α)*old_conf`，α=0.3
+**状态**: 部分调研完成，未正式完成。
 
----
+- `right_angle_count` cube-before-cup 重排已实验性实现
+- 但 ROI 颜色/类名不稳定仍未根本解决
+- 战略决策：减少对 ROI class_name 的依赖，以 YOLO 语义为主，ROI 提供 pose/color/yaw
+- 保留 `roi_only` 作为 YOLO 词汇外物体（如红色方块）的 fallback
+- 后续 StableObjectTracker 在融合之后运行，过滤残留的不稳定
 
-### Sprint 5.5 — Object TTL ⬜ PLANNED
-
-**目标**: 超时移除不再被检测到的物体。
-
-**逻辑**: `ttl_sec = 2.0`，连续 2 秒未匹配 → 从 tracks 中移除。
-
----
-
-### Sprint 5.6 — Stable Object Publisher ⬜ PLANNED
-
-**目标**: 新建 `/world_model/stable_objects` topic。
-
-**格式**: 与 `/world_model/roi_objects` 相同的 JSON 结构，增加:
-```json
-{
-  "track_id": "trk_001",
-  "frames_tracked": 15,
-  "class_votes": {"cup": 12, "cylinder": 3},
-  "confidence_smooth": 0.82,
-  "ttl_remaining": 1.8
-}
-```
+**文件**: `src/app/app/roi_color_detector_node.py` (实验性修改，未完成)
 
 ---
 
-### Sprint 5.7 — Debug Visualization ⬜ PLANNED
+### Sprint 5.4 — Perception Fusion Node ✅ COMPLETED
 
-**目标**: 在 OpenCV 窗口并排显示 RAW vs STABLE 标签。
+**目标**: YOLO + ROI 融合节点。
 
-**标签格式**: `RAW: cup red 0.73` → `STABLE: cup red 0.78 (15f)` (含跟踪帧数)
+**成果**:
+- YOLO class_name + ROI color/pose/rpy → `/world_model/perception_objects`
+- 空间距离 < 0.06m → `yolo_roi_fused`；无匹配 → `roi_only` / `yolo_only`
+- 缓存 TTL 2 秒 + 空间去重 + 3 Hz 发布
+- 19 个单元测试 (含去重逻辑)
+
+**文件**: `src/app/app/perception_fusion_node.py`, `src/app/app/perception_fusion_utils.py`
 
 ---
 
-### Sprint 5 验收标准
+### Sprint 5.5 — StableObjectTracker Input Switch ⬜ NEXT
 
-- [ ] StableObjectTracker 订阅 RAW 并发布 STABLE
-- [ ] 同一物体跨帧 class/color 稳定
-- [ ] 物体消失后 2 秒内移除
-- [ ] /world_model/stable_objects topic 发布中
-- [ ] grounding_node 可切换使用 stable_objects
-- [ ] 不修改 ROI 检测逻辑
+**目标**: StableObjectTracker 输入从 `/world_model/roi_objects` 切换到 `/world_model/perception_objects`。
+
+---
+
+### Sprint 5.6 — Grounding Switch to Stable ⬜ PLANNED
+
+**目标**: grounding_node 从 `/world_model/roi_objects` 切换到 `/world_model/stable_objects`。
+
+---
+
+### Sprint 5 验收标准 (更新)
+
+- [x] ROI audit 完成，数据量化
+- [x] StableObjectTracker 发布 `/world_model/stable_objects`
+- [x] PerceptionFusionNode 发布 `/world_model/perception_objects`
+- [x] YOLO 语义 + ROI 位姿/颜色融合规则确立
+- [ ] StableObjectTracker 输入切换到 perception_objects
+- [ ] grounding_node 切换到 stable_objects
+- [ ] 不修改 ROI 检测逻辑、YOLO 检测逻辑
 
 ---
 

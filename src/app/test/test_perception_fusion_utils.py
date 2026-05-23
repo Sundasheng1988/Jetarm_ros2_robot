@@ -210,6 +210,29 @@ def test_confidence_min():
 
 
 # ============================================================
+# mixed output coexistence
+# ============================================================
+
+def test_roi_only_and_yolo_only_coexist():
+    yolo = [
+        _make_cache_entry({"cache_id": 1, "source": "yolo", "color": None, "class_name": "cup",
+                           "xyz": (0.5, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.5, 0.0, 0.03], "rpy": [0, 0, 1.57]}}),
+    ]
+    roi = [
+        _make_cache_entry({"cache_id": 2, "source": "roi", "class_name": "cube", "color": "red",
+                           "xyz": (0.2, 0.0, 0.03),
+                           "pose": {"frame": "base", "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5]}}),
+    ]
+    fused, roi_only, yolo_only = match_objects(roi, yolo, 0.06)
+    assert len(fused) == 0
+    assert len(roi_only) == 1
+    assert len(yolo_only) == 1
+    assert roi_only[0]["source"] == "roi"
+    assert yolo_only[0]["source"] == "yolo"
+
+
+# ============================================================
 # deduplicate_entries
 # ============================================================
 

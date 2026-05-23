@@ -1,6 +1,6 @@
 # JetArm Robot Runtime — Documentation Index
 
-> 最后更新：2026-05-20 | 当前 Sprint: 5 (Stable World Model) | 下一个 Sprint: 6 (Verification Runtime)
+> 最后更新：2026-05-23 | 当前 Sprint: 5 (Perception Fusion + Stable World Model) | 下一个 Sprint: 6 (Verification Runtime)
 
 ---
 
@@ -9,10 +9,10 @@
 | 项 | 状态 |
 |----|------|
 | **里程碑** | **✅ 首次 Runtime 驱动的真实机械臂抓取执行验证通过** |
-| **当前 Sprint** | 5 — Stable World Model / Perception Runtime (`🔴` 阻塞 Sprint 6) |
-| **已解决** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI debug overlay |
-| **未解决** | **ROI 感知不稳定** — 同一物体跨帧 class/color 跳变 (cup red → cup black → cylinder red)；无 Verification Runtime；无 retry/logic |
-| **Servo 状态** | ✅ 已修复 — `/servo_controller` 正常发布 |
+| **当前 Sprint** | 5 — Perception Fusion + Stable World Model (`🟡` Fusion 完成，待切换 grounding) |
+| **已完成** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI audit ✅、StableObjectTracker ✅、PerceptionFusionNode ✅ |
+| **进行中** | 将 StableObjectTracker 输入切换到 `/world_model/perception_objects` |
+| **已知限制** | ROI 颜色/类名不稳定 (Sprint 5.3 DEFERRED)；YOLO 语义优先策略降低影响；无 Verification Runtime |
 
 ---
 
@@ -69,6 +69,8 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 | `/runtime/log` | 结构化事件日志 |
 | `/runtime/execution_result` | 执行结果 |
 | `/executor/done` | 执行完成信号 |
+| `/world_model/perception_objects` | YOLO+ROI 融合输出 (perception_fusion_node) |
+| `/world_model/stable_objects` | 稳定世界模型 (StableObjectTracker) |
 
 ---
 
@@ -91,8 +93,8 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 | 1-2 | **COMPLETED** | sketch_runtime 骨架 + TaskBuilder 集成 |
 | 3-4.3 | **COMPLETED** | 测试节点 + Preview/Confirm + IK 安全分级 |
 | 4.4-4.8 | **COMPLETED** | Servo adapter fix + Action Sequence + 真实硬件 pick |
-| 5 | **IN_PROGRESS** | Stable World Model / Perception Runtime (5.1-5.7) |
-| 6 | PLANNED | Verification Runtime (depends on Sprint 5) |
+| 5 | **NEARLY COMPLETE** | Perception Fusion / Stable World Model (5.1 ✅, 5.2 ✅, 5.3 ⏸, 5.4 ✅) |
+| 6 | PLANNED | Verification Runtime (depends on Sprint 5 grounding switch) |
 | 7 | PLANNED | Retry / Recovery |
 | 8 | PLANNED | RobotOps Dashboard |
 | 9 | PLANNED | Teleop / Safety Control |

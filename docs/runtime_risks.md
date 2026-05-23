@@ -858,3 +858,40 @@ Sprint 5 引入 StableObjectTracker：
 - **RobotOps**: 日志中需要记录 RAW 和 STABLE 两个版本用于审计
 
 **优先级**: HIGH — 阻塞 Sprint 6 Verification Runtime
+
+
+---
+
+### R16: Perception Source Mismatch / Fusion Ambiguity
+
+**问题描述**
+
+YOLO 和 ROI 是两类独立检测源：
+- YOLO: 语义类名稳定，无颜色，位姿依赖 IK 查询
+- ROI: 位姿/颜色可靠，类名分类不稳定
+
+融合时存在以下歧义：
+- 两个物理上分离但 ROI 都检测到的物体，YOLO 只检测到一个 → 哪个 ROI 与 YOLO 匹配？
+- YOLO 类名 ("cup") 与 ROI 类名 ("cylinder") 冲突 → fusion 取 YOLO，但 roi_only 仍输出 "cylinder"
+- ROI 输出 `"cube black"` 可能比 YOLO 的 "bottle" 更准确（对红色方块）
+- ROI 颜色 (`"red"` vs `"black"`) 仍会跨帧跳变，LAB 阈值重叠导致误分类
+
+**当前缓解**
+
+| 措施 | 状态 |
+|------|------|
+| YOLO 语义优先 | ✅ 已实现 — fusion 规则固定 YOLO class_name |
+| ROI 位姿优先 | ✅ 已实现 — fusion 输出使用 ROI pose.xyz/rpy |
+| ROI-only 保留 | ✅ 已实现 — 未被匹配的 ROI 对象保留 source=roi_only |
+| yolo_class / roi_class 字段 | ✅ 已实现 — 下游可验证原始来源 |
+| StableObjectTracker after fusion | ✅ 准备就绪 — 时序投票消除残留不稳定 |
+| ROI 颜色/类名根本性修复 | ⏸ 延后 — Sprint 5.3 DEFERRED |
+| 置信度过滤 roi_only | ⏸ 延后 — ROI confidence 源自 contour circularity, 不可靠阈值 |
+
+**影响范围**
+
+- **Skill Runtime**: 抓取目标从 fusion 输出获取，class_name 可信度 > 纯 ROI
+- **Verification**: 验证逻辑对比抓取前后 world_model 状态，fusion source 字段可帮助判断可信度
+- **RobotOps**: 日志需同时记录 yolo_class 和 roi_class 用于审计
+
+**优先级**: P1 — 当前 fusion 规则已缓解，下游 StableObjectTracker 进一步降噪

@@ -554,12 +554,12 @@ graph TD
 
 ## 6. 感知链路重构 — Raw Detection → Stable World Model
 
-> **现状**: `/world_model/roi_objects` 是原始检测流 — 同一物体在不同帧之间 class/color 跳变（cup red → cup black → cylinder red）。
-> **目标**: 在 Grounding 之前插入 StableObjectTracker，提供时间稳定的物体表达。
+> **现状**: `/world_model/roi_objects` 是原始检测流 — 同一物体在不同帧之间 class/color 跳变（cup red → cup black → cylinder red）。YOLO `/world_model/objects` 提供稳定语义类名但无颜色/可靠位姿。
+> **目标**: YOLO + ROI 在 Grounding 之前融合 → StableObjectTracker 时序稳定 → 供 Grounding 消费。
 
 ```mermaid
 graph TD
-    subgraph CURRENT["🔴 当前 (Superseded after Sprint 5)"]
+    subgraph CURRENT["🔴 旧架构 (Sprint 5 之前)"]
         CAM1["深度相机"]
         ROI1["roi_color_detector_node"]
         WM_RAW1["/world_model/roi_objects<br/>RAW JSON"]
@@ -569,29 +569,92 @@ graph TD
 
     subgraph TARGET["🟢 目标架构 (Sprint 5)"]
         CAM2["深度相机"]
-        ROI2["roi_color_detector_node"]
-        WM_RAW2["/world_model/roi_objects<br/>RAW Detection Stream"]
-        TRACKER["StableObjectTracker<br/>═════════════<br/>Temporal Voting<br/>EMA Confidence Smoothing<br/>Object TTL (timeout)<br/>ID Persistence"]
+        YOLO2["yolo_node<br/>YOLOv8 语义检测"]
+        ROI2["roi_color_detector_node<br/>ROI 颜色+位姿"]
+        WM_YOLO["/world_model/objects<br/>YOLO JSON"]
+        WM_RAW2["/world_model/roi_objects<br/>RAW JSON"]
+        FUSION["perception_fusion_node<br/>空间匹配 + 融合"]
+        WM_FUSED["/world_model/perception_objects<br/>Fused JSON"]
+        TRACKER["StableObjectTracker<br/>═════════════<br/>Temporal Voting<br/>EMA Confidence Smoothing<br/>Object TTL (timeout)"]
         WM_STABLE["/world_model/stable_objects<br/>Stable JSON"]
         GND2["grounding_node<br/>(改用 stable_objects)"]
         RT2["Runtime → ActionExecutor → IK/Servo"]
     end
 
     CAM1 --> ROI1 --> WM_RAW1 --> GND1 --> RT1
-    CAM2 --> ROI2 --> WM_RAW2 --> TRACKER --> WM_STABLE --> GND2 --> RT2
+    CAM2 --> YOLO2 --> WM_YOLO --> FUSION
+    CAM2 --> ROI2 --> WM_RAW2 --> FUSION
+    FUSION --> WM_FUSED --> TRACKER --> WM_STABLE --> GND2 --> RT2
 
     style CURRENT fill:#f8d7da,stroke:#dc3545
     style TARGET fill:#d4edda,stroke:#28a745
+    style FUSION fill:#fff3cd,stroke:#ffc107
     style TRACKER fill:#d1ecf1,stroke:#0c5460
     style WM_STABLE fill:#fff3cd,stroke:#ffc107
 ```
 
 **StableObjectTracker 核心逻辑**:
-- 每帧接收 RAW detections → 与已知 track 匹配 (IoU / 距离)
-- 同一 track 的 class/color 做多数投票 (Temporal Voting)
-- confidence 做 EMA 平滑 (α=0.3)
-- 连续 N 帧未被检测 → TTL 超时移除
+- 每帧接收 RAW detections → 与已知 track 匹配 (空间距离)
+- 同一 track 的 class/color 做多数投票 (Temporal Voting, 窗口=20 帧)
+- confidence 做 EMA 平滑 (α=0.2)
+- 连续未检测 → TTL 超时移除 (3 秒)
 - 输出 `/world_model/stable_objects`
+
+
+
+---
+
+## 7. Perception Fusion Policy
+
+> **生效日期**: Sprint 5.4
+
+### Fusion Pipeline
+
+```
+YOLO /world_model/objects           ROI /world_model/roi_objects
+  (semantic class_name)               (color, pose.xyz, pose.rpy)
+        │                                      │
+        └──────────────┬───────────────────────┘
+                       ▼
+           perception_fusion_node
+               │
+               ▼
+    /world_model/perception_objects
+               │
+               ▼
+        StableObjectTracker
+               │
+               ▼
+    /world_model/stable_objects
+               │
+               ▼
+           grounding → Runtime
+```
+
+### Source Priority
+
+| Source | Trusted For | Reason |
+|--------|-------------|--------|
+| YOLO   | semantic class_name | YOLOv8 provides stable COCO-class labels; not dependent on lighting |
+| ROI    | color, pose.xyz, pose.rpy | LAB + geometric projection provides accurate world coordinates and yaw |
+| ROI    | fallback class_name | Some objects (red cubes/blocks) are not in YOLO's vocabulary → ROI shape classifier as fallback |
+
+**Note**: ROI class_name is lower trust than YOLO. ROI shape/color classification is known to be unstable across frames (Sprint 5.3 deferred). Strategic decision: YOLO semantic priority, ROI spatial/color priority.
+
+### Fusion Rules
+
+| Match | class_name | color | pose | source | Extra fields |
+|-------|-----------|-------|------|--------|-------------|
+| YOLO + ROI (dist < 0.06m) | YOLO | ROI | ROI (xyz+rpy) | `yolo_roi_fused` | `yolo_class`, `roi_class`, `match_distance` |
+| ROI only | ROI | ROI | ROI | `roi_only` | — |
+| YOLO only | YOLO | `unknown` | YOLO | `yolo_only` | — |
+
+### Design Rationale
+
+- **YOLO semantic priority**: YOLO correctly identifies "cup" while ROI may call it "cylinder" or "cube" due to shape classification instability.
+- **ROI spatial priority**: ROI's `_pix_to_world()` via static `transform.yaml` provides reliable world coordinates without IK dependency. YOLO's `_pix_to_world_on_plane()` requires a live `/kinematics/get_current_pose` call.
+- **ROI-only fallback kept enabled**: Red cubes/blocks are not in YOLO's COCO whitelist. ROI shape classifier remains the only detector for these objects. ROI color is essential for color-based queries ("red cube").
+- **StableObjectTracker runs after fusion**: Temporal voting and EMA smoothing occur on fused output, not on raw ROI. This prevents stabilizing wrong ROI-only labels before YOLO semantic correction is applied.
 
 ---
 

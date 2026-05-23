@@ -1,10 +1,12 @@
 # JetArm Robot Runtime — Session Summary
 
-> Sprint 1 → 4.8 实现状态快照 | 2026-05-20 | 分支: `feature/sketch_runtime_sprint3`
+> Sprint 1 → 5.4 实现状态快照 | 2026-05-23 | 分支: `feature/sketch_runtime_sprint3`
 >
 > **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
-> **🔴 新发现: ROI 感知不稳定 — 同一物体跨帧 class/color 跳变**
-> **📋 下一个 Sprint: 5 — Stable World Model / Perception Runtime**
+> **🔧 Sprint 5 进展**: ROI audit → StableObjectTracker → PerceptionFusionNode →
+> **📋 融合规则确立**: YOLO=语义优先, ROI=位姿+颜色, `/world_model/perception_objects` → stable_objects
+> **⚠ 已知限制**: ROI 颜色/类名不稳定仍未根本解决；YOLO 语义优先策略降低影响
+> **📋 下一步**: StableObjectTracker 输入切换到 perception_objects；grounding 切换到 stable_objects
 
 ---
 
@@ -162,6 +164,7 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 
 | 领域 | 限制 |
 |------|------|
+| **ROI 类名/颜色** | 不稳定 — 形状分类 (cup/cube/cylinder) 和 LAB 颜色 (red/black) 仍会跨帧跳变。战略决策: YOLO 语义优先，ROI 提供 pose/color/yaw |
 | **抓取精度** | grasp precision 尚不稳定，需进一步标定和补偿 |
 | **验证逻辑** | 无 Verification Runtime — 无法自动判断抓取是否成功 |
 | **碰撞检测** | 无碰撞/力矩异常检测 |
@@ -180,6 +183,19 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | 4.6 | Action Sequence 架构 — MoveAction/GripperAction/ActionExecutor |
 | 4.7 | Full pick 真实硬件执行验证 — 首次 Runtime 驱动真实机械臂 |
 | 4.8 | **🎯 里程碑达成** — 文档更新，标记完整验证闭环 |
+
+## Sprint 5 Progress (5.1 → 5.4)
+
+| Sprint | Status | Milestone |
+|--------|--------|-----------|
+| 5.1 | ✅ | Raw Detection Audit — `roi_detection_audit_node` 量化 label stability |
+| 5.2 | 🔶 | StableObjectTracker — 已实现，输入切换待 integration (Sprint 5.5) |
+| 5.3 | ⏸ | ROI Shape/Color Robustness — 部分调研，未正式完成 |
+| 5.4 | ✅ | Perception Fusion Node — YOLO+ROI 融合 → `/world_model/perception_objects` |
+| 5.5 | ⬜ PLANNED | StableObjectTracker 输入切换到 perception_objects |
+| 5.6 | ⬜ PLANNED | Grounding 切换到 `/world_model/stable_objects` |
+
+**融合规则**: class_name=YOLO, color/pose/rpy=ROI。YOLO 未检测到的物体保留 roi_only fallback。
 
 ## Package Snapshot
 
