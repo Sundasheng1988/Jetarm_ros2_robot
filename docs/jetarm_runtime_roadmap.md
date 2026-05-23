@@ -224,9 +224,16 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-### Sprint 5.5 — StableObjectTracker Input Switch ⬜ NEXT
+### Sprint 5.5 — StableObjectTracker Input Switch ✅ COMPLETED
 
 **目标**: StableObjectTracker 输入从 `/world_model/roi_objects` 切换到 `/world_model/perception_objects`。
+
+**成果**:
+- 默认 `input_topic` 改为 `/world_model/perception_objects`
+- QoS 条件适配: perception_objects → reliable, roi_objects → BestEffort
+- `extract_frame_data` 保留 source/yolo_class/roi_class/match_distance
+- `build_stable_object` 输出 `source="stable"` + `source_votes`
+- 26 个单元测试通过
 
 ---
 
@@ -242,7 +249,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 - [x] StableObjectTracker 发布 `/world_model/stable_objects`
 - [x] PerceptionFusionNode 发布 `/world_model/perception_objects`
 - [x] YOLO 语义 + ROI 位姿/颜色融合规则确立
-- [ ] StableObjectTracker 输入切换到 perception_objects
+- [x] StableObjectTracker 输入切换到 perception_objects
 - [ ] grounding_node 切换到 stable_objects
 - [ ] 不修改 ROI 检测逻辑、YOLO 检测逻辑
 

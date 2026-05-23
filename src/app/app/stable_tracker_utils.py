@@ -98,13 +98,17 @@ def extract_frame_data(obj: Dict[str, Any]) -> Dict[str, Any]:
 
     xyz = extract_xyz(obj)
     rpy = extract_rpy(obj)
-    return {
+    frame = {
         "class_name": str(obj.get("class_name", "unknown")),
         "color": str(obj.get("color", "unknown")),
         "confidence": float(obj.get("confidence", 0.5)),
         "xyz": [xyz[0], xyz[1], xyz[2]] if xyz else None,
         "rpy": [rpy[0], rpy[1], rpy[2]] if rpy else [0.0, 0.0, 0.0],
     }
+    for extra in ("source", "yolo_class", "roi_class", "match_distance"):
+        if extra in obj:
+            frame[extra] = obj[extra]
+    return frame
 
 
 def compute_label_stability(track: Dict[str, Any]) -> float:
@@ -154,5 +158,6 @@ def build_stable_object(
         "color_votes": color_votes,
         "label_stability_ratio": label_stab,
         "last_seen": track.get("last_seen", 0.0),
-        "source": "roi_stable",
+        "source": "stable",
+        "source_votes": build_votes(track, "source"),
     }

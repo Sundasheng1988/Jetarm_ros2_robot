@@ -31,7 +31,7 @@ class StableObjectTrackerNode(Node):
         super().__init__("stable_object_tracker_node")
 
         # ---- parameters ----
-        self.declare_parameter("input_topic", "/world_model/roi_objects")
+        self.declare_parameter("input_topic", "/world_model/perception_objects")
         self.declare_parameter("output_topic", "/world_model/stable_objects")
         self.declare_parameter("distance_threshold", 0.05)
         self.declare_parameter("voting_window", 20)
@@ -53,8 +53,10 @@ class StableObjectTrackerNode(Node):
 
         # ---- pub / sub ----
         self._pub = self.create_publisher(String, self.output_topic, 10)
+
+        subscription_qos = _qos_best_effort if "/world_model/roi_objects" in self.input_topic else 10
         self.create_subscription(
-            String, self.input_topic, self._on_raw, _qos_best_effort
+            String, self.input_topic, self._on_raw, subscription_qos
         )
 
         self.get_logger().info(

@@ -710,12 +710,16 @@ cd ~/ros2_ws
 colcon build --packages-select app --symlink-install
 source install/setup.bash
 
-# 启动稳定化层
+# 启动稳定化层（默认消费 perception_objects）
 ros2 run app stable_object_tracker_node
 
 # 自定义参数
 ros2 run app stable_object_tracker_node --ros-args \
   -p voting_window:=30 -p ttl_sec:=5.0 -p ema_alpha:=0.15
+
+# 回退到原始 ROI 输入
+ros2 run app stable_object_tracker_node --ros-args \
+  -p input_topic:=/world_model/roi_objects
 
 # 对比 RAW vs STABLE
 ros2 topic echo /world_model/roi_objects --once
@@ -726,7 +730,7 @@ ros2 topic echo /world_model/stable_objects --once
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `input_topic` | `/world_model/roi_objects` | 原始检测流 |
+| `input_topic` | `/world_model/perception_objects` | 感知融合输入 |
 | `output_topic` | `/world_model/stable_objects` | 稳定化输出 |
 | `distance_threshold` | 0.05 | 空间匹配阈值 (m) |
 | `voting_window` | 20 | 投票窗口帧数 |

@@ -193,6 +193,26 @@ def test_extract_frame_data_full():
     assert f["rpy"] == [0.0, 0.0, -1.4]
 
 
+def test_extract_frame_data_with_fused_source():
+    obj = {
+        "class_name": "cup",
+        "color": "red",
+        "confidence": 0.82,
+        "pose": {"frame": "base", "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5]},
+        "source": "yolo_roi_fused",
+        "yolo_class": "cup",
+        "roi_class": "cube",
+        "match_distance": 0.023,
+    }
+    f = extract_frame_data(obj)
+    assert f["class_name"] == "cup"
+    assert f["color"] == "red"
+    assert f["source"] == "yolo_roi_fused"
+    assert f["yolo_class"] == "cup"
+    assert f["roi_class"] == "cube"
+    assert f["match_distance"] == 0.023
+
+
 def test_extract_frame_data_no_pose():
     obj = {"class_name": "cylinder", "color": "red", "confidence": 0.60}
     f = extract_frame_data(obj)
@@ -271,7 +291,28 @@ def test_build_stable_object_valid():
     assert obj["color"] == "black"
     assert obj["confidence_smooth"] == 0.79
     assert obj["frames_tracked"] == 93
-    assert obj["source"] == "roi_stable"
+    assert obj["source"] == "stable"
+    assert "source_votes" in obj
     assert obj["class_votes"] == {"cup": 15, "cylinder": 5}
     assert obj["color_votes"] == {"black": 15, "red": 5}
     assert abs(obj["label_stability_ratio"] - 0.75) < 0.001
+
+
+def test_build_stable_object_source_votes():
+    track = {
+        "track_id": "track_002",
+        "frames": deque(maxlen=20, iterable=[
+            {"class_name": "cup", "color": "red", "confidence": 0.80, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5], "source": "yolo_roi_fused"},
+        ] * 12 + [
+            {"class_name": "cube", "color": "red", "confidence": 0.60, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5], "source": "roi_only"},
+        ] * 3),
+        "xyz_latest": [0.2, 0.0, 0.03],
+        "rpy_latest": [0.0, 0.0, -1.5],
+        "confidence_smooth": 0.75,
+        "last_seen": 1000.0,
+        "total_frames": 15,
+    }
+    obj = build_stable_object(track, 5)
+    assert obj is not None
+    assert obj["source"] == "stable"
+    assert obj["source_votes"] == {"yolo_roi_fused": 12, "roi_only": 3}
