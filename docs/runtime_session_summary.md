@@ -6,29 +6,94 @@
 > **🔧 Sprint 5 进展**: ROI audit → StableObjectTracker → PerceptionFusionNode →
 > **📋 融合规则确立**: YOLO=语义优先, ROI=位姿+颜色, `/world_model/perception_objects` → stable_objects
 > **⚠ 已知限制**: ROI 颜色/类名不稳定仍未根本解决；YOLO 语义优先策略降低影响
-> **📋 下一步**: StableObjectTracker 输入切换到 perception_objects；grounding 切换到 stable_objects
+> ** 📋 Current Next Sprint:
+      Sprint 5.5
+      StableObjectTracker:
+      perception_objects
+      → stable_objects
 
 ---
 
 ## Current Architecture Chain
 
-```
+Perception Pipeline
+────────────────────────────────────────
+
+camera
+  → YOLO
+      (/world_model/objects)
+  + ROI
+      (/world_model/roi_objects)
+
+  → perception_fusion_node
+      (/world_model/perception_objects)
+
+  → StableObjectTracker
+      (/world_model/stable_objects)
+      [CURRENT: input still = /world_model/roi_objects
+       TARGET : switch to /world_model/perception_objects]
+
+Language Pipeline
+────────────────────────────────────────
+
 natural language input
-  → llm_parser (keyword match → /parsed_command)
-  → grounding_node (publish_runtime=true → /grounded_task_context)
-  → real_grounded_runtime_node (subscription-driven)
-    → TaskBuilder (builds TaskContext from grounded JSON)
-    → SkillManager.select("pick") → "pick_skill"
-    → SkillManager.instantiate → PickSkill(adapter)
-    → if require_confirm: publish /runtime/preview → wait
-    → /runtime/confirm (yes/no/JSON) → execute
-    → PickSkill.execute()
-      → adapter.ik_solve(position, rpy)  [dry_run or _call_ik_blocking]
-      → adapter.servo_move(pulses)       [dry_run or real publish]
-      → adapter.gripper_set(id, pulse)   [dry_run or real publish]
-    → /runtime/execution_result (success/fail/reason)
-    → /executor/done (Bool)
-```
+  → llm_parser
+      (keyword match → /parsed_command)
+
+Fusion / Runtime Pipeline
+────────────────────────────────────────
+
+grounding_node
+  Inputs:
+    - /parsed_command
+    - world model (CURRENT: roi_objects
+                   TARGET: stable_objects)
+
+  publish_runtime=true
+  → /grounded_task_context
+
+real_grounded_runtime_node
+  (subscription-driven)
+
+  → TaskBuilder
+      (build TaskContext from grounded JSON)
+
+  → SkillManager.select("pick")
+      → PickSkill(adapter)
+
+  → Preview / Safety Layer
+
+      if require_confirm:
+
+      publish:
+      /runtime/preview
+
+      wait:
+
+      /runtime/confirm
+      (yes / no / JSON)
+
+  → PickSkill.execute()
+
+      adapter.ik_solve(
+          position,
+          rpy
+      )
+
+      adapter.servo_move(
+          pulses
+      )
+
+      adapter.gripper_set(
+          id,
+          pulse
+      )
+
+  → /runtime/execution_result
+      (success / fail)
+
+  → /executor/done
+      (Bool)
 
 ---
 
@@ -89,11 +154,45 @@ PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 
 ---
 
-## Current Blocking Issue: Perception Instability
+## Current Integration Issue: Perception Fusion → StableObjectTracker Wiring
 
-ROI debug overlay 揭示: 同一物理物体跨帧 class/color 跳变 (`cup red` → `cup black` → `cylinder red`)。`/world_model/roi_objects` 是原始检测流，Verification Runtime 需要稳定世界模型。详见 [Sprint 5: Stable World Model](jetarm_runtime_roadmap.md).
+Current state:
 
----
+camera
+→ YOLO (/world_model/objects)
++ ROI (/world_model/roi_objects)
+→ perception_fusion_node
+→ /world_model/perception_objects
+
+StableObjectTracker already exists and publishes:
+
+/world_model/stable_objects
+
+But CURRENT input is still:
+
+/world_model/roi_objects
+
+Next integration:
+
+Sprint 5.5
+perception_objects
+→ StableObjectTracker
+
+Sprint 5.6
+stable_objects
+→ grounding
+
+Known limitation:
+
+ROI class/color instability still exists.
+
+Mitigation strategy:
+
+YOLO:
+semantic priority
+
+ROI:
+pose/color/yaw priority
 
 ## Safety Defaults
 
@@ -105,6 +204,8 @@ ROI debug overlay 揭示: 同一物理物体跨帧 class/color 跳变 (`cup red`
 | `enable_real_servo` | `false` | Real servo publish |
 | `run_once` | `true` | Execute once then stop |
 | `confirm_timeout_sec` | `300.0` | 5 min confirm window |
+| publish_roi_only | true | ROI fallback |
+| enable_fusion | true | perception fusion |
 
 ---
 
@@ -164,7 +265,18 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 
 | 领域 | 限制 |
 |------|------|
-| **ROI 类名/颜色** | 不稳定 — 形状分类 (cup/cube/cylinder) 和 LAB 颜色 (red/black) 仍会跨帧跳变。战略决策: YOLO 语义优先，ROI 提供 pose/color/yaw |
+| **ROI 类名/颜色** | 不稳定 — 形状分类 (cup/cube/cylinder) 和 LAB 颜色 (red/black) 仍会跨帧跳变。战略决策: YOLO 语义优先，
+      ROI provides:
+      pose.xyz
+      pose.rpy
+      color
+
+      YOLO provides:
+      semantic class_name
+
+      Fusion:
+      class ← YOLO
+      pose/color ← ROI |
 | **抓取精度** | grasp precision 尚不稳定，需进一步标定和补偿 |
 | **验证逻辑** | 无 Verification Runtime — 无法自动判断抓取是否成功 |
 | **碰撞检测** | 无碰撞/力矩异常检测 |
@@ -183,6 +295,12 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | 4.6 | Action Sequence 架构 — MoveAction/GripperAction/ActionExecutor |
 | 4.7 | Full pick 真实硬件执行验证 — 首次 Runtime 驱动真实机械臂 |
 | 4.8 | **🎯 里程碑达成** — 文档更新，标记完整验证闭环 |
+| 5.1 | ✅ | ROI Detection Audit |
+| 5.2 | 🔶 | StableObjectTracker implemented |
+| 5.3 | ⏸ | ROI robustness deferred |
+| 5.4 | ✅ | Perception Fusion |
+| 5.5 | ⬜ NEXT | Tracker input switch |
+| 5.6 | ⬜ PLANNED | Grounding switch |
 
 ## Sprint 5 Progress (5.1 → 5.4)
 
@@ -192,7 +310,7 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | 5.2 | 🔶 | StableObjectTracker — 已实现，输入切换待 integration (Sprint 5.5) |
 | 5.3 | ⏸ | ROI Shape/Color Robustness — 部分调研，未正式完成 |
 | 5.4 | ✅ | Perception Fusion Node — YOLO+ROI 融合 → `/world_model/perception_objects` |
-| 5.5 | ⬜ PLANNED | StableObjectTracker 输入切换到 perception_objects |
+| 5.5 | ⬜ NEXT| StableObjectTracker 输入切换到 perception_objects |
 | 5.6 | ⬜ PLANNED | Grounding 切换到 `/world_model/stable_objects` |
 
 **融合规则**: class_name=YOLO, color/pose/rpy=ROI。YOLO 未检测到的物体保留 roi_only fallback。
