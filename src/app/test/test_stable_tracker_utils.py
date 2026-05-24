@@ -316,3 +316,115 @@ def test_build_stable_object_source_votes():
     assert obj is not None
     assert obj["source"] == "stable"
     assert obj["source_votes"] == {"yolo_roi_fused": 12, "roi_only": 3}
+
+
+# ============================================================
+# majority_vote with ignore_values
+# ============================================================
+
+def test_majority_vote_ignores_unknown():
+    track = {
+        "frames": deque(maxlen=20, iterable=[
+            {"color": "blue"},
+        ] * 15 + [
+            {"color": "unknown"},
+        ] * 10),
+    }
+    assert majority_vote(track, "color", ignore_values={"unknown"}) == "blue"
+
+
+def test_majority_vote_all_unknown():
+    track = {
+        "frames": deque(maxlen=20, iterable=[
+            {"color": "unknown"},
+        ] * 10),
+    }
+    assert majority_vote(track, "color", ignore_values={"unknown"}) == "unknown"
+
+
+def test_majority_vote_ignore_values_none():
+    track = {
+        "frames": deque(maxlen=20, iterable=[
+            {"color": "blue"},
+        ] * 10 + [
+            {"color": "unknown"},
+        ] * 15),
+    }
+    assert majority_vote(track, "color") == "unknown"
+
+
+# ============================================================
+# build_stable_object roi_only gating + filtered color
+# ============================================================
+
+def test_build_stable_object_roi_only_rejects_below_min():
+    track = {
+        "track_id": "t_roi",
+        "frames": deque(maxlen=20, iterable=[
+            {"class_name": "cube", "color": "red", "confidence": 0.60, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5], "source": "roi_only"},
+        ] * 6),
+        "xyz_latest": [0.2, 0.0, 0.03],
+        "rpy_latest": [0.0, 0.0, -1.5],
+        "confidence_smooth": 0.60,
+        "last_seen": 1000.0,
+        "total_frames": 6,
+    }
+    assert build_stable_object(track, 5, min_frames_roi_only=8) is None
+
+
+def test_build_stable_object_roi_only_accepts_above_min():
+    track = {
+        "track_id": "t_roi",
+        "frames": deque(maxlen=20, iterable=[
+            {"class_name": "cube", "color": "red", "confidence": 0.60, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5], "source": "roi_only"},
+        ] * 10),
+        "xyz_latest": [0.2, 0.0, 0.03],
+        "rpy_latest": [0.0, 0.0, -1.5],
+        "confidence_smooth": 0.65,
+        "last_seen": 1000.0,
+        "total_frames": 10,
+    }
+    obj = build_stable_object(track, 5, min_frames_roi_only=8)
+    assert obj is not None
+    assert obj["source"] == "stable"
+    assert obj["source_votes"] == {"roi_only": 10}
+
+
+def test_build_stable_object_fused_not_subject_to_roi_min():
+    track = {
+        "track_id": "t_fused",
+        "frames": deque(maxlen=20, iterable=[
+            {"class_name": "cup", "color": "blue", "confidence": 0.80, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5], "source": "yolo_roi_fused"},
+        ] * 5),
+        "xyz_latest": [0.2, 0.0, 0.03],
+        "rpy_latest": [0.0, 0.0, -1.5],
+        "confidence_smooth": 0.80,
+        "last_seen": 1000.0,
+        "total_frames": 5,
+    }
+    obj = build_stable_object(track, 5, min_frames_roi_only=8)
+    assert obj is not None
+    assert obj["source_votes"] == {"yolo_roi_fused": 5}
+
+
+def test_build_stable_object_unknown_color_filtered():
+    track = {
+        "track_id": "t_mixed",
+        "frames": deque(maxlen=20, iterable=[
+            {"class_name": "cup", "color": "blue", "confidence": 0.80, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, -1.5], "source": "yolo_roi_fused"},
+        ] * 8 + [
+            {"class_name": "cup", "color": "unknown", "confidence": 0.70, "xyz": [0.2, 0.0, 0.03], "rpy": [0, 0, 1.57], "source": "yolo_only"},
+        ] * 12),
+        "xyz_latest": [0.2, 0.0, 0.03],
+        "rpy_latest": [0.0, 0.0, 1.57],
+        "confidence_smooth": 0.75,
+        "last_seen": 1000.0,
+        "total_frames": 20,
+    }
+    obj = build_stable_object(track, 5)
+    assert obj is not None
+    assert obj["class_name"] == "cup"
+    assert obj["color"] == "blue"
+    assert obj["color_votes"] == {"blue": 8, "unknown": 12}
+    assert obj["source_votes"] == {"yolo_roi_fused": 8, "yolo_only": 12}
+    assert "source_votes" in obj

@@ -38,6 +38,7 @@ class StableObjectTrackerNode(Node):
         self.declare_parameter("min_frames", 5)
         self.declare_parameter("ttl_sec", 3.0)
         self.declare_parameter("ema_alpha", 0.2)
+        self.declare_parameter("min_frames_roi_only", 8)
 
         g = self.get_parameter
         self.input_topic = str(g("input_topic").value)
@@ -47,6 +48,7 @@ class StableObjectTrackerNode(Node):
         self.min_frames = int(g("min_frames").value)
         self.ttl_sec = float(g("ttl_sec").value)
         self.ema_alpha = float(g("ema_alpha").value)
+        self.min_frames_roi_only = int(g("min_frames_roi_only").value)
 
         # ---- state ----
         self.tracks = {}
@@ -100,7 +102,7 @@ class StableObjectTrackerNode(Node):
 
         objects_out = []
         for t in self.tracks.values():
-            sobj = build_stable_object(t, self.min_frames)
+            sobj = build_stable_object(t, self.min_frames, self.min_frames_roi_only)
             if sobj is not None:
                 objects_out.append(sobj)
 

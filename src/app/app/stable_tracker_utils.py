@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from collections import Counter, deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.audit_utils import euclidean_distance
 
@@ -39,13 +39,17 @@ def match_or_create_track(
     return new_id, tracks[new_id]
 
 
-def majority_vote(track: Dict[str, Any], key: str) -> str:
+def majority_vote(
+    track: Dict[str, Any], key: str, ignore_values: Optional[Set[str]] = None
+) -> str:
     frames = track.get("frames", [])
     if not frames:
         return "unknown"
     counter = Counter()
     for f in frames:
         val = f.get(key, "unknown")
+        if ignore_values and val in ignore_values:
+            continue
         counter[val] += 1
     dominant = counter.most_common(1)
     if dominant:
@@ -126,16 +130,23 @@ def compute_label_stability(track: Dict[str, Any]) -> float:
 
 
 def build_stable_object(
-    track: Dict[str, Any], min_frames: int
+    track: Dict[str, Any], min_frames: int, min_frames_roi_only: int = 8
 ) -> Optional[Dict[str, Any]]:
     n = len(track.get("frames", []))
     if n < min_frames:
         return None
 
+    # roi_only tracks require more evidence before publishing
+    source_votes = build_votes(track, "source")
+    if source_votes:
+        dominant_source = max(source_votes, key=source_votes.get)
+        if dominant_source == "roi_only" and n < min_frames_roi_only:
+            return None
+
     class_votes = build_votes(track, "class_name")
     color_votes = build_votes(track, "color")
     class_name = majority_vote(track, "class_name")
-    color = majority_vote(track, "color")
+    color = majority_vote(track, "color", ignore_values={"unknown"})
     label_stab = compute_label_stability(track)
     conf = track.get("confidence_smooth")
     latest_conf = 0.5
