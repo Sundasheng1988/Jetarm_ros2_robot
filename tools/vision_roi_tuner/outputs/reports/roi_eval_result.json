@@ -1,0 +1,393 @@
+{
+  "summary": {
+    "total_images": 20,
+    "correct": 0,
+    "wrong": 20,
+    "accuracy": 0.0,
+    "per_color_accuracy": {
+      "blue": 0.0,
+      "red": 0.0
+    },
+    "correct_mean_conf": 0.0,
+    "wrong_mean_conf": 0.884,
+    "confidence_min": 0.5465,
+    "confidence_max": 0.9993,
+    "confidence_histogram": {
+      "0.0-0.2": 0,
+      "0.2-0.4": 0,
+      "0.4-0.6": 4,
+      "0.6-0.8": 1,
+      "0.8-1.0": 15
+    }
+  },
+  "confusion_matrix": {
+    "blue": {
+      "black": 14
+    },
+    "red": {
+      "black": 6
+    }
+  },
+  "per_image": [
+    {
+      "filename": "blue_block_001.jpg",
+      "expected_color": "blue",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9943,
+      "correct": false,
+      "all_hits": {
+        "black": 26172,
+        "blue": 25,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 7,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_block_002.jpg",
+      "expected_color": "blue",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9944,
+      "correct": false,
+      "all_hits": {
+        "black": 26759,
+        "blue": 22,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 9,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_block_003.jpg",
+      "expected_color": "blue",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9965,
+      "correct": false,
+      "all_hits": {
+        "black": 25667,
+        "blue": 28,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 9,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_block_004.jpg",
+      "expected_color": "blue",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9991,
+      "correct": false,
+      "all_hits": {
+        "black": 25696,
+        "blue": 13,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 0,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cube_001.jpg",
+      "expected_color": "blue",
+      "expected_class": "cube",
+      "pred_color": "black",
+      "confidence": 0.5519,
+      "correct": false,
+      "all_hits": {
+        "black": 65752,
+        "blue": 341,
+        "green": 1,
+        "red": 0,
+        "tennis": 0,
+        "white": 1160,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cube_002.jpg",
+      "expected_color": "blue",
+      "expected_class": "cube",
+      "pred_color": "black",
+      "confidence": 0.5525,
+      "correct": false,
+      "all_hits": {
+        "black": 65502,
+        "blue": 280,
+        "green": 6,
+        "red": 0,
+        "tennis": 0,
+        "white": 1167,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cube_003.jpg",
+      "expected_color": "blue",
+      "expected_class": "cube",
+      "pred_color": "black",
+      "confidence": 0.5465,
+      "correct": false,
+      "all_hits": {
+        "black": 64876,
+        "blue": 359,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 1111,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cube_004.jpg",
+      "expected_color": "blue",
+      "expected_class": "cube",
+      "pred_color": "black",
+      "confidence": 0.556,
+      "correct": false,
+      "all_hits": {
+        "black": 66095,
+        "blue": 360,
+        "green": 1,
+        "red": 0,
+        "tennis": 0,
+        "white": 1139,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cup_001.jpg",
+      "expected_color": "blue",
+      "expected_class": "cup",
+      "pred_color": "black",
+      "confidence": 0.989,
+      "correct": false,
+      "all_hits": {
+        "black": 70658,
+        "blue": 23489,
+        "green": 1,
+        "red": 0,
+        "tennis": 0,
+        "white": 107,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cup_002.jpg",
+      "expected_color": "blue",
+      "expected_class": "cup",
+      "pred_color": "black",
+      "confidence": 0.9951,
+      "correct": false,
+      "all_hits": {
+        "black": 59871,
+        "blue": 13604,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 49,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cup_003.jpg",
+      "expected_color": "blue",
+      "expected_class": "cup",
+      "pred_color": "black",
+      "confidence": 0.949,
+      "correct": false,
+      "all_hits": {
+        "black": 64559,
+        "blue": 21548,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 810,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cup_004.jpg",
+      "expected_color": "blue",
+      "expected_class": "cup",
+      "pred_color": "black",
+      "confidence": 0.9117,
+      "correct": false,
+      "all_hits": {
+        "black": 66333,
+        "blue": 17971,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 2625,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cup_005.jpg",
+      "expected_color": "blue",
+      "expected_class": "cup",
+      "pred_color": "black",
+      "confidence": 0.9967,
+      "correct": false,
+      "all_hits": {
+        "black": 60841,
+        "blue": 13891,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 16,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "blue_cup_006.jpg",
+      "expected_color": "blue",
+      "expected_class": "cup",
+      "pred_color": "black",
+      "confidence": 0.7243,
+      "correct": false,
+      "all_hits": {
+        "black": 66043,
+        "blue": 17879,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 11265,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "red_block_001.jpg",
+      "expected_color": "red",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9794,
+      "correct": false,
+      "all_hits": {
+        "black": 41887,
+        "blue": 174,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 48,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "red_block_002.jpg",
+      "expected_color": "red",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9567,
+      "correct": false,
+      "all_hits": {
+        "black": 43190,
+        "blue": 226,
+        "green": 9,
+        "red": 0,
+        "tennis": 0,
+        "white": 40,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "red_block_003.jpg",
+      "expected_color": "red",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9993,
+      "correct": false,
+      "all_hits": {
+        "black": 26242,
+        "blue": 2,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 0,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "red_block_004.jpg",
+      "expected_color": "red",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9923,
+      "correct": false,
+      "all_hits": {
+        "black": 28298,
+        "blue": 52,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 10,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "red_block_005.jpg",
+      "expected_color": "red",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9982,
+      "correct": false,
+      "all_hits": {
+        "black": 26738,
+        "blue": 0,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 0,
+        "yellow": 0,
+        "purple": 0
+      }
+    },
+    {
+      "filename": "red_block_006.jpg",
+      "expected_color": "red",
+      "expected_class": "block",
+      "pred_color": "black",
+      "confidence": 0.9974,
+      "correct": false,
+      "all_hits": {
+        "black": 27437,
+        "blue": 10,
+        "green": 0,
+        "red": 0,
+        "tennis": 0,
+        "white": 3,
+        "yellow": 0,
+        "purple": 0
+      }
+    }
+  ]
+}

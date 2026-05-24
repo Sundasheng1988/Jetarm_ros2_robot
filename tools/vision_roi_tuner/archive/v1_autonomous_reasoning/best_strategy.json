@@ -1,0 +1,44 @@
+{
+  "name": "Otsu + Chroma + adjusted LAB ranges",
+  "params": {
+    "use_otsu": true,
+    "use_chroma": true,
+    "chroma_threshold": 5.0,
+    "lab_range_overrides": {
+      "blue": {
+        "B": [
+          59,
+          143
+        ]
+      },
+      "red": {
+        "A": [
+          124,
+          183
+        ],
+        "B": [
+          125,
+          189
+        ]
+      }
+    }
+  },
+  "result": {
+    "accuracy": 0.7,
+    "correct": 14,
+    "total": 20,
+    "per_color_accuracy": {
+      "blue": 1.0,
+      "red": 0.0
+    },
+    "wrong_high_confidence": 6,
+    "confusion": {
+      "blue": {
+        "blue": 14
+      },
+      "red": {
+        "blue": 6
+      }
+    }
+  }
+}

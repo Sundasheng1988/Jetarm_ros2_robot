@@ -1,0 +1,11 @@
+# ROI Color Tuning Report
+**Grid size**: 1×1×5×1×5×4 = 100
+## Best Configuration
+| Parameter | Value ||-----------|-------|| erode_size | 5 || erode_iterations | 1 || min_confidence | 0.0 || chromatic_min | 0.1 || ignore_dark | 90 || ignore_bright | None |
+**Accuracy**: 35.00% (7/20)**Per-color**: {'blue': 0.5, 'red': 0.0}**Wrong high-confidence**: 0
+## Top 10 Configurations
+| # | Accuracy | Per-Color | Wrong HiConf | Params ||---|----------|-----------|-------------|--------|| 1 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.1 mc=0.0 dark=90 bright=None || 2 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.1 mc=0.0 dark=90 bright=200 || 3 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.1 mc=0.0 dark=90 bright=220 || 4 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.1 mc=0.0 dark=90 bright=240 || 5 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.15 mc=0.0 dark=90 bright=None || 6 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.15 mc=0.0 dark=90 bright=200 || 7 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.15 mc=0.0 dark=90 bright=220 || 8 | 35.00% | {'blue': 0.5, 'red': 0.0} | 0 | e=5/1 cmc=0.15 mc=0.0 dark=90 bright=240 || 9 | 30.00% | {'blue': 0.4286, 'red': 0.0} | 10 | e=5/1 cmc=0.1 mc=0.0 dark=None bright=None || 10 | 30.00% | {'blue': 0.4286, 'red': 0.0} | 10 | e=5/1 cmc=0.1 mc=0.0 dark=None bright=200 |## Tuning Recommendations
+- **Chromatic priority**: best `chromatic_min_confidence=0.1`. Chromatic colors (red/blue/green/yellow/purple/tennis) take priority over neutral (black/white) when their confidence exceeds this threshold.- **Luminance thresholds**: dark=90, bright=None. Pixels outside these L bounds are excluded from color voting.- **Erode**: kernel=5, iterations=1. Removes boundary/shadow pixels before color sampling.- **Min confidence**: 0.0. Predictions below this threshold are marked 'unknown'.
+⚠ Accuracy below 80% — LAB ranges in lab_config.yaml likely need manual adjustment for this lighting condition.
+## Next Steps
+1. Human review `best_config.json`2. Do NOT auto-apply to lab_config.yaml or roi_color_detector_node.py3. Consider narrowing the 'black' LAB a-range (currently 30-187) to reduce chromatic overlap4. Re-run evaluation with adjusted LAB ranges once approved
