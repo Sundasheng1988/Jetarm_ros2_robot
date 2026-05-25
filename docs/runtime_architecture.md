@@ -29,6 +29,8 @@ graph TD
         subgraph PERCEPTION["感知层"]
             YOLO["app_compatible_yolo_node<br/>YOLOv8+LAB方块检测<br/>/vision_target<br/>/world_model/objects"]
             ROI["roi_color_detector_node<br/>ROI颜色检测<br/>/world_model/roi_objects<br/>/roi_vision_target"]
+            FUSION["perception_fusion_node<br/>空间匹配+融合<br/>/world_model/perception_objects"]
+            TRACKER["stable_object_tracker_node<br/>时序稳定化<br/>/world_model/stable_objects"]
         end
 
         subgraph EXECUTION["执行层 — 核心写死区"]
@@ -72,10 +74,12 @@ graph TD
     PARSER -->|"/parsed_command<br/>String JSON"| GROUNDING
 
     %% Grounding 链路
-    WM_D -.->|"/world_model/objects<br/>⚠ 不匹配"| GROUNDING
-    WM_TF -.->|"/world_model/objects<br/>⚠ 不匹配"| GROUNDING
-    YOLO -.->|"/world_model/objects<br/>⚠ 不匹配"| GROUNDING
-    ROI -->|"/world_model/roi_objects<br/>✅ 匹配"| GROUNDING
+    WM_D -.->|"/world_model/objects"| FUSION
+    WM_TF -.->|"/world_model/objects"| FUSION
+    YOLO -->|"/world_model/objects"| FUSION
+    ROI -->|"/world_model/roi_objects"| FUSION
+    FUSION -->|"/world_model/perception_objects"| TRACKER
+    TRACKER -->|"/world_model/stable_objects"| GROUNDING
     GROUNDING -->|"/grounded_goal<br/>String JSON"| EXECUTOR
 
     %% 视觉链路
@@ -108,8 +112,10 @@ graph TD
     SM -->|"ServosPosition"| RRC
     RRC --> STM32
 
-    %% 标注 topic 不匹配
+   %% 标注关键架构节点
     style GROUNDING fill:#fff3cd,stroke:#ffc107
+    style FUSION fill:#fff3cd,stroke:#ffc107
+    style TRACKER fill:#d1ecf1,stroke:#0c5460
     style EXECUTOR fill:#f8d7da,stroke:#dc3545
     style CM fill:#d1ecf1,stroke:#0c5460
     style SM fill:#d1ecf1,stroke:#0c5460
@@ -261,9 +267,11 @@ graph TD
             T_GROUNDED["/grounded_goal<br/>← grounding_node<br/>→ ground_executor_node"]
         end
 
-        subgraph TOPIC_WM["世界模型 Topics ⚠ 不匹配"]
+        subgraph TOPIC_WM["世界模型 Topics"]
             T_WM_OBJ["/world_model/objects<br/>← yolo, wm_dummy, wm_from_tf<br/>→ env_scan, static_env_report"]
             T_WM_ROI["/world_model/roi_objects<br/>← roi_color_detector<br/>→ perception_fusion"]
+            T_WM_FUSED["/world_model/perception_objects<br/>← perception_fusion_node<br/>→ stable_object_tracker"]
+            T_WM_STABLE["/world_model/stable_objects<br/>← stable_object_tracker"]
         end
 
         subgraph TOPIC_VISION["视觉 Topics"]
