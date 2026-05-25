@@ -12,7 +12,7 @@
 > - **当前阻塞**: ROI perception instability (`/world_model/roi_objects` 原始检测流不稳定)
 > - **当前阶段**: Sprint 5 — Stable World Model / Perception Runtime
 > - **活跃 Roadmap**: [jetarm_runtime_roadmap.md](jetarm_runtime_roadmap.md)
->
+> Note: topic mismatch analysis below is historical. Current perception path is YOLO/ROI → perception_fusion_node → StableObjectTracker.
 > 本文档保留原始系统分析、18 包职责、3 条指令链路——仍有用作包/主题参考。
 
 ---

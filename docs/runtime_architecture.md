@@ -322,14 +322,16 @@ graph TD
     end
 
     subgraph PROBLEMS["⚠ 已知问题"]
-        P1["❌ /world_model/objects ↔ /world_model/roi_objects<br/>topic 名不匹配<br/>grounding 收不到 yolo/wm_dummy/wm_tf"]
+        P1["✅ 历史问题: /world_model/objects ↔ /world_model/roi_objects<br/>已由 perception_fusion_node 统一进入 /world_model/perception_objects"]
         P2["⚠ /servo_controller 多写者<br/>6个节点同时可写<br/>无控制权仲裁"]
         P3["⚠ executor 直连 bus_servo/set_position<br/>绕过 controller_manager<br/>绕过 JointPositionController 限位"]
         P4["⚠ /text_input 无下游消费<br/>keyboard_input_node 输出孤岛"]
     end
 
     T_PARSED --> T_GROUNDED
-    T_WM_OBJ -.->|"⚠ 不匹配"| T_WM_ROI
+    T_WM_OBJ --> T_WM_FUSED
+    T_WM_ROI --> T_WM_FUSED
+    T_WM_FUSED --> T_WM_STABLE
     T_VISION -.->|"可选"| T_GROUNDED
     T_REPLY --> T_QUERY
     T_TTS_SPEAK -.->|"gate"| T_QUERY

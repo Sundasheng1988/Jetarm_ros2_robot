@@ -208,7 +208,7 @@
 | `/world_model/objects` | `String` | `app_compatible_yolo_node`, `wm_dummy_pub`, `wm_from_tf` | `static_env_report_node`, `env_scan_node` |
 | `/world_model/roi_objects` | `String JSON` | `roi_color_detector_node` | `perception_fusion_node`; grounding_node (legacy/current) |
 | `/world_model/perception_objects` | `String JSON` | `perception_fusion_node` | `stable_object_tracker_node` |
-| `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | Sprint 5.6 target: `grounding_node` |
+| `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | `grounding_node` planned consumer |
 | `/grounded_task_context` | `String JSON` | `grounding_node` | `real_grounded_runtime_node` |
 | `/world_objects` | `EnvObjectArray` | `world_model_node` | *(待消费)* |
 | `/env_objects` | `EnvObjectArray` | `env_scan_node`, `static_env_report_node` | `llm_voice_agent`, `world_model_node` |

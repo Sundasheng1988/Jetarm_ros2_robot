@@ -169,9 +169,7 @@ PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 
 ---
 
-## Current Integration Issue: Perception Fusion → StableObjectTracker Wiring
-
-## Current Integration Status
+## Current Integration Status: Perception Fusion → StableObjectTracker
 
 Completed:
 
@@ -359,10 +357,10 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | Sprint | Status | Milestone |
 |--------|--------|-----------|
 | 5.1 | ✅ | Raw Detection Audit — `roi_detection_audit_node` 量化 label stability |
-| 5.2 | 🔶 | StableObjectTracker — 已实现，输入切换待 integration (Sprint 5.5) |
+| 5.2 | ✅ | StableObjectTracker — 已实现 |
 | 5.3 | ⏸ | ROI Shape/Color Robustness — 部分调研，未正式完成 |
 | 5.4 | ✅ | Perception Fusion Node — YOLO+ROI 融合 → `/world_model/perception_objects` |
-| 5.5 | ⬜ NEXT| StableObjectTracker 输入切换到 perception_objects |
+| 5.5 | ✅ | StableObjectTracker 输入切换到 perception_objects |
 | 5.6 | ⬜ PLANNED | Grounding 切换到 `/world_model/stable_objects` |
 
 **融合规则**: class_name=YOLO, color/pose/rpy=ROI。YOLO 未检测到的物体保留 roi_only fallback。
