@@ -895,3 +895,33 @@ YOLO 和 ROI 是两类独立检测源：
 - **RobotOps**: 日志需同时记录 yolo_class 和 roi_class 用于审计
 
 **优先级**: P1 — 当前 fusion 规则已缓解，下游 StableObjectTracker 进一步降噪
+
+---
+
+### R17: ROI Color Confidence / 硬决策风险
+
+**问题描述**
+
+ROI 颜色检测 (`_dominant_color_key` in `roi_color_detector_node.py`) 使用 `best_hits/total_pixels` 作为置信度。当 LAB 颜色范围重叠严重时（红蓝在 A-通道无分离），置信度仍为 1.0（虚假高置信）。这导致：
+- 红色方块被误判为蓝色 (confidence=1.0)
+- 低饱和度暗色物体被误判为黑色 (confidence=0.99)
+- 下游 fusion/grounding 基于错误颜色作出拾取决策
+
+**当前缓解**
+
+| 措施 | 状态 |
+|------|------|
+| 离线信任度校准 (margin-aware + center-distance scoring) | ✅ tools/vision_roi_tuner/ 已验证 |
+| 置信度过滤原型 (conf<0.2 → unknown) | ✅ sandbox/roi_runtime_experiment/ 已验证 |
+| 生产节点参数 `color_min_confidence` + margin-aware 置信度 | ⏸ 计划中 (未部署到 src/app/) |
+| ROI 降权为属性提供者（YOLO 语义优先） | ✅ 已实现 — fusion 规则固定 YOLO class_name |
+
+**优先级**: P1 — 生产节点仍未部署置信度过滤。当前 ROI 输出仍使用原始 `best_hits/total_pixels` 置信度。
+
+**对下游影响**
+
+- **Perception Fusion**: 融合时使用 ROI 置信度决定匹配优先级。虚假高置信导致错误匹配。
+- **StableObjectTracker**: 不稳定的颜色标签被时间投票进一步放大。
+- **Runtime**: 错误的颜色可能导致抓取错误目标。
+
+> ⚠ **不要盲目复制 tools/vision_roi_tuner 代码到 src/app/**。任何生产变更必须最小化并经人工审核。

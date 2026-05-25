@@ -662,41 +662,10 @@ ros2 run app roi_detection_audit_node
 # 自定义样本数
 ros2 run app roi_detection_audit_node --ros-args -p sample_count:=200
 
-# 自定义输出目录
-ros2 run app roi_detection_audit_node --ros-args -p output_dir:=/tmp/my_audit
-
 # 查看结果
 cat artifacts/perception_audit/roi_perception_audit.md
 cat artifacts/perception_audit/audit_summary.json
-cat artifacts/perception_audit/raw_samples.jsonl
 ```
-
-**产出文件**：
-
-| 文件 | 用途 |
-|------|------|
-| `artifacts/perception_audit/raw_samples.jsonl` | 逐帧原始检测数据 |
-| `artifacts/perception_audit/audit_summary.json` | 结构化审计指标 (JSON) |
-| `artifacts/perception_audit/roi_perception_audit.md` | 可读审计报告 (Markdown) |
-
-**审计指标说明**：
-
-- `label_stability_ratio` — 主导标签占比，< 0.75 标记为 UNSTABLE
-- `class_stability_ratio` — 主导类名占比
-- `color_stability_ratio` — 主导颜色占比
-- `label_switch_count` — 标签跨帧切换次数
-- `confidence_mean` — 该物体在所有帧中的平均置信度
-- `xyz_std` — 世界坐标离散度
-
-**关键参数**：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `sample_count` | 100 | 采集帧数 |
-| `max_duration_sec` | 30.0 | 最大采集时长 |
-| `distance_threshold` | 0.05 | 同物体空间匹配阈值 (m) |
-| `topic` | `/world_model/roi_objects` | 审计源 topic |
-| `output_dir` | `artifacts/perception_audit` | 输出目录 |
 
 ---
 
@@ -705,71 +674,36 @@ cat artifacts/perception_audit/raw_samples.jsonl
 对 RAW 检测进行空间匹配 + 时间投票平滑，输出稳定的 world_model。
 
 ```bash
-# 构建 app 包
-cd ~/ros2_ws
-colcon build --packages-select app --symlink-install
-source install/setup.bash
-
-# 启动稳定化层（默认消费 perception_objects）
 ros2 run app stable_object_tracker_node
-
-# 自定义参数
-ros2 run app stable_object_tracker_node --ros-args \
-  -p voting_window:=30 -p ttl_sec:=5.0 -p ema_alpha:=0.15
-
-# 回退到原始 ROI 输入
-ros2 run app stable_object_tracker_node --ros-args \
-  -p input_topic:=/world_model/roi_objects
-
-# 对比 RAW vs STABLE
-ros2 topic echo /world_model/roi_objects --once
+ros2 run app stable_object_tracker_node --ros-args -p input_topic:=/world_model/roi_objects
 ros2 topic echo /world_model/stable_objects --once
 ```
-
-**关键参数**：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `input_topic` | `/world_model/perception_objects` | 感知融合输入 |
-| `output_topic` | `/world_model/stable_objects` | 稳定化输出 |
-| `distance_threshold` | 0.05 | 空间匹配阈值 (m) |
-| `voting_window` | 20 | 投票窗口帧数 |
-| `min_frames` | 5 | 最少帧数才发布 |
-| `ttl_sec` | 3.0 | 物体消失超时 (s) |
-| `ema_alpha` | 0.2 | 置信度 EMA 系数 |
 
 ---
 
 ## 15. Perception Fusion Node
 
-融合 YOLO 语义类名与 ROI 颜色/位姿，输出统一的感知表示。
+融合 YOLO 语义类名与 ROI 颜色/位姿。
 
 ```bash
-# 构建 app 包
-cd ~/ros2_ws
-colcon build --packages-select app --symlink-install
-source install/setup.bash
-
-# 启动融合节点
 ros2 run app perception_fusion_node
-
-# 自定义参数
-ros2 run app perception_fusion_node --ros-args \
-  -p distance_threshold:=0.08 -p publish_rate_hz:=3.0
-
-# 查看融合输出
 ros2 topic echo /world_model/perception_objects
 ```
 
-**关键参数**：
+---
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `yolo_topic` | `/world_model/objects` | YOLO 输入 |
-| `roi_topic` | `/world_model/roi_objects` | ROI 输入 |
-| `output_topic` | `/world_model/perception_objects` | 融合输出 |
-| `distance_threshold` | 0.06 | 空间匹配阈值 (m) |
-| `cache_ttl_sec` | 2.0 | 缓存生命周期 (s) |
-| `publish_rate_hz` | 3.0 | 发布频率 (Hz) |
+## 16. ROI Color Confidence Sandbox
 
-**融合规则**：YOLO 提供语义类名，ROI 提供颜色和位姿。匹配者输出 `source: yolo_roi_fused`，仅 ROI 输出 `roi_only`，仅 YOLO 输出 `yolo_only` (color=unknown)。
+离线验证 ROI 置信度过滤逻辑（不修改生产代码）。
+
+```bash
+# 运行置信度过滤仿真
+python3 sandbox/roi_runtime_experiment/scripts/simulate_roi_runtime.py
+
+# 查看结果
+cat sandbox/roi_runtime_experiment/reports/roi_runtime_eval.md
+
+# ROI Color Tuner 离线评估
+python3 tools/vision_roi_tuner/scripts/evaluate_strategy_debug.py
+cat tools/vision_roi_tuner/outputs/reports_v2/strategy_debug_eval.md
+```
