@@ -263,7 +263,7 @@ graph TD
 
         subgraph TOPIC_WM["世界模型 Topics ⚠ 不匹配"]
             T_WM_OBJ["/world_model/objects<br/>← yolo, wm_dummy, wm_from_tf<br/>→ env_scan, static_env_report"]
-            T_WM_ROI["/world_model/roi_objects<br/>← roi_color_detector<br/>→ grounding_node ⚠ 孤岛"]
+            T_WM_ROI["/world_model/roi_objects<br/>← roi_color_detector<br/>→ perception_fusion"]
         end
 
         subgraph TOPIC_VISION["视觉 Topics"]
@@ -606,7 +606,7 @@ graph TD
 
 ## 7. Perception Fusion Policy
 
-> **生效日期**: Sprint 5.4
+> **生效日期**: Sprint 5.5
 
 ### Fusion Pipeline
 

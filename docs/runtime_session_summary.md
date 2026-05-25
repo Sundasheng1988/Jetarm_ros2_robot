@@ -1,16 +1,22 @@
 # JetArm Robot Runtime — Session Summary
 
-> Sprint 1 → 5.4 实现状态快照 | 2026-05-23 | 分支: `feature/sketch_runtime_sprint3`
+> Sprint 1 → 5.6 Session Snapshot | 2026-05-24 | 分支: `feature/sketch_runtime_sprint3`
 >
 > **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
 > **🔧 Sprint 5 进展**: ROI audit → StableObjectTracker → PerceptionFusionNode →
 > **📋 融合规则确立**: YOLO=语义优先, ROI=位姿+颜色, `/world_model/perception_objects` → stable_objects
 > **⚠ 已知限制**: ROI 颜色/类名不稳定仍未根本解决；YOLO 语义优先策略降低影响
 > ** 📋 Current Next Sprint:
-      Sprint 5.5
-      StableObjectTracker:
-      perception_objects
-      → stable_objects
+        Sprint 5.6
+
+        Grounding:
+        stable_objects
+        → grounding
+
+        Current perception chain completed:
+        YOLO + ROI
+        → perception_objects
+        → stable_objects
 
 ---
 
@@ -30,8 +36,11 @@ camera
 
   → StableObjectTracker
       (/world_model/stable_objects)
-      [CURRENT: input still = /world_model/roi_objects
-       TARGET : switch to /world_model/perception_objects]
+      [CURRENT:
+       input = /world_model/perception_objects
+       NEXT:
+    grounding
+    → /world_model/stable_objects]
 
 Language Pipeline
 ────────────────────────────────────────
@@ -44,10 +53,15 @@ Fusion / Runtime Pipeline
 ────────────────────────────────────────
 
 grounding_node
-  Inputs:
+
+    Inputs:
     - /parsed_command
-    - world model (CURRENT: roi_objects
-                   TARGET: stable_objects)
+
+    Current:
+    world_model/roi_objects
+
+    Planned:
+    world_model/stable_objects
 
   publish_runtime=true
   → /grounded_task_context
@@ -125,7 +139,8 @@ real_grounded_runtime_node
 | 4.3 | PickSkill source_pose key fix: `"pose"` → `"source_pose"` | `skills/pick_skill.py` |
 | 4.3 | RuntimeAdapter safety split: `dry_run`/`enable_real_ik`/`enable_real_servo` | `runtime_adapter.py` |
 | 4.3 | Real IK integration: `_call_ik_blocking()` with temp node | `runtime_adapter.py` |
-| — | 65 unit tests, all passing | `test/` |
+| 5.5 | perception_fusion → StableObjectTracker integrated | stable_tracker |
+| 5.5 | stable_objects pipeline validated | tracker + grounding |
 
 ---
 
@@ -156,31 +171,33 @@ PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 
 ## Current Integration Issue: Perception Fusion → StableObjectTracker Wiring
 
-Current state:
+## Current Integration Status
 
-camera
-→ YOLO (/world_model/objects)
-+ ROI (/world_model/roi_objects)
-→ perception_fusion_node
-→ /world_model/perception_objects
+Completed:
 
-StableObjectTracker already exists and publishes:
+YOLO
++
+ROI
+↓
 
-/world_model/stable_objects
-
-But CURRENT input is still:
-
-/world_model/roi_objects
-
-Next integration:
-
-Sprint 5.5
 perception_objects
-→ StableObjectTracker
+
+↓
+
+StableObjectTracker
+
+↓
+
+stable_objects
+
+Next:
 
 Sprint 5.6
+
 stable_objects
-→ grounding
+↓
+
+grounding
 
 Known limitation:
 
@@ -193,6 +210,41 @@ semantic priority
 
 ROI:
 pose/color/yaw priority
+
+---
+
+## ROI Tuner Conclusions (2026-05)
+
+Workspace:
+
+tools/vision_roi_tuner/
+
+Result:
+
+Autonomous visual tuning was stopped.
+
+Current rule:
+
+YOLO
+→ semantic authority
+
+ROI
+→ pose
+→ color candidates
+
+Color:
+
+if confidence < threshold:
+
+unknown
+
+Current observation:
+
+blue cup:
+stable
+
+block/cube:
+not reliable
 
 ## Safety Defaults
 
@@ -247,6 +299,7 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 5. **ActionExecutor must wait between steps** — `asyncio.sleep(duration_ms/1000.0)` after each MoveAction and GripperAction
 6. **Runtime success does NOT imply perception stability** — `/world_model/roi_objects` is a RAW detection stream. Same physical object may be labeled differently across frames (cup red → cup black → cylinder red). A StableObjectTracker with temporal voting must precede Verification Runtime.
 
+
 ---
 
 ## Current Stable Test Flow
@@ -265,17 +318,16 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 
 | 领域 | 限制 |
 |------|------|
+| **ROI Color** | ROI tuner completed. Current rule: ROI color is NOT semantic authority. Low-confidence color → unknown. YOLO remains semantic source. |
 | **ROI 类名/颜色** | 不稳定 — 形状分类 (cup/cube/cylinder) 和 LAB 颜色 (red/black) 仍会跨帧跳变。战略决策: YOLO 语义优先，
       ROI provides:
-      pose.xyz
-      pose.rpy
-      color
+      pose + rpy + color candidates
 
       YOLO provides:
       semantic class_name
 
       Fusion:
-      class ← YOLO
+      semantic ← YOLO
       pose/color ← ROI |
 | **抓取精度** | grasp precision 尚不稳定，需进一步标定和补偿 |
 | **验证逻辑** | 无 Verification Runtime — 无法自动判断抓取是否成功 |
@@ -296,11 +348,11 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | 4.7 | Full pick 真实硬件执行验证 — 首次 Runtime 驱动真实机械臂 |
 | 4.8 | **🎯 里程碑达成** — 文档更新，标记完整验证闭环 |
 | 5.1 | ✅ | ROI Detection Audit |
-| 5.2 | 🔶 | StableObjectTracker implemented |
+| 5.2 | ✅ | StableObjectTracker implemented |
 | 5.3 | ⏸ | ROI robustness deferred |
 | 5.4 | ✅ | Perception Fusion |
-| 5.5 | ⬜ NEXT | Tracker input switch |
-| 5.6 | ⬜ PLANNED | Grounding switch |
+| 5.5 | ✅ | Tracker input switch |
+| 5.6 | ▶ CURRENT | Grounding switch |
 
 ## Sprint 5 Progress (5.1 → 5.4)
 
@@ -351,3 +403,37 @@ src/sketch_runtime/
 | `grounding/grounding/grounding_node.py` | +`publish_runtime` param → `/grounded_task_context` |
 | `grounding/config/grounding_params.yaml` | +`publish_runtime: true` |
 | `llm_executor/llm_executor/executor_node.py` | +`/executor/done` Bool publisher |
+
+---
+
+## Session Resume Entry
+
+When opening a new chat:
+
+Read:
+
+1 runtime_index.md
+2 runtime_session_summary.md
+3 topic_service_map.md
+
+Current Goal:
+
+Sprint 5.6
+
+Do first:
+
+git status
+ros2 topic list | grep world_model
+
+Switch:
+
+stable_objects
+↓
+
+grounding
+
+Do NOT modify:
+
+servo
+kinematics
+hardware

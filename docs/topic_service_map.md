@@ -38,7 +38,7 @@
 │       ▼                                                              │
 │  [grounding_node]                                                    │
 │       │ Sub:  /parsed_command                                        │
-│       │ Sub:  /world_model/roi_objects (⚠ 无发布方)                  │
+│       │ Sub:  /world_model/roi_objects                               │
 │       │ Sub:  /keyboard_input/input  (raw text fallback)             │
 │       │ Pub:  /grounded_goal (String, JSON)                          │
 │       │ Srv:  /grounding/clear_memory (Trigger)                      │
@@ -99,6 +99,15 @@
     Pub: /world_model/roi_objects       (String JSON)
     Pub: /roi_objects/poses             (PoseArray)
     Pub: /roi_target_pose               (PoseStamped)
+
+[perception_fusion_node]
+    Sub: /world_model/objects
+    Sub: /world_model/roi_objects
+    Pub: /world_model/perception_objects
+
+[stable_object_tracker_node]
+    Sub: /world_model/perception_objects
+    Pub: /world_model/stable_objects
 
 [object_pose_publisher]     (app package)
     Sub: /depth_cam/rgb/image_raw       (mono8, AprilTag)
@@ -197,7 +206,10 @@
 | `/parsed_command` | `String` | `llm_command_parser_node` | `grounding_node` |
 | `/grounded_goal` | `String` | `grounding_node` | `ground_executor_node` |
 | `/world_model/objects` | `String` | `app_compatible_yolo_node`, `wm_dummy_pub`, `wm_from_tf` | `static_env_report_node`, `env_scan_node` |
-| `/world_model/roi_objects` | `String` | `roi_color_detector_node` | `grounding_node` ⚠ 主题孤岛 |
+| `/world_model/roi_objects` | `String JSON` | `roi_color_detector_node` | `perception_fusion_node`; grounding_node (legacy/current) |
+| `/world_model/perception_objects` | `String JSON` | `perception_fusion_node` | `stable_object_tracker_node` |
+| `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | Sprint 5.6 target: `grounding_node` |
+| `/grounded_task_context` | `String JSON` | `grounding_node` | `real_grounded_runtime_node` |
 | `/world_objects` | `EnvObjectArray` | `world_model_node` | *(待消费)* |
 | `/env_objects` | `EnvObjectArray` | `env_scan_node`, `static_env_report_node` | `llm_voice_agent`, `world_model_node` |
 | `/vision_target` | `DetectionResult` | `app_compatible_yolo_node` | `ground_executor_node`(可选), `env_scan_node` |
@@ -259,16 +271,44 @@
 
 ---
 
-## 5. 关键 Topic 不匹配问题
+## 5. 当前 World Model Topic 状态
 
-| 订阅方 | 订阅 Topic | 实际发布方 Topic | 状态 |
-|--------|-----------|-----------------|------|
-| `grounding_node` | `/world_model/roi_objects` | `roi_color_detector_node` → `/world_model/roi_objects` | ✅ 匹配(roi_color_detector_node) |
-| `grounding_node` | `/world_model/roi_objects` | `app_compatible_yolo_node` → `/world_model/objects` | ❌ 不匹配 |
-| `grounding_node` | `/world_model/roi_objects` | `wm_dummy_pub` → `/world_model/objects` | ❌ 不匹配 |
-| `grounding_node` | `/world_model/roi_objects` | `wm_from_tf` → `/world_model/objects` | ❌ 不匹配 |
+| 阶段 | Topic | 状态 |
+|---|---|---|
+| YOLO output | `/world_model/objects` | ✅ semantic source |
+| ROI output | `/world_model/roi_objects` | ✅ pose/rpy/color candidate source |
+| Fusion output | `/world_model/perception_objects` | ✅ Sprint 5.4 completed |
+| Stable tracker output | `/world_model/stable_objects` | ✅ Sprint 5.5 completed |
+| Grounding input | `/world_model/roi_objects` | ⚠ legacy/current before Sprint 5.6 |
+| Grounding target input | `/world_model/stable_objects` | ▶ Sprint 5.6 target |
 
-**结论**：只有 `roi_color_detector_node` (app 包) 能与 grounding 正常联通。YOLO 检测结果、TF 桥接结果、dummy 测试数据都无法进入 grounding。
+**结论**:
+
+Old problem:
+YOLO and ROI were separate world-model streams.
+
+Current design:
+YOLO + ROI
+→ perception_fusion_node
+→ `/world_model/perception_objects`
+→ StableObjectTracker
+→ `/world_model/stable_objects`
+
+Next:
+
+Sprint 5.6
+
+stable_objects
+↓
+
+grounding
+
+Future:
+
+grounded_task_context
+↓
+
+real_grounded_runtime
 
 ---
 
