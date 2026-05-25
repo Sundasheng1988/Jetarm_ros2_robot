@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json, time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 
 import rclpy
 from rclpy.node import Node
@@ -83,7 +83,10 @@ class GroundingNode(Node):
     def __init__(self):
         super().__init__("grounding_node")
         self.sub_cmd = self.create_subscription(String, "/parsed_command", self.on_cmd, 10)
-        self.sub_wm  = self.create_subscription(String, "/world_model/roi_objects", self.on_world_model, qos_profile_sensor_data)
+        self.declare_parameter("world_model_topic", "/world_model/stable_objects")
+        wm_topic = self.get_parameter("world_model_topic").get_parameter_value().string_value
+        self.sub_wm  = self.create_subscription(String, wm_topic, self.on_world_model, qos_profile_sensor_data)
+        self.get_logger().info(f"世界模型订阅: {wm_topic}")
         self.pub_goal = self.create_publisher(String, "/grounded_goal", 10)
         self.create_service(Trigger, "/grounding/clear_memory", self.on_reset)
 
@@ -119,8 +122,8 @@ class GroundingNode(Node):
         self._load_place_map_overrides()
 
         # 运行态内存
-        self.objects: Dict[int, Dict[str, Any]] = {}
-        self.last_object_id: Optional[int] = None
+        self.objects: Dict[Union[int, str], Dict[str, Any]] = {}
+        self.last_object_id: Optional[Union[int, str]] = None
 
         self.get_logger().info("🧭 Grounding Node started.")
 
@@ -145,17 +148,31 @@ class GroundingNode(Node):
         try:
             data = json.loads(msg.data)
             for o in data.get("objects", []):
-                oid = int(o.get("id"))
+                raw_id = o.get("id")
+
+                if raw_id is not None:
+                    oid = int(raw_id)
+
+                else:
+                    track_id = o.get("track_id")
+
+                    if track_id:
+                        oid = str(track_id)
+
+                    else:
+                        continue
+                        
                 self.objects[oid] = {
                     "id": oid,
                     "class_name": (o.get("class_name") or "").lower(),
                     "color": (o.get("color") or "").lower(),
                     "pose": o.get("pose") or {},
                     "confidence": float(o.get("confidence") or 0.0),
-                    "updated_at": float(o.get("updated_at") or now_ts()),
+                    "updated_at": float(o.get("updated_at") or o.get("last_seen") or now_ts()),
                 }
         except Exception as e:
-            self.get_logger().error(f"解析 /world_model/roi_objects 失败: {e}\n原文: {msg.data}")
+            wm_topic = self.get_parameter("world_model_topic").get_parameter_value().string_value
+            self.get_logger().error(f"解析 {wm_topic} 失败: {e}\n原文: {msg.data}")
 
     def on_cmd(self, msg: String):
         # 输入如：{"action":"pick","from":"red_cup","to":"right_side", ...}

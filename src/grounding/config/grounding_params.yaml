@@ -1,5 +1,6 @@
 grounding_node:
   ros__parameters:
+    world_model_topic: "/world_model/stable_objects"
     reuse_last_object: false
     publish_runtime: true
 
