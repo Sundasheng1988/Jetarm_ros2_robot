@@ -25,3 +25,4 @@ microsoft.gpg
 src/voice_state_machine.md
 src/启发指令.md
 artifacts/
+pdf/*.pdf
