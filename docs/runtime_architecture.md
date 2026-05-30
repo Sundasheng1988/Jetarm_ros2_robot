@@ -668,7 +668,35 @@ YOLO /world_model/objects           ROI /world_model/roi_objects
 
 ---
 
-## 图例说明
+## 8. Perception Bringup
+
+> **生效日期**: Sprint 5.6
+
+### perception_bringup.launch.py
+
+Starts the full perception + grounding pipeline:
+
+- `roi_color_detector_node` (app) — ROI detection, publishes `/world_model/roi_objects`
+- `simple_yolo_node` (vision_yolo) — YOLO detection, publishes `/world_model/objects`
+- `perception_fusion_node` (app) — YOLO+ROI fusion, publishes `/world_model/perception_objects`
+- `stable_object_tracker_node` (app) — temporal stabilization, publishes `/world_model/stable_objects`
+- `grounding_node` (grounding) — object matching + goal generation, publishes `/grounded_goal` and `/grounded_task_context`
+
+Does NOT start:
+
+- runtime
+- IK
+- servo
+- hardware execution
+
+### Camera startup
+
+`depth_camera.launch.py` (peripherals package) must be started separately before `perception_bringup.launch.py`.
+
+```bash
+ros2 launch peripherals depth_camera.launch.py
+ros2 launch app perception_bringup.launch.py
+```
 
 | 颜色 | 含义 |
 |------|------|

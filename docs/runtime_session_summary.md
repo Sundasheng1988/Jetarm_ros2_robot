@@ -435,3 +435,25 @@ Do NOT modify:
 servo
 kinematics
 hardware
+
+---
+
+## Sprint 5.6 Completion
+
+Date: 2026-05-30
+
+Completed:
+
+- grounding_node switched to /world_model/stable_objects
+- perception_bringup.launch.py created
+- StableObjectTracker verified
+- Grounding verified
+- /grounded_goal verified
+- /grounded_task_context verified
+- cup → status=ok verified
+
+Known limitation:
+
+- ROI color detection may return unknown
+- blue_cup matching can fail
+- class-only matching currently recommended

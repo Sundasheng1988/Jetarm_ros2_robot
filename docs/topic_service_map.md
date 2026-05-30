@@ -38,9 +38,10 @@
 │       ▼                                                              │
 │  [grounding_node]                                                    │
 │       │ Sub:  /parsed_command                                        │
-│       │ Sub:  /world_model/roi_objects                               │
+│       │ Sub:  /world_model/stable_objects                            │
 │       │ Sub:  /keyboard_input/input  (raw text fallback)             │
 │       │ Pub:  /grounded_goal (String, JSON)                          │
+│       │ Pub:  /grounded_task_context (String, JSON)                  │
 │       │ Srv:  /grounding/clear_memory (Trigger)                      │
 │       ▼                                                              │
 │  [ground_executor_node]                                              │
@@ -206,9 +207,9 @@
 | `/parsed_command` | `String` | `llm_command_parser_node` | `grounding_node` |
 | `/grounded_goal` | `String` | `grounding_node` | `ground_executor_node` |
 | `/world_model/objects` | `String` | `app_compatible_yolo_node`, `wm_dummy_pub`, `wm_from_tf` | `static_env_report_node`, `env_scan_node` |
-| `/world_model/roi_objects` | `String JSON` | `roi_color_detector_node` | `perception_fusion_node`; grounding_node (legacy/current) |
+| `/world_model/roi_objects` | `String JSON` | `roi_color_detector_node` | `perception_fusion_node`; grounding_node (legacy before Sprint 5.6) |
 | `/world_model/perception_objects` | `String JSON` | `perception_fusion_node` | `stable_object_tracker_node` |
-| `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | `grounding_node` planned consumer |
+| `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | `grounding_node` |
 | `/grounded_task_context` | `String JSON` | `grounding_node` | `real_grounded_runtime_node` |
 | `/world_objects` | `EnvObjectArray` | `world_model_node` | *(待消费)* |
 | `/env_objects` | `EnvObjectArray` | `env_scan_node`, `static_env_report_node` | `llm_voice_agent`, `world_model_node` |
@@ -279,29 +280,35 @@
 | ROI output | `/world_model/roi_objects` | ✅ pose/rpy/color candidate source |
 | Fusion output | `/world_model/perception_objects` | ✅ Sprint 5.4 completed |
 | Stable tracker output | `/world_model/stable_objects` | ✅ Sprint 5.5 completed |
-| Grounding input | `/world_model/roi_objects` | ⚠ legacy/current before Sprint 5.6 |
-| Grounding target input | `/world_model/stable_objects` | ▶ Sprint 5.6 target |
+| Grounding input | `/world_model/stable_objects` | ✅ Sprint 5.6 completed |
 
 **结论**:
 
-Old problem:
-YOLO and ROI were separate world-model streams.
+Current design (Sprint 5.6 completed):
 
-Current design:
-YOLO + ROI
-→ perception_fusion_node
-→ `/world_model/perception_objects`
-→ StableObjectTracker
-→ `/world_model/stable_objects`
+Camera
+→ /depth_cam/rgb/image_raw
 
-Next:
+ROI
+→ /world_model/roi_objects
 
-Sprint 5.6
+YOLO
+→ /world_model/objects
 
-stable_objects
-↓
+Fusion
+→ /world_model/perception_objects
 
-grounding
+Stable Tracker
+→ /world_model/stable_objects
+
+Grounding
+subscribes:
+- /world_model/stable_objects
+- /parsed_command
+
+publishes:
+- /grounded_goal
+- /grounded_task_context
 
 Future:
 

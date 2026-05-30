@@ -2,7 +2,7 @@
 
 > 合并原始 Roadmap + 当前实施进度 + Sprint 5→10 计划
 > 状态标记: ✅ COMPLETED | 🔶 IN_PROGRESS | ⬜ PLANNED | ⏸ DEFERRED
-> 最后更新：2026-05-20
+> 最后更新：2026-05-30
 > **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
 
 ---
@@ -159,7 +159,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 5: Stable World Model / Perception Fusion 🔶 IN_PROGRESS
+## Sprint 5: Stable World Model / Perception Fusion ✅ COMPLETED
 
 **目标**: YOLO + ROI 感知融合 → StableObjectTracker 时序稳定 → 供 Grounding 消费。
 
@@ -237,9 +237,17 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-### Sprint 5.6 — Grounding Switch to Stable ⬜ PLANNED
+### Sprint 5.6 — Grounding Switch to Stable ✅ COMPLETED
 
 **目标**: grounding_node 从 `/world_model/roi_objects` 切换到 `/world_model/stable_objects`。
+
+**完成内容**:
+- perception_bringup.launch.py 添加为标准化感知启动入口
+- camera startup 保持独立: `ros2 launch peripherals depth_camera.launch.py`
+- StableObjectTracker → Grounding 链路验证通过
+- `/grounded_goal` status=ok 验证通过 (from="cup")
+- `/grounded_task_context` 验证通过
+- 已知限制: ROI color detection 可能返回 unknown, blue_cup 匹配可能失败, 建议使用 class-only 匹配
 
 ---
 
@@ -250,7 +258,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 - [x] PerceptionFusionNode 发布 `/world_model/perception_objects`
 - [x] YOLO 语义 + ROI 位姿/颜色融合规则确立
 - [x] StableObjectTracker 输入切换到 perception_objects
-- [ ] grounding_node 切换到 stable_objects
+- [x] grounding_node 切换到 stable_objects
 - [ ] 不修改 ROI 检测逻辑、YOLO 检测逻辑
 
 ---
