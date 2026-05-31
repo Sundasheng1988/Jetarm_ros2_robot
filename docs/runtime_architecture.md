@@ -699,7 +699,29 @@ ros2 launch app perception_bringup.launch.py
 ```
 
 | 颜色 | 含义 |
+
 |------|------|
+
+## 9. Verification Sidecar Node
+
+> **生效日期**: Sprint 6.1
+
+`verification_result_node` (sketch_runtime) is a sidecar observation node.
+
+- **Subscribes**: /grounded_task_context, /world_model/stable_objects, /executor/done
+- **Publishes**: /runtime/verification_result
+- **Does NOT**: control hardware, call IK, call servo, block runtime
+
+Verification flow:
+1. Precheck (when grounded_task_context intent=pick arrives):
+   confirms target object exists near the source position in stable_objects
+2. Postcheck (after /executor/done=true, with timer delay):
+   confirms target object has disappeared from the source position
+
+Correlation uses FIFO matching because the runtime is sequential (one active task).
+Current version only verifies disappearance from source area, not placement at target.
+
+| 颜色 | 含义 |
 | 🔵 蓝色边框 | 底层硬件/驱动 — 永不应修改 |
 | 🟡 黄色填充 | 需要修复/重构的模块 (Sprint 1) |
 | 🔴 红色填充 | 当前高风险区域 (硬编码/冲突) |

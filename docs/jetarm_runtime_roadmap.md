@@ -263,7 +263,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 6: Verification Runtime ⬜ PLANNED
+## Sprint 6: Verification Runtime ✅ COMPLETED
 
 **目标**: 不只知道"执行了"，更要知道"成功了"。
 
@@ -271,7 +271,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-### Sprint 6.1 — Verification Architecture Plan
+### Sprint 6.1 — Verification Architecture Plan ✅ COMPLETED
 
 **目标**: 定义 VerificationResult 数据结构与验证阶段。
 
@@ -291,6 +291,16 @@ class VerificationResult:
 **验证阶段**: precheck_target_exists / after_pick_target_removed / after_place_target_present
 
 **新建文件**: `src/sketch_runtime/sketch_runtime/verification_result.py`
+
+**完成内容**:
+- VerificationResultNode 独立 sidecar 节点实现 (`verification_result_node.py`)
+- 订阅 /grounded_task_context + /world_model/stable_objects + /executor/done
+- 发布 /runtime/verification_result
+- 预检 (precheck): 确认目标存在于源位置附近
+- 后检 (postcheck): 确认目标从源位置消失
+- 软件仿真验证通过 (Case A: precheck success / Case B: postcheck failure / Case C: postcheck success)
+- observation-only 设计确认：无 IK、无 servo、无硬件控制、无运行时阻塞
+- FIFO 匹配：仅支持顺序任务
 
 ---
 

@@ -211,6 +211,7 @@
 | `/world_model/perception_objects` | `String JSON` | `perception_fusion_node` | `stable_object_tracker_node` |
 | `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | `grounding_node` |
 | `/grounded_task_context` | `String JSON` | `grounding_node` | `real_grounded_runtime_node` |
+| `/runtime/verification_result` | `String JSON` | `verification_result_node` | *(future verification consumer)* |
 | `/world_objects` | `EnvObjectArray` | `world_model_node` | *(待消费)* |
 | `/env_objects` | `EnvObjectArray` | `env_scan_node`, `static_env_report_node` | `llm_voice_agent`, `world_model_node` |
 | `/vision_target` | `DetectionResult` | `app_compatible_yolo_node` | `ground_executor_node`(可选), `env_scan_node` |
@@ -316,6 +317,19 @@ grounded_task_context
 ↓
 
 real_grounded_runtime
+
+Verification Sidecar (Sprint 6.1 completed):
+
+verification_result_node
+subscribes:
+- /grounded_task_context
+- /world_model/stable_objects
+- /executor/done
+publishes:
+- /runtime/verification_result
+
+VerificationResultNode is observation-only.
+It does not control hardware, call IK, or block the runtime.
 
 ---
 

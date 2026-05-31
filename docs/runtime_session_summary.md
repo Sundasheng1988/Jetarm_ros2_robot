@@ -457,3 +457,44 @@ Known limitation:
 - ROI color detection may return unknown
 - blue_cup matching can fail
 - class-only matching currently recommended
+
+## Sprint 6.1 Completion — Verification Sidecar
+
+Date: 2026-05-30
+Commit: 1a6298d feat(runtime): add verification sidecar node
+
+New node: `verification_result_node` (sketch_runtime package)
+
+Subscribes:
+- /grounded_task_context
+- /world_model/stable_objects
+- /executor/done
+
+Publishes:
+- /runtime/verification_result
+
+Behavior:
+- Observation only — no IK, no servo, no hardware control
+- No runtime blocking — does not affect real_grounded_runtime_node
+- FIFO matching — one active verification context only
+- class_name + position proximity matching
+- color is optional — works when color == "unknown"
+
+Validation Results:
+- 101 total tests passed
+- 19 verification tests passed
+- ROS2 startup verified
+- Precheck success verified
+- Postcheck failure verified
+- Postcheck success verified
+
+Known limitations:
+- No task_id correlation — uses FIFO matching (runtime is sequential)
+- Postcheck only verifies disappearance from source area (not placement at target)
+- No retry or recovery logic
+
+Not verified:
+- real robot grasp
+- IK execution
+- servo execution
+- target placement verification
