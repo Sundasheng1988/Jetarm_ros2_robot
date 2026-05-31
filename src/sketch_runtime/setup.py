@@ -24,6 +24,7 @@ setup(
         'console_scripts': [
             'runtime_test_node = sketch_runtime.runtime_test_node:main',
             'real_grounded_runtime_node = sketch_runtime.real_grounded_runtime_node:main',
+            'verification_result_node = sketch_runtime.verification_result_node:main',
         ],
     },
 )
