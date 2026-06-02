@@ -263,7 +263,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 6: Verification Runtime ✅ COMPLETED
+## Sprint 6: Verification Runtime 🔶 IN_PROGRESS
 
 **目标**: 不只知道"执行了"，更要知道"成功了"。
 
@@ -276,67 +276,223 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 **目标**: 定义 VerificationResult 数据结构与验证阶段。
 
 **VerificationResult 数据结构**:
+
 ```python
 @dataclass
 class VerificationResult:
     task_id: str
     stage: str              # "pre_pick" | "post_pick" | "post_place"
     success: bool
-    confidence: float       # 0.0 ~ 1.0
+    confidence: float
     reason: str
     evidence: dict
     timestamp: float
 ```
 
-**验证阶段**: precheck_target_exists / after_pick_target_removed / after_place_target_present
+**验证阶段**:
 
-**新建文件**: `src/sketch_runtime/sketch_runtime/verification_result.py`
+* precheck_target_exists
+* after_pick_target_removed
+* after_place_target_present
+
+**新建文件**:
+
+```text
+src/sketch_runtime/sketch_runtime/verification_result.py
+src/sketch_runtime/sketch_runtime/verification_result_node.py
+src/sketch_runtime/test/test_verification.py
+```
 
 **完成内容**:
-- VerificationResultNode 独立 sidecar 节点实现 (`verification_result_node.py`)
-- 订阅 /grounded_task_context + /world_model/stable_objects + /executor/done
-- 发布 /runtime/verification_result
-- 预检 (precheck): 确认目标存在于源位置附近
-- 后检 (postcheck): 确认目标从源位置消失
-- 软件仿真验证通过 (Case A: precheck success / Case B: postcheck failure / Case C: postcheck success)
-- observation-only 设计确认：无 IK、无 servo、无硬件控制、无运行时阻塞
-- FIFO 匹配：仅支持顺序任务
+
+* VerificationResultNode 独立 sidecar 节点实现
+* 订阅：
+
+  * /grounded_task_context
+  * /world_model/stable_objects
+  * /executor/done
+* 发布：
+
+  * /runtime/verification_result
+* Precheck:
+
+  * 确认目标存在于源位置附近
+* Postcheck:
+
+  * 确认目标从源位置消失
+* 软件仿真验证通过
+
+  * Case A: precheck success
+  * Case B: postcheck failure
+  * Case C: postcheck success
+* 101 tests passed
+* 19 verification tests passed
+* Observation-only 设计确认：
+
+  * 无 IK
+  * 无 servo
+  * 无硬件控制
+  * 无 Runtime 阻塞
+* FIFO 匹配：
+
+  * 仅支持顺序任务
 
 ---
 
-### Sprint 6.2 — World Model Reader
+### Sprint 6.2 — Runtime Integration 🔶 NEXT
 
-**功能**: 订阅 `/world_model/stable_objects` → 解析 JSON → 按 class/color/id 查询 → 距离阈值判断
+**功能**:
 
-**新建文件**: `src/sketch_runtime/sketch_runtime/world_model_reader.py`
+让 Runtime 正式消费 Verification 结果。
+
+**流程**:
+
+```text
+TaskContext
+↓
+Executor
+↓
+VerificationResult
+↓
+Runtime State
+```
+
+**修改文件**:
+
+```text
+src/sketch_runtime/sketch_runtime/real_grounded_runtime_node.py
+src/sketch_runtime/sketch_runtime/task_context.py
+```
+
+**完成目标**:
+
+* 订阅：
+
+  * /runtime/verification_result
+* Runtime 接收 VerificationResult
+* Runtime 保存验证状态
+* Runtime 根据验证结果更新任务状态
 
 ---
 
-### Sprint 6.3 — Precheck Verification
+### Sprint 6.3 — Runtime Verification State
 
-**流程**: PickSkill 执行前 → verify target exists in stable_objects
+**功能**:
+
+增加 Runtime 生命周期中的验证状态。
+
+**新增状态**:
+
+```text
+VERIFYING
+VERIFIED
+VERIFICATION_FAILED
+```
+
+**目标流程**:
+
+```text
+EXECUTING
+↓
+VERIFYING
+↓
+VERIFIED
+```
+
+或
+
+```text
+EXECUTING
+↓
+VERIFYING
+↓
+VERIFICATION_FAILED
+```
+
+**完成目标**:
+
+* Runtime State 可观测
+* /runtime/state 显示验证阶段
 
 ---
 
-### Sprint 6.4 — After Pick Verification
+### Sprint 6.4 — After Place Verification
 
-**流程**: lift 完成后 → 等待 0.5s → check target disappeared from source area
+**流程**:
 
-**保守策略**: 第一版仅报告 evidence，不自动阻断
+Place 完成后：
+
+```text
+place
+↓
+等待 0.5s
+↓
+验证目标是否出现在目标区域
+```
+
+**验证内容**:
+
+* target exists near target pose
+* target class matches
+* target color matches（可选）
+
+**保守策略**:
+
+第一版仅记录 evidence。
+
+不自动恢复。
+
+不自动重试。
 
 ---
 
-### Sprint 6.5 — Verification Logs
+### Sprint 6.5 — Runtime Verification Logs
 
-**Topic**: `/runtime/verification` (String JSON)
+**Topic**:
+
+```text
+/runtime/verification_result
+/runtime/event
+```
+
+**功能**:
+
+* Verification 历史记录
+* Runtime Event 记录
+* RobotOps 审计基础
+
+**完成目标**:
+
+能够回放：
+
+```text
+Task
+↓
+Execution
+↓
+Verification
+↓
+Result
+```
 
 ---
 
 ### Sprint 6.6 — Retry Plan (Design Only)
 
-**方案**: offset_retry / ask_user_confirm，Sprint 7 实现
+**方案**:
 
----
+```text
+offset_retry
+ask_user_confirm
+manual_recovery
+```
+
+Sprint 7 实现。
+
+仅输出设计文档。
+
+不开发代码。
+
 
 ## Sprint 7: Retry / Recovery ⬜ PLANNED
 
