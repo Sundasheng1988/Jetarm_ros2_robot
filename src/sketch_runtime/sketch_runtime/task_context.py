@@ -12,6 +12,9 @@ class TaskState(Enum):
     SKILL_SELECTED = "skill_selected"
     WAITING_CONFIRM = "waiting_confirm"
     EXECUTING = "executing"
+    VERIFYING = "verifying"
+    VERIFIED = "verified"
+    VERIFICATION_FAILED = "verification_failed"
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -76,7 +79,8 @@ class TaskContext:
             self.grounded_at = time.time()
         elif new_state == TaskState.EXECUTING:
             self.started_at = time.time()
-        elif new_state in (TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED):
+        elif new_state in (TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED,
+                           TaskState.VERIFIED, TaskState.VERIFICATION_FAILED):
             self.completed_at = time.time()
 
     @property

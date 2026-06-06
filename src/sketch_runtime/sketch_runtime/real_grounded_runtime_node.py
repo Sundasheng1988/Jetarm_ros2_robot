@@ -2,6 +2,7 @@
 import json
 import time
 import asyncio
+from typing import Optional
 
 import rclpy
 from rclpy.node import Node
@@ -42,6 +43,7 @@ class RealGroundedRuntimeNode(Node):
         self._pending_ctx = None
         self._pending_skill = None
         self._pending_deadline = 0.0
+        self._active_ctx: Optional[TaskContext] = None
 
         self.pub_state = self.create_publisher(String, "/runtime/state", 10)
         self.pub_log = self.create_publisher(String, "/runtime/log", 10)
@@ -66,6 +68,9 @@ class RealGroundedRuntimeNode(Node):
         )
         self.create_subscription(
             String, "/runtime/confirm", self._on_confirm, 10
+        )
+        self.create_subscription(
+            String, "/runtime/verification_result", self._on_verification_result, 10
         )
 
         self._confirm_timer = self.create_timer(0.5, self._check_confirm_timeout)
@@ -315,6 +320,7 @@ class RealGroundedRuntimeNode(Node):
         self.done_pub.publish(Bool(data=False))
         self.get_logger().info(f"[cancel] task_id={ctx.task_id}")
         self._has_run = True
+        self._active_ctx = None
 
     # ── execution ──
 
@@ -342,21 +348,32 @@ class RealGroundedRuntimeNode(Node):
             skill.cleanup(ctx)
 
             if result.success:
-                ctx.transition(TaskState.DONE)
+                ctx.transition(TaskState.VERIFYING)
+                self._emit_state(ctx)
+                self._emit_log(ctx, "verification_started", {"skill": ctx.selected_skill})
+                self._active_ctx = ctx
+                self.done_pub.publish(Bool(data=True))
+                self.get_logger().info(
+                    f"[verify] task_id={ctx.task_id} — postcheck triggered, "
+                    f"waiting for verification_result"
+                )
+                self._has_run = True
+                self.adapter._call_log.clear()
+                return
             else:
                 ctx.transition(TaskState.FAILED)
-            ctx.result = result.to_dict()
-            self._emit_state(ctx)
-            self._emit_log(ctx, "execution_result", result.to_dict())
-            self.pub_result.publish(
-                String(data=json.dumps(result.to_dict(), ensure_ascii=False))
-            )
-            self.done_pub.publish(Bool(data=result.success))
-
-            self.get_logger().info(
-                f"[done] success={result.success} reason={result.reason} "
-                f"elapsed_ms={ctx.elapsed_ms:.1f}"
-            )
+                ctx.result = result.to_dict()
+                self._emit_state(ctx)
+                self._emit_log(ctx, "execution_result", result.to_dict())
+                self.pub_result.publish(
+                    String(data=json.dumps(result.to_dict(), ensure_ascii=False))
+                )
+                self.done_pub.publish(Bool(data=False))
+                self.get_logger().info(
+                    f"[done] success=False reason={result.reason}"
+                )
+                self._has_run = True
+                self.adapter._call_log.clear()
 
             for i, call in enumerate(self.adapter._call_log[-8:]):
                 self.get_logger().info(
@@ -364,10 +381,46 @@ class RealGroundedRuntimeNode(Node):
                     f"{json.dumps(call['args'], ensure_ascii=False)}"
                 )
 
-            self._has_run = True
-            self.adapter._call_log.clear()
         finally:
             self._busy = False
+
+    # ── verification result ──
+
+    def _on_verification_result(self, msg: String):
+        if self._active_ctx is None:
+            return
+
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+
+        stage = data.get("stage", "")
+        if stage != "postcheck":
+            return
+
+        ctx = self._active_ctx
+        if ctx.state != TaskState.VERIFYING:
+            return
+
+        success = bool(data.get("success", False))
+        self.get_logger().info(
+            f"[verify] task_id={ctx.task_id} postcheck success={success}"
+        )
+
+        if ctx.result is None:
+            ctx.result = {}
+
+        ctx.result["verification"] = data
+
+        if success:
+            ctx.transition(TaskState.VERIFIED)
+        else:
+            ctx.transition(TaskState.VERIFICATION_FAILED)
+
+        self._emit_state(ctx)
+        self._emit_log(ctx, "verification_complete", {"success": success})
+        self._active_ctx = None
 
 
 def main(args=None):

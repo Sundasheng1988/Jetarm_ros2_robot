@@ -17,6 +17,9 @@ class TestTaskState:
         assert TaskState.CANCELLED.value == "cancelled"
         assert TaskState.PAUSED.value == "paused"
         assert TaskState.RETRYING.value == "retrying"
+        assert TaskState.VERIFYING.value == "verifying"
+        assert TaskState.VERIFIED.value == "verified"
+        assert TaskState.VERIFICATION_FAILED.value == "verification_failed"
 
 
 class TestTaskContext:
@@ -69,13 +72,20 @@ class TestTaskContext:
         assert ctx.started_at is not None
 
     def test_completed_at_set_on_terminal_states(self):
-        for state in (TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED):
+        for state in (TaskState.DONE, TaskState.FAILED, TaskState.CANCELLED,
+                      TaskState.VERIFIED, TaskState.VERIFICATION_FAILED):
             ctx = TaskContext()
             ctx.transition(TaskState.PARSED)
             ctx.transition(state)
             assert ctx.completed_at is not None
 
-    def test_elapsed_ms_increases(self):
+    def test_completed_at_not_set_on_verifying(self):
+        ctx = TaskContext()
+        ctx.transition(TaskState.EXECUTING)
+        ctx.transition(TaskState.VERIFYING)
+        assert ctx.completed_at is None
+
+    def test_different_calls_produce_unique_ids(self):
         ctx = TaskContext()
         assert ctx.elapsed_ms >= 0.0
 
