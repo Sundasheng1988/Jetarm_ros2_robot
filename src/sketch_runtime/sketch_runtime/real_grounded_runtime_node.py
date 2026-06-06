@@ -2,7 +2,7 @@
 import json
 import time
 import asyncio
-from typing import Optional
+from typing import Optional, Dict
 
 import rclpy
 from rclpy.node import Node
@@ -44,6 +44,7 @@ class RealGroundedRuntimeNode(Node):
         self._pending_skill = None
         self._pending_deadline = 0.0
         self._active_ctx: Optional[TaskContext] = None
+        self._event_counter: Dict[str, int] = {}
 
         self.pub_state = self.create_publisher(String, "/runtime/state", 10)
         self.pub_log = self.create_publisher(String, "/runtime/log", 10)
@@ -117,11 +118,18 @@ class RealGroundedRuntimeNode(Node):
         self.get_logger().info(f"[state] {ctx.state.value}")
 
     def _emit_log(self, ctx: TaskContext, event: str, data: dict = None):
+        if ctx.task_id not in self._event_counter:
+            self._event_counter[ctx.task_id] = 0
+        self._event_counter[ctx.task_id] += 1
+        seq = self._event_counter[ctx.task_id]
+
         msg = {
+            "event_id": f"evt_{ctx.task_id}_{seq:04d}",
             "task_id": ctx.task_id,
             "event": event,
-            "data": data or {},
+            "state": ctx.state.value,
             "timestamp": time.time(),
+            "data": data or {},
         }
         self.pub_log.publish(String(data=json.dumps(msg, ensure_ascii=False)))
 
