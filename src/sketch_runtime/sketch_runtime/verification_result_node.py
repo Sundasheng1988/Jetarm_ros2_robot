@@ -32,6 +32,7 @@ class VerificationResultNode(Node):
 
         # State
         self._pending_precheck = None
+        self._pending_place_check = None
         self._last_stable_objects = None
         self._lock = threading.Lock()
 
@@ -90,15 +91,40 @@ class VerificationResultNode(Node):
         status = context.get("status", "")
         intent = context.get("intent", "")
 
-        if status != "ok" or intent not in ("pick", "grasp"):
+        if status != "ok" or intent not in ("pick", "grasp", "place"):
             return
 
         target_object = context.get("target_object", {})
         target_class = target_object.get("class_name", "")
         target_color = target_object.get("color", "")
+
+        # ── place intent: store pending, no precheck publish ──
+        if intent == "place":
+            target_pose = context.get("target_pose", {})
+            tgt_xyz_raw = target_pose.get("xyz", [0.0, 0.0, 0.0])
+            try:
+                target_xyz = [float(tgt_xyz_raw[0]), float(tgt_xyz_raw[1]), float(tgt_xyz_raw[2])]
+            except (TypeError, IndexError, ValueError):
+                target_xyz = [0.0, 0.0, 0.0]
+
+            with self._lock:
+                self._pending_precheck = None
+                self._pending_place_check = {
+                    "context": context,
+                    "target_class": target_class,
+                    "target_color": target_color,
+                    "target_xyz": target_xyz,
+                }
+            self.get_logger().info(
+                f"Place context stored: class={target_class}, target_xyz={target_xyz}"
+            )
+            return
+
         xyz = extract_source_xyz(target_object)
 
         with self._lock:
+            self._pending_place_check = None
+
             if self._last_stable_objects is None:
                 result = VerificationResult(
                     stage="precheck",
@@ -171,6 +197,17 @@ class VerificationResultNode(Node):
         if not msg.data:
             return
 
+        # ── place post_place check ──
+        if self._pending_place_check is not None:
+            if self._postcheck_timer is not None:
+                self._postcheck_timer.cancel()
+                self.destroy_timer(self._postcheck_timer)
+                self._postcheck_timer = None
+            self._postcheck_timer = self.create_timer(
+                self.postcheck_delay_sec, self._run_post_place_check
+            )
+            return
+
         if self._pending_precheck is None:
             return
 
@@ -235,6 +272,74 @@ class VerificationResultNode(Node):
             self.get_logger().info(
                 f"Postcheck: success={success}, reason={reason}, still_at_source={object_still_at_source}"
             )
+
+    # ── post_place (place intent) ──
+
+    def _run_post_place_check(self):
+        postcheck_result = None
+        success = None
+        reason = None
+
+        with self._lock:
+            pending = self._pending_place_check
+            self._pending_place_check = None
+
+            if pending is not None and self._last_stable_objects is not None:
+                target_class = pending.get("target_class", "")
+                target_color = pending.get("target_color", "")
+                target_xyz = pending.get("target_xyz", [0.0, 0.0, 0.0])
+
+                stable_objects_list = self._parse_stable_objects(self._last_stable_objects)
+                candidates = self._find_matching_objects(
+                    stable_objects_list, target_class, target_color,
+                    target_xyz, self.distance_threshold
+                )
+
+                evidence = self._build_post_place_evidence(
+                    candidates, target_class, target_color, target_xyz,
+                    stable_objects_list
+                )
+
+                object_found = len(candidates) > 0
+                success = object_found
+                reason = (
+                    "object_found_at_target"
+                    if success
+                    else "object_not_found_at_target"
+                )
+
+                postcheck_result = VerificationResult(
+                    stage="post_place",
+                    success=success,
+                    confidence=1.0 if success else 0.0,
+                    reason=reason,
+                    evidence=evidence,
+                )
+
+        self._clear_postcheck_timer()
+
+        if postcheck_result is not None:
+            self._publish(postcheck_result)
+            self.get_logger().info(
+                f"Post_place: success={success}, reason={reason}"
+            )
+
+    def _build_post_place_evidence(
+        self,
+        candidates_near: list,
+        target_class: str,
+        target_color: str,
+        target_xyz: list,
+        stable_objects_list: list,
+    ) -> dict:
+        return {
+            "target_class": target_class,
+            "target_color": target_color,
+            "target_xyz": target_xyz,
+            "object_found_at_target": len(candidates_near) > 0,
+            "objects_near_target": candidates_near,
+            "total_stable_objects": len(stable_objects_list),
+        }
 
     def _clear_postcheck_timer(self):
         """Destroy and reset the postcheck timer."""
