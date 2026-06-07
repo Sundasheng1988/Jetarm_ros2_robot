@@ -100,4 +100,17 @@ def generate_launch_description():
                 "enable_real_servo": enable_real_servo,
             }],
         ),
+
+        # ── verification sidecar node ──
+        Node(
+            package="sketch_runtime",
+            executable="verification_result_node",
+            name="verification_result_node",
+            output="screen",
+            parameters=[{
+                "dry_run": dry_run,
+                "enable_precheck": True,
+                "enable_postcheck": True,
+            }],
+        ),
     ])
