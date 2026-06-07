@@ -6,14 +6,14 @@
 > 原始第一阶段规则已 superseded — 代码已进入 Sprint 5。
 >
 > **当前状态**:
-> - Runtime Execution v0.1 已完成 — real pick verified on hardware
+> - Sprint 5 ✅: Stable World Model — ROI audit → StableObjectTracker → PerceptionFusionNode → Grounding switch
+> - Sprint 6 ✅: Verification Runtime — Sidecar → Runtime Integration → Event Enrichment → Post Place Verification
+> - Runtime Execution v0.1: real pick verified on hardware
 > - Preview/Confirm、SkillManager+PickSkill、ActionExecutor 全部运行
-> - RuntimeAdapter real IK + real Servo 已验证
-> - **当前阻塞**: ROI perception instability (`/world_model/roi_objects` 原始检测流不稳定)
-> - **当前阶段**: Sprint 5 — Stable World Model / Perception Runtime
-> - **活跃 Roadmap**: [jetarm_runtime_roadmap.md](jetarm_runtime_roadmap.md)
-> Note: topic mismatch analysis below is historical. Current perception path is YOLO/ROI → perception_fusion_node → StableObjectTracker.
-> 本文档保留原始系统分析、18 包职责、3 条指令链路——仍有用作包/主题参考。
+> - /runtime/log enriched (event_id / state / timestamp), /runtime/verification_result published
+> - TaskState includes WAITING_CONFIRM, VERIFYING, VERIFIED, VERIFICATION_FAILED
+> - **当前阶段**: Sprint 6 Close — Verification Runtime Completed
+> - **Next Phase**: Sprint 7A — RobotOps Foundation (SQLite persistence, task history, event store)
 
 ---
 
@@ -143,6 +143,22 @@
          ⚠ topic 名不匹配 — grounding 订阅 /world_model/roi_objects
 ```
 
+### 主链路 D：Verification Runtime 链路 (Sprint 6 新增)
+
+```
+grounding_node
+  → /grounded_task_context
+  → real_grounded_runtime_node    (executing → verifying)
+  → /executor/done
+  → verification_result_node      (precheck / postcheck / post_place)
+  → /runtime/verification_result
+  → real_grounded_runtime_node    (_on_verification_result)
+  → VERIFIED / VERIFICATION_FAILED
+```
+
+验证阶段: precheck (目标在源位置附近) → postcheck (目标从源位置消失) → post_place (目标出现在目标位置)。
+Runtime 收到 verification_result 后根据 success 字段过渡到 VERIFIED 或 VERIFICATION_FAILED。
+
 ---
 
 ## 4. executor 中写死的逻辑（`ground_executor_node`）
@@ -238,6 +254,10 @@ self._last_goal_hash      # JSON sorted hash 去重 + 800ms throttle
 | `llm_parser/llm_command_parser_node.py` | 关键词匹配，action 固定 "pick"，无 LLM 实际参与 | P1 |
 | `llm_voice_agent/llm_voice_agent_node.py` | 槽位提取+confirm 逻辑内嵌，承担了 executor 职责 | P1 |
 
+**Sprint 5-6 Update**: `sketch_runtime` 已替代 `llm_executor` 成为 Runtime 执行层。
+TaskContext 状态机包含 WAITING_CONFIRM、EXECUTING、VERIFYING、VERIFIED、VERIFICATION_FAILED。
+verification_result_node 作为 sidecar 运行 precheck / postcheck / post_place 验证。post_place 验证框架已实现。
+
 ## 8. 属于底层驱动，不应修改
 
 | 模块 | 原因 |
@@ -311,7 +331,45 @@ B: executor → /servo_controller → controller_manager → 同上
 
 ---
 
-## 12. 核心结论
+## 12. Current Runtime Limitations
+
+Sprint 6 完成后系统能力边界。
+
+| 领域 | 限制 |
+|------|------|
+| **Skill 支持** | pick_skill only — place_skill, move_skill, home_skill 未实现 |
+| **Place 执行** | post_place verification 框架存在，place execution 路径未实现 |
+| **验证模式** | Verification Runtime 已完成 dry-run 验证；/ place verification 尚未完成真实硬件验证。
+| **任务匹配** | FIFO matching only — 不支持并发任务验证 |
+| **重试/恢复** | 未实现 — 延后至 Sprint 11 |
+| **RobotOps** | 无 SQLite 持久化、无 dashboard、无 task 回放 |
+| **VLA** | 未集成 — data collection 管线尚未建立 |
+
+---
+
+## 13. Why RobotOps Is The Next Runtime Layer
+
+从架构角度，Runtime 在 Sprint 6 完成后具备以下数据流:
+
+- `/runtime/log`: 结构化事件流 (event_id, task_id, event, state, timestamp, data)
+- `/runtime/state`: 任务状态流 (CREATED → ... → VERIFIED / VERIFICATION_FAILED)
+- `/runtime/verification_result`: 验证结果 (precheck, postcheck, post_place)
+- `/runtime/execution_result`: 执行结果 (success, reason, evidence)
+
+当前所有数据仅存在于 ROS2 topic buffer — 节点重启或 topic 超时后不可恢复。
+
+Sprint 7A 目标: 将以上流写入 SQLite，以 task_id 索引，支持离线查询与重放。
+
+需要的架构能力:
+- **Event Store** — /runtime/log 事件流 → SQLite 持久化
+- **Task History** — task_id → 完整状态历史 (state_history + timestamps)
+- **Event Replay** — 从 SQLite 重建 Task → Execution → Verification → Result 完整链路
+
+这将使 RobotOps dashboard (Sprint 7B) 和 VLA data collector (Sprint 9) 有持久化数据源，无需重复订阅 topic 获取历史数据。
+
+---
+
+## 14. 核心结论
 
 当前系统是 **ROS2 节点拼接系统**，不是 **Robot Runtime**。
 

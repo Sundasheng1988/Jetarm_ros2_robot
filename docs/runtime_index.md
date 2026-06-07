@@ -1,6 +1,6 @@
 # JetArm Robot Runtime — Documentation Index
 
-> > 最后更新：2026-05-24 | 当前 Sprint: 5.6 (Grounding Switch to Stable World Model) | 下一个 Sprint: 6 (Verification Runtime)
+> > 最后更新：2026-06-07 | 当前 Sprint: 6 (closed) | 下一个 Sprint: 7A — RobotOps Foundation
 ---
 
 ## Current Status
@@ -8,10 +8,10 @@
 | 项 | 状态 |
 |----|------|
 | **里程碑** | **✅ 首次 Runtime 驱动的真实机械臂抓取执行验证通过** |
-| **当前 Sprint** | **5.6 — Grounding Switch to Stable World Model** |
-| **已完成** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI audit ✅、StableObjectTracker ✅、PerceptionFusionNode ✅、StableObjectTracker 输入切换到 `/world_model/perception_objects` ✅ |
-| **进行中** | 将 `grounding_node` 从 `/world_model/roi_objects` 切换到 `/world_model/stable_objects` |
-| **已知限制** | ROI 颜色/类名不稳定；当前策略为 YOLO 语义优先，ROI 仅作为 pose/rpy/color candidate；低置信颜色应输出 `unknown`；无 Verification Runtime |
+| **当前 Sprint** | **6 — Verification Runtime (closed)** |
+| **已完成** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI audit ✅、StableObjectTracker ✅、PerceptionFusionNode ✅、grounding switch to stable ✅、Sprint 6.1 Verification Sidecar ✅、6.2 Runtime Integration ✅、6.3 Event Enrichment ✅、6.4 Post Place Verification ✅ |
+| **进行中** | Sprint 7A RobotOps Foundation |
+| **已知限制** | ROI 颜色/类名不稳定；YOLO 语义优先 ROI 空间优先；RobotOps persistence not implemented；Retry/Recovery deferred to Sprint 11 |
 
 ---
 
@@ -65,8 +65,9 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 | `/runtime/preview` | Runtime preview (waiting_confirm) |
 | `/runtime/confirm` | 用户确认 (yes/no or JSON) |
 | `/runtime/state` | 任务状态流 |
-| `/runtime/log` | 结构化事件日志 |
+| `/runtime/log` | 结构化事件日志 (event_id / state / timestamp) |
 | `/runtime/execution_result` | 执行结果 |
+| `/runtime/verification_result` | 验证结果 (precheck / postcheck / post_place) |
 | `/executor/done` | 执行完成信号 |
 | `/world_model/perception_objects` | YOLO+ROI 融合输出 (perception_fusion_node) |
 | `/world_model/stable_objects` | 稳定世界模型 (StableObjectTracker) |
@@ -93,12 +94,15 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 | 1-2 | **COMPLETED** | sketch_runtime 骨架 + TaskBuilder 集成 |
 | 3-4.3 | **COMPLETED** | 测试节点 + Preview/Confirm + IK 安全分级 |
 | 4.4-4.8 | **COMPLETED** | Servo adapter fix + Action Sequence + 真实硬件 pick |
-| 5 | **CURRENT / 5.6** | Perception Fusion / Stable World Model (5.1 ✅, 5.2 ✅, 5.3 ⏸, 5.4 ✅, 5.5 ✅, 5.6 ▶) |
-| 6 | PLANNED | Verification Runtime (depends on grounding consuming `/world_model/stable_objects`) |
-| 7 | PLANNED | Retry / Recovery |
-| 8 | PLANNED | RobotOps Dashboard |
-| 9 | PLANNED | Teleop / Safety Control |
-| 10 | PLANNED | Data Logger / VLA readiness |
+| 5 | **COMPLETED** | Perception Fusion / Stable World Model (5.1-5.6 ✅) |
+| 6 | **COMPLETED** | Verification Runtime (6.1-6.4 ✅, 6.5 ✅, 6.6 ⏳ Sprint 11) |
+| 7A | PLANNED | RobotOps Foundation |
+| 7B | PLANNED | RobotOps Dashboard |
+| 8A | PLANNED | Teleop Input |
+| 8B | PLANNED | Teleop Safety Arbitration |
+| 9 | PLANNED | Data Logger / Demonstration Collection |
+| 10 | PLANNED | VLA Readiness |
+| 11 | PLANNED | Retry / Recovery |
 
 ---
 
@@ -111,4 +115,4 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 5. Build: `colcon build --packages-select sketch_runtime --symlink-install`
 6. Run tests: `PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q`
 7. Use `docs/runtime_debug_guide.md` for launch/echo/confirm commands
-8. Current goal: Sprint 5.6 — switch `grounding_node` input from `/world_model/roi_objects` to `/world_model/stable_objects`
+8. Current goal: Sprint 7A — RobotOps Foundation — build SQLite persistence, Event Store, Task History, Event Replay

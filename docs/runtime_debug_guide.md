@@ -692,7 +692,67 @@ ros2 topic echo /world_model/perception_objects
 
 ---
 
-## 16. ROI Color Confidence Sandbox
+## 16. Verification Result Node
+
+### 16.1 启动验证节点
+
+```bash
+ros2 run sketch_runtime verification_result_node
+```
+
+验证节点订阅 `/grounded_task_context`、`/world_model/stable_objects`、`/executor/done`，发布 `/runtime/verification_result`。
+
+### 16.2 监听验证结果
+
+```bash
+ros2 topic echo /runtime/verification_result
+```
+
+期望输出（precheck 通过）：
+```json
+{"stage": "precheck", "success": true, "reason": "object_found", "evidence": {...}}
+```
+
+期望输出（postcheck 通过）：
+```json
+{"stage": "postcheck", "success": true, "reason": "object_no_longer_at_source", "evidence": {...}}
+```
+
+期望输出（post_place 通过）：
+```json
+{"stage": "post_place", "success": true, "reason": "object_found_at_target", "evidence": {...}}
+```
+
+### 16.3 验证调试工作流
+
+```bash
+# 终端 A: 启动 verification_result_node
+ros2 run sketch_runtime verification_result_node
+
+# 终端 B: 启动 Runtime
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py
+
+# 终端 C: 监听验证状态变化
+ros2 topic echo /runtime/verification_result
+ros2 topic echo /runtime/state
+ros2 topic echo /runtime/log
+```
+
+### 16.4 期望状态流
+
+成功路径：
+```
+grounded → skill_selected → waiting_confirm → executing → verifying → verified
+```
+
+失败路径：
+```
+grounded → skill_selected → waiting_confirm → executing → verifying → verification_failed
+```
+
+---
+
+## 17. ROI Color Confidence Sandbox
 
 离线验证 ROI 置信度过滤逻辑（不修改生产代码）。
 

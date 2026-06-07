@@ -1,22 +1,13 @@
 # JetArm Robot Runtime — Session Summary
 
-> Sprint 1 → 5.6 Session Snapshot | 2026-05-24 | 分支: `feature/sketch_runtime_sprint3`
+> Sprint 1 → 6 Session Snapshot | 2026-06-07
 >
-> **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
-> **🔧 Sprint 5 进展**: ROI audit → StableObjectTracker → PerceptionFusionNode →
-> **📋 融合规则确立**: YOLO=语义优先, ROI=位姿+颜色, `/world_model/perception_objects` → stable_objects
-> **⚠ 已知限制**: ROI 颜色/类名不稳定仍未根本解决；YOLO 语义优先策略降低影响
-> ** 📋 Current Next Sprint:
-        Sprint 5.6
+> Sprint 4 里程碑:
+首次 Runtime 驱动的真实硬件 Pick 执行验证通过
 
-        Grounding:
-        stable_objects
-        → grounding
-
-        Current perception chain completed:
-        YOLO + ROI
-        → perception_objects
-        → stable_objects
+> Sprint 6 里程碑:
+Verification Runtime Dry-Run 闭环验证通过
+> **⚠ 已知限制**: ROI 颜色/类名不稳定仍未根本解决；pick skill还未实现； 
 
 ---
 
@@ -35,12 +26,7 @@ camera
       (/world_model/perception_objects)
 
   → StableObjectTracker
-      (/world_model/stable_objects)
-      [CURRENT:
-       input = /world_model/perception_objects
-       NEXT:
-    grounding
-    → /world_model/stable_objects]
+      (/world_model/stable_objects)   ✅ completed
 
 Language Pipeline
 ────────────────────────────────────────
@@ -56,12 +42,7 @@ grounding_node
 
     Inputs:
     - /parsed_command
-
-    Current:
-    world_model/roi_objects
-
-    Planned:
-    world_model/stable_objects
+    - /world_model/stable_objects   ✅ Sprint 5.6
 
   publish_runtime=true
   → /grounded_task_context
@@ -109,6 +90,17 @@ real_grounded_runtime_node
   → /executor/done
       (Bool)
 
+  → verification_result_node
+      (precheck / postcheck / post_place)
+
+  → /runtime/verification_result
+      (stage + success + reason + evidence)
+
+  → real_grounded_runtime_node
+      (_on_verification_result)
+
+  → verified / verification_failed
+
 ---
 
 ## Completed Milestones
@@ -116,7 +108,7 @@ real_grounded_runtime_node
 | Sprint | Milestone | Key Files |
 |--------|-----------|-----------|
 | 1 | `sketch_runtime` ROS2 package created | `package.xml`, `setup.py`, `setup.cfg` |
-| 1 | `TaskContext` / `TaskState` (11 states) | `task_context.py` |
+| 1 | `TaskContext` / `TaskState` (includes VERIFYING, VERIFIED, VERIFICATION_FAILED) | `task_context.py` |
 | 1 | `TargetObject` (16 fields + factories) | `target_object.py` |
 | 1 | `ExecutionResult` | `execution_result.py` |
 | 1 | `BaseSkill` ABC (precheck/execute/postcheck/cleanup) | `base_skill.py` |
@@ -141,6 +133,17 @@ real_grounded_runtime_node
 | 4.3 | Real IK integration: `_call_ik_blocking()` with temp node | `runtime_adapter.py` |
 | 5.5 | perception_fusion → StableObjectTracker integrated | stable_tracker |
 | 5.5 | stable_objects pipeline validated | tracker + grounding |
+| 5.6 | Grounding switched to /world_model/stable_objects | `grounding_node.py`, `perception_bringup.launch.py` |
+| 6.1 | Verification Sidecar (verification_result_node) | `verification_result.py`, `verification_result_node.py` |
+| 6.2 | Runtime Integration (VERIFYING/VERIFIED/VERIFICATION_FAILED) | `real_grounded_runtime_node.py`, `task_context.py` |
+| 6.3 | Runtime Event Visibility (event_id/state/timestamp enrichment) | `real_grounded_runtime_node.py` |
+| 6.4 | Post Place Verification | `verification_result_node.py` |
+| 6.5 | Runtime Verification Logs | /runtime/log + /runtime/verification_result
+        Notes:
+        - /runtime/event not implemented
+        - RobotOps persistence not implemented
+        - Audit database not implemented|
+| 6.6 | ⏳ Deferred to Sprint 11 | — |
 
 ---
 
@@ -167,35 +170,37 @@ SkillManager.select(intent="pick") → "pick_skill"
 PickSkill(adapter).execute() → 5 steps → ExecutionResult(success=True)
 ```
 
+### 4. Verification Runtime Path (dry-run validated)
+```
+/grounded_task_context
+  → real_grounded_runtime_node (executing → verifying)
+  → /executor/done (true)
+  → verification_result_node (precheck / postcheck / post_place)
+  → /runtime/verification_result
+  → real_grounded_runtime_node (_on_verification_result)
+  → verified / verification_failed
+```
+
+Validated scenarios:
+- precheck success (object found near source)
+- postcheck success (object removed from source)
+- postcheck failure (object still at source)
+- post_place success (object found at target)
+- post_place failure (object not at target)
+- full state flow: executing → verifying → verified
+- full state flow: executing → verifying → verification_failed
+
 ---
 
 ## Current Integration Status: Perception Fusion → StableObjectTracker
 
 Completed:
 
-YOLO
-+
-ROI
-↓
-
-perception_objects
-
-↓
-
-StableObjectTracker
-
-↓
-
-stable_objects
-
-Next:
-
-Sprint 5.6
-
-stable_objects
-↓
-
-grounding
+✅ YOLO + ROI → perception_objects (Sprint 5.4)
+✅ perception_objects → StableObjectTracker → stable_objects (Sprint 5.5)
+✅ stable_objects → grounding (Sprint 5.6)
+✅ grounding → /grounded_task_context → runtime (Sprint 4.1)
+✅ runtime → execution → verification → result (Sprint 6)
 
 Known limitation:
 
@@ -316,23 +321,15 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 
 | 领域 | 限制 |
 |------|------|
-| **ROI Color** | ROI tuner completed. Current rule: ROI color is NOT semantic authority. Low-confidence color → unknown. YOLO remains semantic source. |
-| **ROI 类名/颜色** | 不稳定 — 形状分类 (cup/cube/cylinder) 和 LAB 颜色 (red/black) 仍会跨帧跳变。战略决策: YOLO 语义优先，
-      ROI provides:
-      pose + rpy + color candidates
-
-      YOLO provides:
-      semantic class_name
-
-      Fusion:
-      semantic ← YOLO
-      pose/color ← ROI |
+| **ROI Color** | ROI tuner completed. YOLO = semantic authority, ROI = pose/color candidates |
+| **ROI 类名/颜色** | 不稳定 — 形状分类和 LAB 颜色跨帧跳变 |
 | **抓取精度** | grasp precision 尚不稳定，需进一步标定和补偿 |
-| **验证逻辑** | 无 Verification Runtime — 无法自动判断抓取是否成功 |
 | **碰撞检测** | 无碰撞/力矩异常检测 |
-| **重试/恢复** | 无 retry 或 recovery 逻辑，失败后无法自动重试 |
-| **物体检测** | 无 object-loss 检测 — 不知道目标是否掉落 |
-| **放置验证** | 无放置成功判定 — 不知道物体是否到达目标区域 |
+| **Skill 支持** | Runtime 当前仅支持 pick_skill。place_skill 未实现。post_place verification 框架存在，但无 place 执行路径。 |
+| **重试/恢复** | 无 retry 或 recovery 逻辑 — 延后至 Sprint 11 |
+| **持久化** | 无 SQLite 存储 — 所有事件仅内存/ROS2 topic (延后至 Sprint 8) |
+| **并发任务** | FIFO matching only — no concurrent task verification |
+| **实物验证** | place 验证未在真实硬件测试 — 当前仅 dry-run / topic 仿真 |
 
 ---
 
@@ -350,9 +347,9 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | 5.3 | ⏸ | ROI robustness deferred |
 | 5.4 | ✅ | Perception Fusion |
 | 5.5 | ✅ | Tracker input switch |
-| 5.6 | ▶ CURRENT | Grounding switch |
+| 5.6 | ✅ | Grounding switch |
 
-## Sprint 5 Progress (5.1 → 5.4)
+## Sprint 5 Progress (5.1 → 5.6)
 
 | Sprint | Status | Milestone |
 |--------|--------|-----------|
@@ -361,7 +358,7 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | 5.3 | ⏸ | ROI Shape/Color Robustness — 部分调研，未正式完成 |
 | 5.4 | ✅ | Perception Fusion Node — YOLO+ROI 融合 → `/world_model/perception_objects` |
 | 5.5 | ✅ | StableObjectTracker 输入切换到 perception_objects |
-| 5.6 | ⬜ PLANNED | Grounding 切换到 `/world_model/stable_objects` |
+| 5.6 | ✅ | Grounding 切换到 `/world_model/stable_objects` |
 
 **融合规则**: class_name=YOLO, color/pose/rpy=ROI。YOLO 未检测到的物体保留 roi_only fallback。
 
@@ -370,14 +367,19 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 ```
 src/sketch_runtime/
 ├── sketch_runtime/
-│   ├── __init__.py              # exports TaskState/TaskContext/TargetObject/...
-│   ├── task_context.py          # TaskState enum (11 states) + TaskContext
+│   ├── __init__.py
+│   ├── task_context.py          # TaskState enum (VERIFYING / VERIFIED / VERIFICATION_FAILED) + TaskContext
 │   ├── target_object.py         # TargetObject + from_world_model/from_detection_result
 │   ├── execution_result.py      # ExecutionResult dataclass
 │   ├── base_skill.py            # BaseSkill ABC
 │   ├── skill_registry.py        # SkillRegistry + SkillManager
 │   ├── runtime_adapter.py       # RuntimeAdapter (safety split + temp IK node)
 │   ├── runtime_task_builder.py  # TaskBuilder: parsed/grounded/wm → TaskContext
+│   ├── base_action.py           # BaseAction ABC + StepResult
+│   ├── actions.py               # MoveAction + GripperAction
+│   ├── action_executor.py       # ActionExecutor
+│   ├── verification_result.py   # VerificationResult dataclass
+│   ├── verification_result_node.py  # Verification sidecar node
 │   ├── runtime_test_node.py     # Self-contained test node (simulated data)
 │   ├── real_grounded_runtime_node.py  # Production node (subscription-driven + Preview/Confirm)
 │   └── skills/
@@ -386,10 +388,14 @@ src/sketch_runtime/
 │   ├── runtime_test.launch.py
 │   └── ground_runtime_bringup.launch.py
 └── test/
-    ├── test_task_context.py     # 17 tests
-    ├── test_target_object.py    # 9 tests
-    ├── test_skill_registry.py   # 23 tests
-    └── test_task_builder.py     # 16 tests
+    ├── test_task_context.py
+    ├── test_target_object.py
+    ├── test_skill_registry.py
+    ├── test_task_builder.py
+    ├── test_actions.py
+    ├── test_verification.py
+    ├── test_verification_integration.py
+    └── test_runtime_events.py
 ```
 
 ---
@@ -416,26 +422,10 @@ Read:
 
 Current Goal:
 
-Sprint 5.6
+Sprint 6 已收尾
 
-Do first:
-
-git status
-ros2 topic list | grep world_model
-
-Switch:
-
-stable_objects
-↓
-
-grounding
-
-Do NOT modify:
-
-servo
-kinematics
-hardware
-
+Next:
+Sprint 7A RobotOps Foundation
 ---
 
 ## Sprint 5.6 Completion
@@ -481,20 +471,142 @@ Behavior:
 - color is optional — works when color == "unknown"
 
 Validation Results:
-- 101 total tests passed
-- 19 verification tests passed
-- ROS2 startup verified
 - Precheck success verified
 - Postcheck failure verified
 - Postcheck success verified
 
-Known limitations:
+Known limitations at Sprint 6.1:
 - No task_id correlation — uses FIFO matching (runtime is sequential)
 - Postcheck only verifies disappearance from source area (not placement at target)
 - No retry or recovery logic
 
-Not verified:
-- real robot grasp
-- IK execution
-- servo execution
-- target placement verification
+---
+
+## Sprint 6.2 Completion — Runtime Integration
+
+Date: 2026-06-07
+
+Completed:
+
+- `real_grounded_runtime_node` subscribes to `/runtime/verification_result`
+- `_on_verification_result()` handler transitions task state
+- New TaskContext states: `VERIFYING`, `VERIFIED`, `VERIFICATION_FAILED`
+- Verification data stored in `ctx.result["verification"]`
+
+State flows:
+
+```
+grounded → skill_selected → waiting_confirm → executing → verifying → verified
+```
+
+or
+
+```
+grounded → skill_selected → waiting_confirm → executing → verifying → verification_failed
+```
+
+Runtime transitions to `VERIFYING` after successful execution, publishes `/executor/done=true`, then waits for the verification sidecar result. On success → `VERIFIED`; on failure → `VERIFICATION_FAILED`.
+
+Modified files:
+- `real_grounded_runtime_node.py` — subscription + handler + state transitions
+- `task_context.py` — new states + completed_at for VERIFIED/VERIFICATION_FAILED
+
+---
+
+## Sprint 6.3 Completion — Runtime Event Visibility
+
+Date: 2026-06-07
+
+Completed:
+
+- `/runtime/log` enriched events: `event_id`, `event`, `state`, `timestamp`, `data`
+- `event_id` format: `evt_{task_id}_{seq:04d}` — monotonic per-task sequencing
+- Events emitted at each state transition: grounded_task_received, execution_started, verification_started, verification_complete
+- `/runtime/state` publishes task state including verification phases
+
+Tests:
+- Added runtime event coverage tests (event_id format, sequencing, state-at-emission)
+
+---
+
+## Sprint 6.4 Completion — Post Place Verification
+
+Date: 2026-06-07
+
+Completed:
+
+- `verification_result_node` detects `intent=place` and stores pending place context
+- `_run_post_place_check()` verifies target object exists near target_xyz
+- Publishes stage `"post_place"` on `/runtime/verification_result`
+- Class match required; color match optional; distance threshold 0.1 m
+
+Place flow:
+
+```
+grounded_task_context (intent=place) → store pending
+executor/done=true → timer delay → post_place check → publish result
+```
+
+Cases tested:
+- Case A: post_place success (object found at target)
+- Case B: post_place failure (object not found at target)
+- Case C: pick context clears place pending, place context clears pick pending
+
+---
+
+## Sprint 6.5 Completion — Runtime Verification Logs
+
+Date: 2026-06-07
+
+Achieved through Sprint 6.1 + 6.3 work. No additional code required.
+
+- `/runtime/verification_result` — verification events (precheck, postcheck, post_place)
+- `/runtime/log` — enriched event stream with event_id, state, timestamp
+- Task → Execution → Verification → Result playback achievable from current topics
+
+Note: No separate `/runtime/event` topic exists. `/runtime/log` serves the event stream function.
+
+Not implemented (deferred to Sprint 8+):
+- `/runtime/event` as a separate topic (not needed — `/runtime/log` serves this role)
+- RobotOps persistence
+- Audit database
+
+---
+
+## Sprint 6.6 — Deferred Items
+
+Date: 2026-06-07
+
+Deferred to Sprint 11:
+
+- `offset_retry` — offset and re-attempt
+- `ask_user_confirm` — prompt user for recovery decision
+- `manual_recovery` — operator-driven recovery
+
+`RETRYING` state exists in `TaskContext` as a placeholder. Retry / Recovery remains a Sprint 11 design topic. No implementation.
+
+---
+
+## Implemented Topics (Sprint 6)
+
+| Topic | Publisher | Subscriber |
+|-------|-----------|------------|
+| `/runtime/verification_result` | `verification_result_node` | `real_grounded_runtime_node` |
+| `/runtime/state` | `real_grounded_runtime_node` | — (VERIFYING/VERIFIED/VERIFICATION_FAILED phases) |
+| `/runtime/log` | `real_grounded_runtime_node` | — (event_id/state/timestamp enrichment) |
+| `/executor/done` | `real_grounded_runtime_node` | `executor_done_sayer`, `verification_result_node` |
+
+---
+
+## Next Sprint Entry Criteria (Sprint 7)
+
+Sprint 7A RobotOps Foundation
+
+目标：
+建立 RobotOps 最小可用基础设施
+
+内容：
+- SQLite
+- Event Store
+- Task History
+- Runtime Persistence

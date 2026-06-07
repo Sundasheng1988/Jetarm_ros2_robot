@@ -44,7 +44,7 @@
 │       │ Pub:  /grounded_task_context (String, JSON)                  │
 │       │ Srv:  /grounding/clear_memory (Trigger)                      │
 │       ▼                                                              │
-│  [ground_executor_node]                                              │
+│  [ground_executor_node]  (legacy — 旧执行器)                           │
 │       │ Sub:  /grounded_goal                                         │
 │       │ Sub:  /vision_target (DetectionResult, 可选)                 │
 │       │ Sub:  /executor/confirm (Bool)                               │
@@ -58,6 +58,24 @@
 │       │ Pub:  /ros_robot_controller/bus_servo/set_position           │
 │       │       (ServosPosition, 直连硬件总线)                          │
 │       │ Cli:  /kinematics/set_pose_target (SetRobotPose, IK)         │
+│       ▼                                                              │
+│  [real_grounded_runtime_node]  (当前 Runtime 执行器)                   │
+│       │ Sub:  /grounded_task_context (String, JSON)                  │
+│       │ Sub:  /runtime/confirm (String)                              │
+│       │ Sub:  /runtime/verification_result (String, JSON)            │
+│       │ Pub:  /runtime/preview (String, JSON)                        │
+│       │ Pub:  /runtime/state (String, JSON)                          │
+│       │ Pub:  /runtime/log (String, JSON)                            │
+│       │ Pub:  /runtime/execution_result (String, JSON)               │
+│       │ Pub:  /executor/done (Bool)                                  │
+│       │ → SkillManager + PickSkill + RuntimeAdapter                  │
+│       │ → IK / servo via /kinematics/set_pose_target                 │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │              verification_result_node (sidecar)                   │  │
+│  │  Sub:  /grounded_task_context, /world_model/stable_objects,       │  │
+│  │        /executor/done                                             │  │
+│  │  Pub:  /runtime/verification_result → real_grounded_runtime_node  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -205,13 +223,18 @@
 | `/keyboard_input/input` | `String` | `llm_voice_agent` | `llm_command_parser_node`, `grounding_node`(fallback) |
 | `/voice_input/input` | `String` | `llm_voice_agent` | `llm_command_parser_node`, `env_scan_node`, `static_env_report_node` |
 | `/parsed_command` | `String` | `llm_command_parser_node` | `grounding_node` |
-| `/grounded_goal` | `String` | `grounding_node` | `ground_executor_node` |
+| `/grounded_goal` | `String` | `grounding_node` | `ground_executor_node` (legacy) |
 | `/world_model/objects` | `String` | `app_compatible_yolo_node`, `wm_dummy_pub`, `wm_from_tf` | `static_env_report_node`, `env_scan_node` |
 | `/world_model/roi_objects` | `String JSON` | `roi_color_detector_node` | `perception_fusion_node`; grounding_node (legacy before Sprint 5.6) |
 | `/world_model/perception_objects` | `String JSON` | `perception_fusion_node` | `stable_object_tracker_node` |
 | `/world_model/stable_objects` | `String JSON` | `stable_object_tracker_node` | `grounding_node` |
 | `/grounded_task_context` | `String JSON` | `grounding_node` | `real_grounded_runtime_node` |
-| `/runtime/verification_result` | `String JSON` | `verification_result_node` | *(future verification consumer)* |
+| `/runtime/verification_result` | `String JSON` | `verification_result_node` | `real_grounded_runtime_node` |
+| `/runtime/state` | `String JSON` | `real_grounded_runtime_node` | *(logger/dashboard)* |
+| `/runtime/log` | `String JSON` | `real_grounded_runtime_node` | *(logger — event stream with event_id/state/timestamp)* |
+| `/runtime/execution_result` | `String JSON` | `real_grounded_runtime_node` | *(logger)* |
+| `/runtime/preview` | `String JSON` | `real_grounded_runtime_node` | *(预览 UI/logger)* |
+| `/runtime/confirm` | `String` | *(用户通过终端/工具发布)* | `real_grounded_runtime_node` |
 | `/world_objects` | `EnvObjectArray` | `world_model_node` | *(待消费)* |
 | `/env_objects` | `EnvObjectArray` | `env_scan_node`, `static_env_report_node` | `llm_voice_agent`, `world_model_node` |
 | `/vision_target` | `DetectionResult` | `app_compatible_yolo_node` | `ground_executor_node`(可选), `env_scan_node` |
@@ -225,14 +248,14 @@
 | `/tts_speaking` | `Bool` | `tts_speaker_node` | `speech_dialog_funasr_node` |
 | `/tts/done` | `Bool` | `tts_speaker_node` | `llm_voice_agent` |
 | `/tts/interrupt` | `Bool` | `llm_voice_agent`, `speech_dialog_funasr_node` | `tts_speaker_node` |
-| `/executor/preview` | `String` | `ground_executor_node` | *(预览 UI/logger)* |
-| `/executor/preview_text` | `String` | `ground_executor_node` | *(预览 UI)* |
-| `/executor/preview_step` | `String` | `ground_executor_node` | *(预览 UI)* |
-| `/executor/preview_steps_json` | `String` | `ground_executor_node` | *(预览 UI)* |
-| `/executor/preview_full_text` | `String` | `ground_executor_node` | *(预览 UI)* |
-| `/executor/confirm` | `Bool` | *(用户通过终端/工具发布)* | `ground_executor_node` |
-| `/executor/confirm_str` | `String` | *(用户通过终端/工具发布)* | `ground_executor_node` |
-| `/executor/done` | `Bool` | *(待 executor 发布)* | `executor_done_sayer` |
+| `/executor/preview` | `String` | `ground_executor_node` (legacy) | *(预览 UI/logger)* |
+| `/executor/preview_text` | `String` | `ground_executor_node` (legacy) | *(预览 UI)* |
+| `/executor/preview_step` | `String` | `ground_executor_node` (legacy) | *(预览 UI)* |
+| `/executor/preview_steps_json` | `String` | `ground_executor_node` (legacy) | *(预览 UI)* |
+| `/executor/preview_full_text` | `String` | `ground_executor_node` (legacy) | *(预览 UI)* |
+| `/executor/confirm` | `Bool` | *(用户通过终端/工具发布)* | `ground_executor_node` (legacy) |
+| `/executor/confirm_str` | `String` | *(用户通过终端/工具发布)* | `ground_executor_node` (legacy) |
+| `/executor/done` | `Bool` | `real_grounded_runtime_node` | `executor_done_sayer`, `verification_result_node` |
 | `/servo_controller` | `ServosPosition` | `controller_manager`(转发), `ground_executor_node`, `llm_voice_agent`, `face_follow_node`, `env_scan_node`, `gesture_player_node`, `grasp` | `controller_manager` |
 | `/joint_controller` | `JointState` | *(外部控制器)* | `controller_manager` |
 | `~/joint_states` | `JointState` | `controller_manager` | `ground_executor_node`(remap), `joint_state_publisher` |
@@ -311,14 +334,21 @@ publishes:
 - /grounded_goal
 - /grounded_task_context
 
-Future:
+Current runtime path (Sprint 6 completed):
 
 grounded_task_context
 ↓
+real_grounded_runtime_node
+  → /runtime/preview, /runtime/confirm
+  → SkillManager + PickSkill + RuntimeAdapter → IK / servo
+  → /runtime/state, /runtime/log, /runtime/execution_result
+  → /executor/done
+  → verification_result_node → /runtime/verification_result
+  → VERIFIED / VERIFICATION_FAILED
 
-real_grounded_runtime
+Note: RobotOps (SQLite persistence) is not implemented yet. Future RobotOps (Sprint 7A) will persist /runtime/state, /runtime/log, and /runtime/verification_result. /runtime/log serves as the current event stream — no separate /runtime/event topic exists.
 
-Verification Sidecar (Sprint 6.1 completed):
+Verification Sidecar (Sprint 6.1 + 6.2 + 6.3 + 6.4 completed):
 
 verification_result_node
 subscribes:
@@ -328,8 +358,19 @@ subscribes:
 publishes:
 - /runtime/verification_result
 
-VerificationResultNode is observation-only.
+verification_result_node is observation-only.
 It does not control hardware, call IK, or block the runtime.
+
+real_grounded_runtime_node subscribes to /runtime/verification_result
+and transitions tasks through new TaskContext states:
+
+grounded → skill_selected → waiting_confirm → executing → verifying → verified
+
+or
+
+grounded → skill_selected → waiting_confirm → executing → verifying → verification_failed
+
+Events are enriched with event_id, state, and timestamp on /runtime/log.
 
 ---
 
@@ -374,7 +415,7 @@ float64 duration, string position_unit, ServoPosition[] position
   [env_scan_node] ────────┤
   [llm_voice_agent] ──────┤
   [grasp] ────────────────┤      ⚠ 无仲裁
-  [ground_executor_node] ─┘
+  [ground_executor_node] ─┘      (legacy — 旧执行器)
        │                    │
        ├─ /servo_controller ───→ [controller_manager] → ServoManager → /ros_robot_controller/bus_servo/set_position
        │

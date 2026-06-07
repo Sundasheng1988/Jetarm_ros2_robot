@@ -2,8 +2,8 @@
 
 > 合并原始 Roadmap + 当前实施进度 + Sprint 5→10 计划
 > 状态标记: ✅ COMPLETED | 🔶 IN_PROGRESS | ⬜ PLANNED | ⏸ DEFERRED
-> 最后更新：2026-05-30
-> **🎯 里程碑达成: 首次 Runtime 驱动的真实硬件 pick 执行验证通过**
+> 最后更新：2026-06-07
+> **🎯 里程碑达成: Verification Runtime Dry-Run 闭环验证通过**
 
 ---
 
@@ -263,7 +263,7 @@ P6：高级 IK / VLA / 数据集能力  ⬜ 计划 Sprint 9
 
 ---
 
-## Sprint 6: Verification Runtime 🔶 IN_PROGRESS
+## Sprint 6: Verification Runtime ✅ COMPLETED
 
 **目标**: 不只知道"执行了"，更要知道"成功了"。
 
@@ -339,7 +339,7 @@ src/sketch_runtime/test/test_verification.py
 
 ---
 
-### Sprint 6.2 — Runtime Integration 🔶 NEXT
+### Sprint 6.2 — Runtime Integration ✅ COMPLETED
 
 **功能**:
 
@@ -375,7 +375,7 @@ src/sketch_runtime/sketch_runtime/task_context.py
 
 ---
 
-### Sprint 6.3 — Runtime Verification State
+### Sprint 6.3 — Runtime Verification State ✅ COMPLETED
 
 **功能**:
 
@@ -416,7 +416,7 @@ VERIFICATION_FAILED
 
 ---
 
-### Sprint 6.4 — After Place Verification
+### Sprint 6.4 — After Place Verification ✅ COMPLETED
 
 **流程**:
 
@@ -446,7 +446,7 @@ place
 
 ---
 
-### Sprint 6.5 — Runtime Verification Logs
+### Sprint 6.5 — Runtime Verification Logs ✅ COMPLETED
 
 **Topic**:
 
@@ -477,7 +477,7 @@ Result
 
 ---
 
-### Sprint 6.6 — Retry Plan (Design Only)
+### Sprint 6.6 — Retry Plan ⏳ DEFERRED TO SPRINT 7
 
 **方案**:
 
@@ -494,40 +494,100 @@ Sprint 7 实现。
 不开发代码。
 
 
-## Sprint 7: Retry / Recovery ⬜ PLANNED
+## Sprint 7A: RobotOps Foundation ⬜ PLANNED
 
-**目标**: 验证失败后自动或手动重试。
+**目标**: 任务事件持久化 — 关闭后仍可复盘。
+
+**任务**:
+- SQLite 持久化 `/runtime/state`, `/runtime/log`, `/runtime/verification_result`
+- task_id 索引事件 + 状态历史
+- event store (event_id, task_id, event, state, timestamp, data)
+- task history (task_id → 完整事件流)
 
 ---
 
-## Sprint 8: RobotOps / Monitoring ⬜ PLANNED
+## Sprint 7B: RobotOps Dashboard ⬜ PLANNED
 
-**目标**: 每个任务可追踪、可复盘。
+**目标**: 可视化任务执行与验证历史。
 
 **任务**:
-- `task_id` 索引日志
-- 完整执行链路记录: user_command → parsed → grounded → skill → IK → servo → result
-- Event timeline (state transitions)
-- SQLite 持久化
-- 最小 Dashboard API (`GET /api/tasks`, `GET /api/task/:id`)
-- 可选: 图像快照
+- 任务时间线浏览器 (task → events → state transitions)
+- 验证时间线 (precheck → postcheck → post_place)
+- 最小 API 或终端查看器: task 列表 + task 详情 + 回放
+- `/api/tasks`, `/api/task/:id`
 
 ---
 
-## Sprint 9: Teleop / Safety Control ⬜ PLANNED
+## Sprint 8A: Teleop Input ⬜ PLANNED
 
-**目标**: 遥控输入 + 控制权仲裁。
+**目标**: 人类可通过键盘/手柄干预机器人。
 
 **任务**:
+- `keyboard_teleop_node` — 键盘 → 笛卡尔/关节速度
+- `/control/request` topic
+- 手动介入模式 (MANUAL)
+
+---
+
+## Sprint 8B: Teleop Safety Arbitration ⬜ PLANNED
+
+**目标**: 多输入源下保证安全控制。
+
+**任务**:
+- `control_arbiter_node` — 控制所有权仲裁
 - 控制状态: `AUTO` / `MANUAL` / `PAUSED` / `EMERGENCY_STOP`
-- 键盘/手柄/Web 遥控输入
-- `control_arbiter_node` — 所有权仲裁
+- 优先级: EMERGENCY_STOP > MANUAL > AUTO
+- 控制切换记录 → `/robotops/arbitration_log`
 
 ---
 
-## Sprint 10: Data Logger / VLA Readiness ⬜ PLANNED
+## Sprint 9: Data Logger / Demonstration Collection ⬜ PLANNED
 
-**目标**: 为 VLA 数据集构建准备数据采集管道。
+**目标**: 采集真实操作数据供 VLA 训练。
+
+**任务**:
+- 图像快照 (pre-pick, post-pick, post-place)
+- 动作日志 (IK 脉冲, servo 位置, 夹爪状态)
+- Runtime 状态日志 (/runtime/state, /runtime/log → per-task file)
+- 验证结果日志 (/runtime/verification_result → per-task file)
+- 演示数据集收集 (human demo → trajectory → file)
+
+---
+
+## Sprint 10: VLA Readiness ⬜ PLANNED
+
+**目标**: 为 VLA 模型集成准备数据和接口。
+
+**任务**:
+- 数据集构建器 (trajectory + image → training format)
+- 轨迹导出 (task_id → file)
+- 任务回放 (从 SQLite 重建执行链)
+- VLA bridge 准备 (VLA command → Runtime input 适配)
+
+---
+
+## Sprint 11: Retry / Recovery ⬜ PLANNED
+
+**目标**: 基于真实失败数据设计恢复策略。
+
+**任务**:
+- `stop-only` — 失败后停止，等待人工
+- `ask_user_confirm` — 提示用户选择恢复方式
+- `offset_retry` — 偏移位姿后重试
+- `auto_retry` — 自动重试 (n 次限制)
+
+---
+
+## 路线图重排序说明
+
+| Sprint | 原位置 | 新位置 | 调整理由 |
+|--------|--------|--------|----------|
+| Retry / Recovery | 7 | 11 | 重试/恢复应基于 RobotOps、Teleop、Data Logger 积累的真实失败数据设计，而非提前推测 |
+| RobotOps | 8 | 7A/7B | 持久化 + 可观测性是一切后续工作的基础。没有日志和 API，后续每个 Sprint 的调试都只能靠终端 print |
+| Teleop | 9 | 8A/8B | 遥控输入应在数据采集之前，因为人工演示是 VLA 训练数据的重要来源 |
+| Data Logger | 10 (部分) | 9 | VLA 需要轨迹、图像、动作、状态、验证结果的完整记录 |
+| VLA Readiness | 10 (部分) | 10 | VLA bridge 应在 Retry 之前，因为 VLA 和真实数据可能改变"恢复"的定义 |
+| Retry | 7 | 11 | 此时已拥有: RobotOps 日志 → 知道失败模式; Teleop → 人类可介入; Data → 可分析分布 |
 
 ---
 
@@ -546,5 +606,5 @@ Sprint 7 实现。
 
 - **禁止修改**: `servo_controller`, `kinematics`(IK .so), `ros_robot_controller`, STM32 固件
 - **安全默认**: dry_run=true, require_confirm=true, enable_real_servo=false
-- **测试**: 每次变更后运行 65 个单元测试
+- **测试**: 每次变更后运行单元测试
 - **预览确认**: 任何真实硬件运动前必须经过 Preview/Confirm

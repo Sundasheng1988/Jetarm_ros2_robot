@@ -717,9 +717,24 @@ Verification flow:
    confirms target object exists near the source position in stable_objects
 2. Postcheck (after /executor/done=true, with timer delay):
    confirms target object has disappeared from the source position
+3. Post_place (after /executor/done=true with intent=place):
+   confirms target object exists at the target position in stable_objects
 
 Correlation uses FIFO matching because the runtime is sequential (one active task).
-Current version only verifies disappearance from source area, not placement at target.
+
+### Runtime Integration (Sprint 6.2 + 6.3)
+
+`real_grounded_runtime_node` subscribes to `/runtime/verification_result` and transitions task states through the new `VERIFYING`, `VERIFIED`, and `VERIFICATION_FAILED` states in `TaskContext`.
+
+Expected state flows:
+
+grounded → skill_selected → waiting_confirm → executing → verifying → verified
+
+or
+
+grounded → skill_selected → waiting_confirm → executing → verifying → verification_failed
+
+States are published on `/runtime/state` and events on `/runtime/log` with event_id, state, and timestamp enrichment.
 
 | 颜色 | 含义 |
 | 🔵 蓝色边框 | 底层硬件/驱动 — 永不应修改 |
