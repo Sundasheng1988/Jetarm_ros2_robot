@@ -1,17 +1,121 @@
 # JetArm Robot Runtime — Session Summary
 
-> Sprint 1 → 6 Session Snapshot | 2026-06-07
+> Sprint 1 → 7A Session Snapshot | 2026-06-14
 >
 > Sprint 4 里程碑:
 首次 Runtime 驱动的真实硬件 Pick 执行验证通过
 
 > Sprint 6 里程碑:
 Verification Runtime Dry-Run 闭环验证通过
+
+> Sprint 7A 里程碑:
+RobotOps Foundation — SQLite persistence for runtime events
 > **⚠ 已知限制**: ROI 颜色/类名不稳定仍未根本解决；pick skill还未实现； 
 
 ---
 
-## Current Architecture Chain
+## Current Project State (2026-06)
+
+Project Status:
+
+Phase A — Runtime Platform
+✅ COMPLETED
+
+Completed:
+
+* Runtime
+* Grounding
+* Verification Runtime
+* RobotOps Foundation
+
+Current Focus:
+
+Phase B — Mobile Robot Foundation
+
+Current Sprint:
+
+Sprint 8.1 — Base Driver Bringup
+
+Current Hardware:
+
+* Jetson Orin Nano
+* Mobile Base
+* STM32 Controller
+* Gemini Depth Camera
+* Slamtec Lidar (planned bringup)
+* JetArm Manipulator
+
+North Star:
+
+Autonomous Mobile Manipulation Robot
+
+User:
+"Go to the kitchen and bring me a cup."
+
+System:
+
+NavigateSkill
+→ SearchSkill
+→ Grounding
+→ PickSkill
+→ NavigateSkill
+→ PlaceSkill
+→ Verification
+→ RobotOps Record
+
+---
+
+## Strategic Direction Change
+
+### Completed — Phase A: Runtime Platform
+
+* Runtime execution framework (Sprint 1 → 4)
+* Perception + Stable World Model (Sprint 5)
+* Verification Runtime (Sprint 6)
+* RobotOps Foundation — SQLite persistence (Sprint 7A)
+
+### Current Focus — Phase B
+
+Epic 8 — Mobile Base Integration
+
+* Sprint 8.1 Base Driver
+* Sprint 8.2 Odometry Validation
+* Sprint 8.3 Lidar
+* Sprint 8.4 SLAM
+* Sprint 8.5 Navigation2
+
+Epic 9 — Mobile World Model
+
+Epic 10 — Mobile Agent Runtime
+
+### Next Milestone
+
+Autonomous Mobile Manipulation Robot
+
+---
+
+## Mobile Base Status
+
+Current workspace:
+
+* turn_on_dlrobot_robot
+* depend
+
+Purpose:
+
+Bring up the mobile chassis driver.
+
+Future deployment target:
+
+Jetson Orin Nano
+
+Sprint 8.1 validation targets:
+
+* /cmd_vel
+* /odom
+* /tf
+
+---
 
 Perception Pipeline
 ────────────────────────────────────────
@@ -201,6 +305,7 @@ Completed:
 ✅ stable_objects → grounding (Sprint 5.6)
 ✅ grounding → /grounded_task_context → runtime (Sprint 4.1)
 ✅ runtime → execution → verification → result (Sprint 6)
+✅ runtime → SQLite persistence (Sprint 7A)
 
 Known limitation:
 
@@ -327,7 +432,7 @@ PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q
 | **碰撞检测** | 无碰撞/力矩异常检测 |
 | **Skill 支持** | Runtime 当前仅支持 pick_skill。place_skill 未实现。post_place verification 框架存在，但无 place 执行路径。 |
 | **重试/恢复** | 无 retry 或 recovery 逻辑 — 延后至 Sprint 11 |
-| **持久化** | 无 SQLite 存储 — 所有事件仅内存/ROS2 topic (延后至 Sprint 8) |
+| **持久化** | ✅ RobotOps Foundation completed (Sprint 7A) — SQLite persistence active |
 | **并发任务** | FIFO matching only — no concurrent task verification |
 | **实物验证** | place 验证未在真实硬件测试 — 当前仅 dry-run / topic 仿真 |
 
@@ -421,11 +526,10 @@ Read:
 3 topic_service_map.md
 
 Current Goal:
-
-Sprint 6 已收尾
+Sprint 7A COMPLETED
 
 Next:
-Sprint 7A RobotOps Foundation
+Sprint 8.1 — Base Driver Bringup (Phase B)
 ---
 
 ## Sprint 5.6 Completion
@@ -598,15 +702,25 @@ Deferred to Sprint 11:
 
 ---
 
-## Next Sprint Entry Criteria (Sprint 7)
+## Next Sprint Entry Criteria
 
-Sprint 7A RobotOps Foundation
+Sprint 7A COMPLETED.
 
-目标：
-建立 RobotOps 最小可用基础设施
+Current Active Sprint:
 
-内容：
-- SQLite
-- Event Store
-- Task History
-- Runtime Persistence
+Sprint 8.1 — Base Driver Bringup
+
+Phase B — Mobile Robot Foundation
+
+Epic 8: Mobile Base Integration
+  - Sprint 8.1 Base Driver (CURRENT)
+  - Sprint 8.2 Odometry Validation
+  - Sprint 8.3 Lidar
+  - Sprint 8.4 SLAM
+  - Sprint 8.5 Navigation2
+
+Epic 9: Mobile World Model
+
+Epic 10: Mobile Agent Runtime
+  - NavigateSkill, SearchSkill, DockSkill
+  - Mobile Manipulation Tasks

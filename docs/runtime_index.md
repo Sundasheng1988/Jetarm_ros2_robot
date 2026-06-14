@@ -1,17 +1,27 @@
 # JetArm Robot Runtime — Documentation Index
 
-> > 最后更新：2026-06-07 | 当前 Sprint: 6 (closed) | 下一个 Sprint: 7A — RobotOps Foundation
+> > 最后更新：2026-06-14 | 当前 Sprint: 8.1 Base Driver Bringup | 当前阶段: Phase B — Mobile Robot Foundation
 ---
 
 ## Current Status
 
 | 项 | 状态 |
 |----|------|
-| **里程碑** | **✅ 首次 Runtime 驱动的真实机械臂抓取执行验证通过** |
-| **当前 Sprint** | **6 — Verification Runtime (closed)** |
-| **已完成** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI audit ✅、StableObjectTracker ✅、PerceptionFusionNode ✅、grounding switch to stable ✅、Sprint 6.1 Verification Sidecar ✅、6.2 Runtime Integration ✅、6.3 Event Enrichment ✅、6.4 Post Place Verification ✅ |
-| **进行中** | Sprint 7A RobotOps Foundation |
-| **已知限制** | ROI 颜色/类名不稳定；YOLO 语义优先 ROI 空间优先；RobotOps persistence not implemented；Retry/Recovery deferred to Sprint 11 |
+| **里程碑** | **✅ 首次 Runtime 驱动的真实机械臂抓取执行验证通过 · RobotOps Foundation COMPLETED** |
+| **当前 Sprint** | **8.1 — Base Driver Bringup** |
+| **已完成** | Servo Message Adapter、ActionExecutor 时序同步、真实 IK+Servo 全链路、ROI audit ✅、StableObjectTracker ✅、PerceptionFusionNode ✅、grounding switch to stable ✅、Sprint 6.1 Verification Sidecar ✅、6.2 Runtime Integration ✅、6.3 Event Enrichment ✅、6.4 Post Place Verification ✅、7A RobotOps Foundation (SQLite, Event Store, Task History) ✅ |
+| **进行中** | Phase B — Mobile Robot Foundation |
+| **已知限制** | ROI 颜色/类名不稳定；YOLO 语义优先 ROI 空间优先；Retry/Recovery deferred to Sprint 11 |
+
+## Current Hardware Baseline
+| Component | Status |
+|------------|---------|
+| Jetson Orin Nano | Active |
+| JetArm Manipulator | Active |
+| STM32 Controller | Active |
+| Gemini Depth Camera | Active |
+| Mobile Base | Bringup Phase |
+| Slamtec Lidar | Planned |
 
 ---
 
@@ -21,7 +31,7 @@
 |------|------|------|
 | 1 | `runtime_index.md` | **本文件** — 入口索引 |
 | 2 | `runtime_session_summary.md` | 当前会话压缩 — 架构/里程碑/命令/调试教训 |
-| 3 | `jetarm_runtime_roadmap.md` | 完整路线图 — Sprint 1~9 进度 + 未来计划 |
+| 3 | `jetarm_runtime_roadmap.md` | 完整路线图 — Phase A (COMPLETED) + Phase B (CURRENT FOCUS) + Future |
 | 4 | `runtime_analysis.md` | 系统运行时分析 — 18包职责/3条链路/控制冲突 |
 | 5 | `topic_service_map.md` | ROS2 通信矩阵 — 50+ topic/service 速查 |
 | 6 | `runtime_architecture.md` | Mermaid 架构图集 — 5 张图 |
@@ -96,13 +106,10 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 | 4.4-4.8 | **COMPLETED** | Servo adapter fix + Action Sequence + 真实硬件 pick |
 | 5 | **COMPLETED** | Perception Fusion / Stable World Model (5.1-5.6 ✅) |
 | 6 | **COMPLETED** | Verification Runtime (6.1-6.4 ✅, 6.5 ✅, 6.6 ⏳ Sprint 11) |
-| 7A | PLANNED | RobotOps Foundation |
-| 7B | PLANNED | RobotOps Dashboard |
-| 8A | PLANNED | Teleop Input |
-| 8B | PLANNED | Teleop Safety Arbitration |
-| 9 | PLANNED | Data Logger / Demonstration Collection |
-| 10 | PLANNED | VLA Readiness |
-| 11 | PLANNED | Retry / Recovery |
+| Phase A | **COMPLETED** | Runtime Platform (Sprint 1 → 7A) |
+| Supporting Tracks | PLANNED | Dashboard, Teleop, Data Logger, VLA, Retry |
+| Phase B | CURRENT FOCUS | Mobile Robot Foundation (Current Sprint: 8.1 Base Driver Bringup) |
+| Phase C | PLANNED | Agentic Mobile Manipulation |
 
 ---
 
@@ -115,4 +122,14 @@ ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
 5. Build: `colcon build --packages-select sketch_runtime --symlink-install`
 6. Run tests: `PYTHONPATH=src/sketch_runtime python3 -m pytest src/sketch_runtime/test/ -q`
 7. Use `docs/runtime_debug_guide.md` for launch/echo/confirm commands
-8. Current goal: Sprint 7A — RobotOps Foundation — build SQLite persistence, Event Store, Task History, Event Replay
+8. Current goal:
+   Sprint 8.1 — Base Driver Bringup
+
+9. Validate:
+   /cmd_vel
+   /odom
+   /tf
+
+10. Current mobile base packages:
+   - turn_on_dlrobot_robot
+   - depend

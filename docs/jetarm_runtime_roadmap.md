@@ -2,8 +2,50 @@
 
 > 合并原始 Roadmap + 当前实施进度 + Sprint 5→10 计划
 > 状态标记: ✅ COMPLETED | 🔶 IN_PROGRESS | ⬜ PLANNED | ⏸ DEFERRED
-> 最后更新：2026-06-07
-> **🎯 里程碑达成: Verification Runtime Dry-Run 闭环验证通过**
+> 最后更新：2026-06-14
+> **🎯 里程碑达成: Verification Runtime Dry-Run 闭环验证通过 · RobotOps Foundation COMPLETED**
+
+---
+
+## Project Strategic Shift (2026-06)
+
+Phase A — the Runtime Platform — is largely complete.
+
+The project is transitioning from:
+
+**Fixed Arm Runtime Platform**
+
+to:
+
+**Autonomous Mobile Manipulation Robot**
+
+Sprint 7A (RobotOps Foundation) marks the completion of the Runtime Platform foundation.
+
+All future development focus moves to mobile robotics.
+
+### North Star Goal
+
+User: "Go to the kitchen and bring me a cup."
+
+System flow:
+
+NavigateSkill → SearchSkill → Grounding → PickSkill → NavigateSkill → PlaceSkill
+
+The goal is an **Autonomous Mobile Manipulation Robot** — a robot that can:
+- Navigate to a location using SLAM + Navigation2
+- Perceive objects using cameras + lidar
+- Ground natural language commands to physical objects
+- Execute manipulation (pick, place, move) with verification
+- Record all events for audit, replay, and VLA training
+- Operate with safety arbitration between base and arm
+
+---
+
+## Phase A — Runtime Platform ✅ COMPLETED
+
+**目标**: 建立固定机械臂的完整 Runtime 执行链路
+**时间**: Sprint 1 — 7A
+
 
 ---
 
@@ -494,19 +536,29 @@ Sprint 7 实现。
 不开发代码。
 
 
-## Sprint 7A: RobotOps Foundation ⬜ PLANNED
+## Sprint 7A: RobotOps Foundation ✅ COMPLETED
 
 **目标**: 任务事件持久化 — 关闭后仍可复盘。
 
-**任务**:
-- SQLite 持久化 `/runtime/state`, `/runtime/log`, `/runtime/verification_result`
-- task_id 索引事件 + 状态历史
-- event store (event_id, task_id, event, state, timestamp, data)
-- task history (task_id → 完整事件流)
+**完成内容**:
+- ✅ 新建 `robotops` ROS2 包 (独立于 `sketch_runtime`)
+- ✅ SQLite `events` 表 — 单一事件表存储所有 runtime 原始 JSON
+- ✅ RobotOpsRecorderNode — 订阅 /runtime/state, /runtime/log, /runtime/execution_result, /runtime/verification_result
+- ✅ Observer-only 设计 — 不修改任何 runtime 发布者
+- ✅ 单表 schema + 任务级索引
+- ✅ EventStore 持久化接口
+- ✅ TaskHistory 查询接口
+- ✅ 20 个单元测试全部通过
+- ✅ PC-side real Runtime event stream validated: /runtime/state, /runtime/log, and /runtime/verification_result persisted into SQLite.
 
 ---
 
-## Sprint 7B: RobotOps Dashboard ⬜ PLANNED
+## Supporting Tracks
+
+These tracks remain valuable and may be developed in parallel.
+However they are not the primary strategic focus for 2026-06.
+
+### Sprint 7B: RobotOps Dashboard ⬜ PLANNED
 
 **目标**: 可视化任务执行与验证历史。
 
@@ -518,7 +570,7 @@ Sprint 7 实现。
 
 ---
 
-## Sprint 8A: Teleop Input ⬜ PLANNED
+### Sprint 8A: Teleop Input ⬜ PLANNED
 
 **目标**: 人类可通过键盘/手柄干预机器人。
 
@@ -529,7 +581,7 @@ Sprint 7 实现。
 
 ---
 
-## Sprint 8B: Teleop Safety Arbitration ⬜ PLANNED
+### Sprint 8B: Teleop Safety Arbitration ⬜ PLANNED
 
 **目标**: 多输入源下保证安全控制。
 
@@ -541,7 +593,7 @@ Sprint 7 实现。
 
 ---
 
-## Sprint 9: Data Logger / Demonstration Collection ⬜ PLANNED
+### Sprint 9: Data Logger / Demonstration Collection ⬜ PLANNED
 
 **目标**: 采集真实操作数据供 VLA 训练。
 
@@ -554,7 +606,7 @@ Sprint 7 实现。
 
 ---
 
-## Sprint 10: VLA Readiness ⬜ PLANNED
+### Sprint 10: VLA Readiness ⬜ PLANNED
 
 **目标**: 为 VLA 模型集成准备数据和接口。
 
@@ -566,7 +618,7 @@ Sprint 7 实现。
 
 ---
 
-## Sprint 11: Retry / Recovery ⬜ PLANNED
+### Sprint 11: Retry / Recovery ⬜ PLANNED
 
 **目标**: 基于真实失败数据设计恢复策略。
 
@@ -575,6 +627,67 @@ Sprint 7 实现。
 - `ask_user_confirm` — 提示用户选择恢复方式
 - `offset_retry` — 偏移位姿后重试
 - `auto_retry` — 自动重试 (n 次限制)
+
+---
+
+## Phase B — Mobile Robot Foundation ⬜ CURRENT FOCUS
+
+**Current Focus (2026-06)**
+
+These are now the primary engineering priorities.
+
+**架构变更**:
+
+```
+旧架构:  Fixed Arm + Depth Camera + Grounding + Runtime + RobotOps
+新架构:  Mobile Base + Lidar + SLAM + Navigation2 + World Model + Grounding + Runtime + RobotOps + Manipulator
+```
+
+### Epic 8 — Mobile Base Integration
+
+| Sprint | 状态 | 目标 | DoD |
+|--------|------|------|-----|
+| 8.1 | PLANNED | Base Driver — ROS2 driver for mobile base chassis | `/cmd_vel` working |
+| 8.2 | PLANNED | Odometry Validation — verify wheel encoders, IMU fusion, TF frames | `/odom` + TF working |
+| 8.3 | PLANNED | Lidar — 2D/3D lidar integration, point cloud processing | `/scan` topic producing data |
+| 8.4 | PLANNED | SLAM — Cartographer / FastSLAM, map building | map generation successful |
+| 8.5 | PLANNED | Navigation2 — AMCL, NavFn, path planning, obstacle avoidance | Nav2 goal execution successful |
+
+### Epic 9 — Mobile World Model
+
+**目标**: 世界模型融合移动基座位姿数据，使物体定位不依赖固定的相机/基座坐标。
+
+**任务**:
+- 基座位姿 → 世界模型坐标转换 (odom → map → object poses)
+- 移动中的感知稳定性 — 动态 TF 变换下的物体追踪
+- Persistent Object Tracking — 物体身份在机器人移动时保持稳定
+  - 例: `track_002 = blue_cup`，机器人移动后 `track_002` 仍为 `blue_cup`
+- Lidar + camera fusion for larger workspace coverage
+- World model supports moving observer (not just static camera)
+
+### Epic 10 — Mobile Agent Runtime
+
+**目标**: Runtime 技能系统扩展支持移动操作。
+
+**任务**:
+- `NavigateSkill` — move base to target pose (via Nav2)
+- `SearchSkill` — autonomous object search with lidar + camera
+- `DockSkill` — docking / undocking workflow
+- Mobile manipulation coordination — base + arm joint task execution
+- Runtime state machine extends with MOBILE_NAVIGATING, MOBILE_SEARCHING states
+- RobotOps records navigation events alongside manipulator events
+- Safety: base + arm collision zones, speed limits during manipulation
+
+---
+
+## Future Phase C — Agentic Mobile Manipulation ⬜ PLANNED
+
+| Phase | 状态 | 目标 |
+|-------|------|------|
+| C.1 | PLANNED | Agentic Task Planning — multi-step autonomous task decomposition |
+| C.2 | PLANNED | Multi-robot Coordination — fleet management |
+| C.3 | PLANNED | VLA Integration — Vision-Language-Action model for natural language task execution |
+| C.4 | PLANNED | Full Autonomy — unattended operation in dynamic environments |
 
 ---
 
