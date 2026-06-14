@@ -34,3 +34,6 @@ robotops.db
 robotops.db-shm
 robotops.db-wal
 
+
+# ROI tuner outputs
+tools/vision_roi_tuner/outputs/
