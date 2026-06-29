@@ -23,7 +23,7 @@ Sprint 7A (RobotOps Foundation) marks the completion of the Runtime Platform fou
 
 All future development focus moves to mobile robotics.
 
-### North Star Goal
+### Autonomous Mobile Manipulation Robot GOal
 
 User: "Go to the kitchen and bring me a cup."
 
