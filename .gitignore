@@ -37,3 +37,5 @@ robotops.db-wal
 
 # ROI tuner outputs
 tools/vision_roi_tuner/outputs/
+src/rplidar_ros/
+maps/
