@@ -213,6 +213,19 @@
     Pub: ~/image_result (Image)
 ```
 
+### 1.8 移动底盘 / SLAM / AMCL 链路
+
+```
+/cmd_vel → turn_on_dlrobot_robot → /odom_combined
+/odom_combined → odom_tf_bridge_node → /tf
+rplidar_node → /scan
+static_transform_publisher → /tf_static
+/scan + /tf → slam_toolbox → /map
+/map + /scan + /tf + /initialpose → amcl → /amcl_pose + /particle_cloud + map→odom
+
+Nav2 goal execution not yet verified.
+```
+
 ---
 
 ## 2. 全局 Topic 速查表
@@ -270,6 +283,18 @@
 | `/depth_cam/rgb/camera_info` | `CameraInfo` | 相机驱动 | `roi_color_detector_node`, `object_pose_publisher` |
 | `/depth_cam/depth/camera_info` | `CameraInfo` | 相机驱动 | `app_compatible_yolo_node`, `calibration_node` |
 | `/tf` / `/tf_static` | `TFMessage` | TF 广播 | `wm_from_tf` |
+| `/cmd_vel` | `geometry_msgs/Twist` | manual teleop / Nav2 (planned) | `turn_on_dlrobot_robot` |
+| `/odom_combined` | `nav_msgs/Odometry` | `turn_on_dlrobot_robot` | SLAM / AMCL / RViz |
+| `/scan` | `sensor_msgs/LaserScan` | `rplidar_node` | SLAM / AMCL |
+| `/tf` (mobile base) | `tf2_msgs/TFMessage` | `odom_tf_bridge_node` | RViz / Nav stack |
+| `/tf_static` (laser) | `tf2_msgs/TFMessage` | `static_transform_publisher` | all |
+| `/map` | `nav_msgs/OccupancyGrid` | `slam_toolbox` / `map_server` | RViz / AMCL |
+| `/map_metadata` | `nav_msgs/MapMetaData` | `map_server` | RViz |
+| `/initialpose` | `geometry_msgs/PoseWithCovarianceStamped` | RViz | AMCL |
+| `/amcl_pose` | `geometry_msgs/PoseWithCovarianceStamped` | AMCL | RViz / Nav2 |
+| `/particle_cloud` | `geometry_msgs/PoseArray` | AMCL | RViz |
+| `/goal_pose` | `geometry_msgs/PoseStamped` | RViz | Nav2 (Not yet verified) |
+| `/plan` | `nav_msgs/Path` | Nav2 | RViz (Not yet verified) |
 
 ---
 
@@ -284,6 +309,10 @@
 | `~/init_finish` | `Trigger` | `controller_manager` | *(等待 controller_mgr 就绪)* |
 | `~/enter` / `~/exit` / `~/start` | `Trigger` | `calibration_node` | *(标定工具)* |
 | `ros_robot_controller/bus_servo/get_state` | `GetBusServoState` | `ros_robot_controller` | `ServoManager` |
+
+> Mobile Robot / Nav2 services are not yet documented here.
+> Only verified topics are listed in Section 8.
+> Nav2 action/service interfaces will be added after Goal Pose validation.
 
 ---
 
@@ -422,3 +451,196 @@ float64 duration, string position_unit, ServoPosition[] position
        └─ /ros_robot_controller/bus_servo/set_position ──→ [ros_robot_controller]
            (ground_executor 直连，绕过 controller_manager)
 ```
+
+### 7.2 移动底盘控制路径
+
+```
+manual /cmd_vel (verified) or Nav2 (planned)
+↓
+turn_on_dlrobot_robot
+↓
+mobile base controller
+↓
+/odom_combined
+↓
+odom_tf_bridge_node
+↓
+/tf odom_combined→base_footprint
+
+rplidar_node → /scan
+static_transform_publisher → /tf_static base_footprint→laser
+```
+
+---
+
+## 8. Mobile Robot Foundation
+
+### 8.1 Mobile Base Topics
+
+| Topic | Type | Publisher | Subscriber | Notes |
+|--------|------|------------|-------------|--------|
+| /cmd_vel | geometry_msgs/Twist | manual teleop / Nav2 (planned) | turn_on_dlrobot_robot | base velocity command |
+| /odom_combined | nav_msgs/Odometry | turn_on_dlrobot_robot | SLAM / AMCL / RViz | fused odometry |
+| /scan | sensor_msgs/LaserScan | rplidar_node | SLAM / AMCL | RPLidar A1 |
+| /tf | tf2_msgs/TFMessage | odom_tf_bridge_node | RViz / Nav stack | dynamic transforms |
+| /tf_static | tf2_msgs/TFMessage | static_transform_publisher | all | laser mounting transform |
+| /imu | sensor_msgs/Imu | TBD | TBD | (Not yet verified) |
+
+---
+
+### 8.2 Navigation Topics
+
+| Topic | Type | Publisher | Subscriber | Notes |
+|--------|------|------------|-------------|--------|
+| /map | nav_msgs/OccupancyGrid | slam_toolbox (mapping) / map_server (localization) | RViz / AMCL | occupancy map |
+| /map_metadata | nav_msgs/MapMetaData | map_server | RViz | map info |
+| /initialpose | geometry_msgs/PoseWithCovarianceStamped | RViz | AMCL | localization initialization |
+| /amcl_pose | geometry_msgs/PoseWithCovarianceStamped | AMCL | RViz / Nav2 | estimated robot pose |
+| /particle_cloud | geometry_msgs/PoseArray | AMCL | RViz | particle filter visualization |
+| /goal_pose | geometry_msgs/PoseStamped | RViz | Nav2 | navigation goal (Not yet verified) |
+| /plan | nav_msgs/Path | Nav2 | RViz | global path (not yet verified) |
+
+---
+
+### 8.3 Mobile Robot Nodes
+
+#### turn_on_dlrobot_robot
+
+Publishes:
+
+- /odom_combined
+
+Subscribes:
+
+- /cmd_vel
+
+Notes:
+
+- Mobile base driver
+- Occasional serial::IOException observed
+
+#### rplidar_node
+
+Publishes:
+
+- /scan
+
+Notes:
+
+- RPLidar A1
+
+#### odom_tf_bridge_node
+
+Subscribes:
+
+- /odom_combined
+
+Publishes:
+
+- /tf
+
+Purpose:
+
+- odom → base_footprint transform
+
+#### static_transform_publisher
+
+Publishes:
+
+- /tf_static
+
+Transform:
+
+base_footprint → laser
+
+#### slam_toolbox
+
+Subscribes:
+
+- /scan
+- /tf
+
+Publishes:
+
+- /map
+
+Purpose:
+
+- Online SLAM mapping
+
+#### map_server
+
+Publishes:
+
+- /map
+- /map_metadata
+
+Purpose:
+
+- Static map serving
+
+Current map:
+
+~/ros2_ws/maps/home_map_01_260621.yaml
+
+#### amcl
+
+Subscribes:
+
+- /map
+- /scan
+- /tf
+- /initialpose
+
+Publishes:
+
+- /amcl_pose
+- /particle_cloud
+- map → odom transform
+
+Status:
+
+In validation.
+
+#### nav2
+
+Status:
+
+Not yet validated.
+
+Known interfaces (expected, not yet verified):
+
+- Goal Pose (TBD)
+- /cmd_vel (Not yet verified)
+- /plan (Not yet verified)
+
+---
+
+### 8.4 Future Interfaces (Planned)
+
+| Interface | Status |
+|------------|---------|
+| NavigateToPose action | TBD |
+| FollowWaypoints action | TBD |
+| MoveSkill | Planned |
+| Semantic Location Registry | Planned |
+| SearchSkill | Planned |
+
+---
+
+## Source of Truth
+
+Mobile Robot topics are verified from:
+
+- runtime_index.md
+- current SLAM mapping sessions
+- AMCL bringup logs
+- direct ROS2 topic inspection
+- ros2 topic list / echo verification
+
+Any item marked:
+
+(TBD)
+(Not yet verified)
+
+must not be treated as confirmed architecture.
