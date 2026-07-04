@@ -1,10 +1,60 @@
 # JetArm Robot Runtime — 风险分析
 
-> 基于 runtime_analysis.md 与 runtime_architecture.md 的系统风险评估
+> Historical and current risk assessment for the JetArm Runtime Platform
+> and Mobile Robot Foundation.
+>
+> Source references:
+> - runtime_architecture.md
+> - topic_service_map.md
+> - jetarm_runtime_roadmap.md
+> - docs/archive/runtime_analysis.md
+> 
 > 按 P0(阻断) / P1(严重) / P2(隐患) 分级
-> 分析日期：2026-05-17
+>
+> **Legacy Runtime Risk Analysis**: 2026-05
+> **Perception / Runtime Stabilization Risks**: 2026-06
+> **Mobile Robot Foundation Risks**: 2026-06/2026-07
+>
+> **Current Phase**: Mobile Robot Foundation
+> **Last Updated**: 2026-06-29
+
+
+## Current Summary
+
+| Category | Status |
+|-----------|---------|
+| Runtime Platform | ✅ Complete |
+| RobotOps | ✅ Complete |
+| Perception Fusion | ✅ Complete |
+| StableObjectTracker | ✅ Complete |
+| SLAM Mapping | ✅ Complete |
+| AMCL | 🔶 In Validation |
+| Nav2 | ❌ Not Validated |
+| Semantic Locations | ❌ Missing |
+| Semantic Navigation | 🔶 In Planning |
+| MoveSkill / NavigateSkill | ❌ Missing |
+| Mobile Manipulation | ⏳ Future |
 
 ---
+
+# Part A — Legacy Runtime / Perception Risks
+
+> Historical note:
+>
+> R1–R17 reflect the Runtime Platform and Perception
+> stabilization phase (2026-05 to 2026-06).
+>
+> Many risks have since been resolved or mitigated,
+> but they are intentionally preserved for project history.
+
+> **Resolved / mitigated:**
+>
+> * R1 Topic mismatch — resolved by Perception Fusion + StableObjectTracker + grounding switch to `/world_model/stable_objects`
+> * R5 Missing task_id — resolved by RobotOps Foundation
+> * R6 Missing verification — resolved by Verification Runtime
+> * R15 Unstable world model — partially mitigated by Perception Fusion + StableObjectTracker
+> * R16 Perception source mismatch — partially mitigated by YOLO semantic priority + ROI spatial priority
+> * R17 ROI color confidence — still active; further calibration and validation are still required.
 
 ## 风险矩阵速览
 
@@ -786,31 +836,6 @@ graph TD
     style R13 fill:#d4edda,stroke:#28a745
     style R14 fill:#d4edda,stroke:#28a745
 ```
-
----
-
-## Sprint 覆盖矩阵
-
-| 风险 | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 |
-|------|----------|----------|----------|----------|
-| R1: topic 不匹配 | ✅ FIX | — | — | — |
-| R2: executor 写死 | 🔶 注入task_id | ✅ SkillManager | — | — |
-| R3: 多节点控制冲突 | 🔶 记录监控 | ✅ ArbiterNode | — | — |
-| R4: 直连硬件总线 | ✅ remap topic | ✅ servo_adapter | — | — |
-| R5: 无 task_id | ✅ runtime_state_node | ✅ TaskContext | — | — |
-| R6: 无验证逻辑 | — | — | — | ✅ verification_node |
-| R7: grounding 表达不足 | ✅ TargetObject.msg | ✅ source 字段 | — | — |
-| R8: voice 过度承担 | — | ✅ 逻辑分离 | — | — |
-| R9: PC/JetArm 耦合 | 🔶 IK 异常日志 | — | — | ✅ 精度分析 |
-| R10: GraspNode 拼写 | — | ✅ skill 替代 | — | — |
-| R11: parser 固定 action | ✅ 意图映射 | ✅ LLM parser | — | — |
-| R12: social_robot 冗余 | — | ✅ 拆分 | — | — |
-| R13: IK 误差链 | — | — | ✅ log 记录 | ✅ 偏差分析 |
-| R14: grounding 模糊匹配 | — | ✅ 精确匹配 | — | — |
-| R15: 原始感知不稳定 | — | ✅ StableObjectTracker | ✅ stable_objects | ✅ 稳定世界模型 |
-
-> ✅ = 修复 | 🔶 = 部分缓解 | — = 不涉及
-
 ---
 
 ### R15: 原始感知不稳定 / 不稳定世界模型
@@ -925,3 +950,253 @@ ROI 颜色检测 (`_dominant_color_key` in `roi_color_detector_node.py`) 使用 
 - **Runtime**: 错误的颜色可能导致抓取错误目标。
 
 > ⚠ **不要盲目复制 tools/vision_roi_tuner 代码到 src/app/**。任何生产变更必须最小化并经人工审核。
+
+---
+
+# Part B — Mobile Robot Foundation Risks
+
+---
+
+## R18 — Mobile Base Serial Instability
+
+Status: Active
+Priority: P0
+
+Problem:
+`turn_on_dlrobot_robot` has shown serial instability, including `serial::IOException` and input/output errors.
+
+Impact:
+
+* `/odom_combined` may reset
+* SLAM consistency can be corrupted
+* AMCL localization may fail
+* Nav2 execution can be interrupted
+
+Mitigation:
+
+* Check USB and power stability
+* Use persistent device naming if needed
+* Consider auto-reconnect behavior
+* Record failure in RobotOps when possible
+
+---
+
+## R19 — DDS over WiFi Instability
+
+Status: Active
+Priority: P0
+
+Problem:
+ROS2 DDS discovery and TF synchronization are sensitive to WiFi/router behavior.
+
+Observed:
+
+- Wired Ethernet worked.
+- iPhone hotspot worked.
+- One home WiFi configuration showed unreliable DDS discovery and TF visibility.
+
+Root cause remains unverified.
+
+Impact:
+
+* PC may not see `/scan`, `/odom_combined`, `/tf`, `/tf_static`
+* RViz / SLAM / AMCL may fail
+
+Mitigation:
+
+* Prefer iPhone hotspot or wired Ethernet for development
+* Restart ROS2 daemon on both PC and Nano after network changes
+* Consider CycloneDDS profile tuning later
+
+---
+
+## R20 — AMCL Validation Incomplete
+
+Status: In Progress
+Priority: P0
+
+Problem:
+`nav2_bringup localization_launch.py` has launched successfully and map_server/amcl became active, but full localization behavior is not yet validated.
+
+Missing validation:
+
+* RViz Initial Pose
+* Particle cloud convergence
+* `/amcl_pose`
+* map → odom transform stability
+* push/drive test with map fixed
+
+Blocks:
+
+* Nav2 navigation validation
+
+---
+
+## R21 — Nav2 Navigation Unvalidated
+
+Status: Pending
+Priority: P1
+
+Problem:
+Nav2 Goal Pose execution has not yet been validated.
+
+Missing:
+
+* Global planner output
+* Local controller output
+* `/cmd_vel` from Nav2
+* short-distance goal
+* room-to-room goal
+* recovery behavior
+
+---
+
+## R22 — Semantic Location Registry Missing
+
+Status: Planned
+Priority: P1
+
+Problem:
+Natural language goals such as "go to kitchen" have no symbolic mapping yet.
+
+Needed:
+
+```yaml
+kitchen:
+  x:
+  y:
+  yaw:
+
+living_room:
+  x:
+  y:
+  yaw:
+```
+
+Impact:
+
+* MoveSkill / NavigateSkill cannot translate semantic locations to Nav2 goals
+
+---
+
+## R23 — MoveSkill / NavigateSkill Missing
+
+Status: Planned
+Priority: P1
+
+Problem:
+Runtime currently supports PickSkill, but no navigation skill abstraction exists.
+
+Needed:
+
+* MoveSkill or NavigateSkill
+* Nav2 action client
+* Runtime state integration
+* RobotOps event logging for navigation
+
+---
+
+## R24 — Persistent Mobile World Model Missing
+
+Status: Future
+Priority: P2
+
+Problem:
+The current world model is still object-centric and mostly fixed-camera oriented.
+
+Needed:
+
+* map-frame object poses
+* semantic locations
+* persistent object identity
+* moving-observer perception support
+
+---
+
+## R25 — Mobile Manipulation Coordination Risk
+
+Status: Future
+Priority: P1
+
+Problem:
+Mobile manipulation requires coordination between base pose, camera visibility, arm reachability, and object pose.
+
+Unknowns:
+
+* base alignment accuracy
+* whether the arm can reach targets after navigation
+* camera visibility after navigation
+* whether YOLO/ROI assumptions still hold when robot moves
+
+---
+
+## R26 — Map Maintenance and Versioning
+
+Status: Active
+Priority: P1
+
+Problem:
+
+The project currently lacks a formal map lifecycle strategy.
+
+Examples:
+
+- home_map_01_260621.yaml
+- future map revisions
+- semantic location dependencies
+
+Unknowns:
+
+- Which map is canonical?
+- How semantic locations migrate between maps?
+- How RobotOps references map versions?
+- How MoveSkill chooses the correct map?
+
+Mitigation:
+
+- Introduce a map registry.
+- Define naming conventions.
+- Separate semantic locations from occupancy maps.
+- Add map metadata management.
+
+---
+
+# Resolved Risks
+
+| Risk | Resolution |
+|-------|------------|
+| R1 | StableObjectTracker + grounding switch to /world_model/stable_objects (Sprint 5.6) |
+| R5 | RobotOps Foundation (SQLite event persistence) |
+| R6 | Verification Runtime (Sprint 6) |
+| R15 | Perception Fusion + StableObjectTracker (partial mitigation) |
+
+---
+
+# Current Go / No-Go Matrix
+
+| Capability                | Status | Go / No-Go |
+| ------------------------- | ------ | ---------- |
+| Runtime Platform          | ✅      | GO         |
+| RobotOps                  | ✅      | GO         |
+| Perception Fusion         | ✅      | GO         |
+| StableObjectTracker       | ✅      | GO         |
+| SLAM Mapping              | ✅      | GO         |
+| AMCL                      | 🔶     | LIMITED    |
+| Nav2                      | ❌      | NO-GO      |
+| Semantic Locations        | ❌      | NO-GO      |
+| MoveSkill / NavigateSkill | ❌      | NO-GO      |
+| Mobile Manipulation       | ❌      | NO-GO      |
+
+---
+
+# Current Focus
+
+AMCL Validation
+↓
+Nav2 Goal Pose
+↓
+Semantic Locations
+↓
+MoveSkill / NavigateSkill
+↓
+Mobile Manipulation
