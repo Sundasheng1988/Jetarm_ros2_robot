@@ -1161,6 +1161,120 @@ Mitigation:
 
 ---
 
+## R27 — Semantic Location Drift
+
+Status: Future
+Priority: P1
+
+Problem:
+
+Semantic locations may become invalid after:
+
+- furniture changes
+- remapping
+- occupancy changes
+
+Examples:
+
+- kitchen
+- living_room
+- charging_station
+
+Mitigation:
+
+- Semantic Location Registry
+- versioned locations
+- RobotOps audit trail
+- manual validation
+
+---
+
+## R28 — Map Version Mismatch
+
+Status: Active
+Priority: P1
+
+Problem:
+
+Robot and PC may reference different maps.
+
+Examples:
+
+- home_map_01_260621
+- future revisions
+
+Mitigation:
+
+- map_id
+- startup validation
+- RobotOps tracking
+- map registry
+
+---
+
+## R29 — Robot-side / PC-side Deployment Divergence
+
+Status: Active
+Priority: P1
+
+Problem:
+
+Robot-side:
+
+- turn_on_dlrobot_robot
+- rplidar_node
+- odom_tf_bridge_node
+- future AMCL
+- future Nav2
+
+PC-side:
+
+- Runtime Platform
+- Grounding
+- RobotOps
+- Perception Fusion
+
+Documentation and audits must not assume all packages exist in one workspace.
+
+Mitigation:
+
+- deployment diagrams
+- runtime verification
+- source-of-truth documentation
+- explicit robot-side sections
+
+---
+
+## R30 — Distributed ROS2 Connectivity Failure
+
+Status: Active
+Priority: P1
+
+Problem:
+
+Potential failures:
+
+- WiFi loss
+- multicast issues
+- ROS_DOMAIN_ID mismatch
+- firewall problems
+
+Symptoms:
+
+- topics disappear
+- nodes disappear
+- RViz empty
+- Robot offline
+
+Mitigation:
+
+- ROS_DOMAIN_ID standards
+- DDS debugging procedures
+- network validation checklist
+- RobotOps connectivity monitoring
+
+---
+
 # Resolved Risks
 
 | Risk | Resolution |

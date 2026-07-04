@@ -767,3 +767,193 @@ cat sandbox/roi_runtime_experiment/reports/roi_runtime_eval.md
 python3 tools/vision_roi_tuner/scripts/evaluate_strategy_debug.py
 cat tools/vision_roi_tuner/outputs/reports_v2/strategy_debug_eval.md
 ```
+
+---
+
+## 18. Mobile Robot Debugging (Sprint 8.x)
+
+> **Phase**: Mobile Robot Foundation — Sprint 8.x 🔄 IN PROGRESS
+>
+> These commands run on the **robot-side workspace** (Jetson Orin).
+> They are separate from PC-side Runtime debugging.
+>
+> Robot-side binaries:
+> - `turn_on_dlrobot_robot` (mobile base driver)
+> - `rplidar_node` (RPLidar A1)
+> - `odom_tf_bridge_node` (odometry → TF bridge)
+> - `static_transform_publisher` (laser mounting transform)
+
+---
+
+### 18.1 Robot-side Startup Checklist
+
+```
+□ turn_on_dlrobot_robot running
+□ /cmd_vel exists
+□ /odom_combined exists
+□ /scan exists
+□ /tf exists
+□ /mobile_base/sensors/imu_data exists
+□ RPLidar connected
+□ static TF published
+```
+
+### 18.2 Robot-side Commands
+
+#### Start mobile base
+
+```bash
+ros2 launch turn_on_dlrobot_robot tank.launch.py
+```
+
+#### Start lidar
+
+```bash
+ros2 launch rplidar_ros rplidar_a1_launch.py \
+  serial_port:=/dev/ttyUSB0
+```
+
+#### Start odom TF bridge
+
+```bash
+ros2 run mobile_base_bridge odom_tf_bridge_node
+```
+
+#### Publish laser static transform
+
+```bash
+ros2 run tf2_ros static_transform_publisher \
+  0 0 0.15 0 0 0 base_footprint laser
+```
+
+### 18.3 Verification Commands
+
+```bash
+# List all active topics
+ros2 topic list
+
+# Inspect IMU topic
+ros2 topic info /mobile_base/sensors/imu_data
+
+# Check odometry
+ros2 topic echo /odom_combined --once
+
+# Check TF broadcast
+ros2 topic echo /tf --once
+
+# Check lidar data
+ros2 topic echo /scan --once
+```
+
+### 18.4 AMCL Validation (In Progress)
+
+**Status**: 🔶 IN VALIDATION
+
+```bash
+# Launch AMCL with current map
+ros2 launch nav2_bringup localization_launch.py \
+  map:=/home/sundasheng/ros2_ws/maps/home_map_01_260621.yaml
+```
+
+**Checklist**:
+
+```
+□ map loaded
+□ initial pose set (via RViz /initialpose)
+□ particle cloud visible
+□ /amcl_pose available
+□ localization stable
+```
+
+> ⚠ Nav2 must NOT be enabled before AMCL validation is complete.
+
+### 18.5 Nav2 Validation (Not Yet Verified)
+
+**Status**: ❌ NOT VERIFIED
+
+Expected future interfaces:
+
+- NavigateToPose action
+- FollowWaypoints action
+- /goal_pose
+- global planner
+- local controller
+
+> ⚠ Do not assume Nav2 is operational.
+> No MoveSkill or NavigateSkill implementation depends on Nav2 yet.
+
+### 18.6 PC-side Runtime Debugging
+
+These commands run on the PC workspace alongside mobile robot debugging.
+
+#### Runtime Platform
+
+```bash
+ros2 topic echo /runtime/state
+ros2 topic echo /runtime/log
+```
+
+#### RobotOps
+
+```bash
+sqlite3 ~/ros2_ws/robotops.db
+```
+
+#### Stable World Model
+
+```bash
+ros2 topic echo /world_model/stable_objects
+```
+
+#### Grounding
+
+```bash
+ros2 topic echo /grounded_task_context
+```
+
+### 18.7 Cross-machine Debugging
+
+**Robot-side publishes**:
+
+- odom (`/odom_combined`)
+- lidar (`/scan`)
+- TF (`/tf`, `/tf_static`)
+- IMU (`/mobile_base/sensors/imu_data`)
+
+**PC-side subscribes**:
+
+- perception
+- grounding
+- runtime
+- RobotOps
+
+**Suggested checks**:
+
+```bash
+# Verify network connectivity
+ping <robot-ip>
+
+# Confirm ROS_DOMAIN_ID matches on both machines
+echo $ROS_DOMAIN_ID
+
+# List visible topics from PC side
+ros2 topic list
+
+# Check if robot-side topics appear on PC
+ros2 topic echo /odom_combined --once
+```
+
+---
+
+## 19. Known Limitations (2026-07)
+
+| Item | Status |
+|-------|---------|
+| Runtime Platform | ✅ Complete |
+| RobotOps | ✅ Complete |
+| SLAM Mapping | ✅ Complete |
+| AMCL | 🔶 In Validation |
+| Nav2 | ❌ Not Verified |
+| MoveSkill | ❌ Missing |
+| Semantic Locations | ❌ Missing |
+| Mobile Manipulation | ⏳ Future |

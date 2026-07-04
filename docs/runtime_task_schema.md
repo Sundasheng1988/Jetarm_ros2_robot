@@ -15,16 +15,29 @@ from typing import Optional, Dict, Any, List
 import time
 
 class TaskState(Enum):
-    CREATED          = "created"           # task_id 生成，尚未解析
-    PARSED           = "parsed"            # parser 完成，有 parsed_command
-    GROUNDED         = "grounded"          # grounding 完成，有 target_object + target_pose
-    SKILL_SELECTED   = "skill_selected"    # skill_mgr 已选定 skill
-    EXECUTING        = "executing"         # skill 执行中
-    DONE             = "done"              # 执行成功
-    FAILED           = "failed"            # 执行失败（含 reason）
-    CANCELLED        = "cancelled"         # 用户/系统取消
-    PAUSED           = "paused"            # Teleop 接管时暂停（P1 引入）
-    RETRYING         = "retrying"          # 失败后重试中
+    # ── Task Lifecycle ─────────────────────
+    CREATED = "created"                 # task_id 已生成
+    PARSED = "parsed"                   # parser 完成
+    GROUNDED = "grounded"               # grounding 完成
+
+    # ── Runtime ───────────────────────────
+    SKILL_SELECTED = "skill_selected"   # Skill 已选定
+    WAITING_CONFIRM = "waiting_confirm" # 等待用户确认
+    EXECUTING = "executing"             # Skill 执行中
+
+    # ── Verification Runtime ─────────────
+    VERIFYING = "verifying"             # 执行完成，等待验证
+    VERIFIED = "verified"               # 验证通过
+    VERIFICATION_FAILED = "verification_failed"  # 验证失败
+
+    # ── Terminal States ──────────────────
+    DONE = "done"                       # 最终成功（兼容旧系统）
+    FAILED = "failed"                   # 执行失败
+    CANCELLED = "cancelled"             # 用户取消
+
+    # ── Extended Runtime ────────────────
+    PAUSED = "paused"                   # Teleop 接管
+    RETRYING = "retrying"               # 自动重试
 
 @dataclass
 class TaskContext:
@@ -117,25 +130,35 @@ graph TD
     PARSED("PARSED<br/>parser 完成")
     GROUNDED("GROUNDED<br/>grounding 完成<br/>target_object + target_pose")
     SKILL_SEL("SKILL_SELECTED<br/>skill_mgr 选定 skill")
+    WAIT_CONF("WAITING_CONFIRM<br/>等待用户确认")
     EXECUTING("EXECUTING<br/>skill 执行中")
+    VERIFYING("VERIFYING<br/>验证中")
+    VERIFIED("VERIFIED<br/>验证通过")
     DONE("DONE<br/>成功")
     FAILED("FAILED<br/>失败 + reason")
+    VERIF_FAILED("VERIFICATION_FAILED<br/>验证失败")
     CANCELLED("CANCELLED<br/>取消")
-    RETRYING("RETRYING<br/>重试中")
+    RETRYING("RETRYING<br/>future recovery runtime")
 
     CREATED --> PARSED
     PARSED --> GROUNDED
     PARSED --> CANCELLED
     GROUNDED --> SKILL_SEL
     GROUNDED --> CANCELLED
-    SKILL_SEL --> EXECUTING
-    EXECUTING --> DONE
+    SKILL_SEL --> WAIT_CONF
+    WAIT_CONF --> EXECUTING
+    WAIT_CONF --> CANCELLED
+    EXECUTING --> VERIFYING
     EXECUTING --> FAILED
     EXECUTING --> CANCELLED
-    FAILED --> RETRYING
-    RETRYING --> SKILL_SEL
+    VERIFYING --> VERIFIED
+    VERIFYING --> VERIF_FAILED
+    VERIFIED --> DONE
+    VERIF_FAILED --> FAILED
+    FAILED -. future .-> RETRYING
+    RETRYING -. future .-> SKILL_SEL
+    RETRYING -. future .-> CANCELLED
     FAILED --> CANCELLED
-    RETRYING --> CANCELLED
     CREATED --> CANCELLED
 ```
 
@@ -151,14 +174,17 @@ graph TD
 | `PARSED` | `CANCELLED` | grounding 返回 `no_match` / `no_target` | `runtime_state_node` |
 | `GROUNDED` | `SKILL_SELECTED` | `skill_manager` 映射成功 | `ground_executor_node` |
 | `GROUNDED` | `CANCELLED` | 无可用 skill (unknown_skill) | `ground_executor_node` |
-| `SKILL_SELECTED` | `EXECUTING` | `control_arbiter` 授权 (P2) | `ground_executor_node` |
-| `EXECUTING` | `DONE` | `skill.execute()` 返回 `success=true` | `ground_executor_node` |
-| `EXECUTING` | `FAILED` | `skill.execute()` 返回 `success=false` | `ground_executor_node` |
-| `EXECUTING` | `CANCELLED` | 用户取消 or ESTOP 触发 | `ground_executor_node` |
-| `FAILED` | `RETRYING` | `retry_count < max_retries` | `ground_executor_node` |
-| `RETRYING` | `SKILL_SELECTED` | 重新进入 skill 选择流程 | `ground_executor_node` |
-| `FAILED` | `CANCELLED` | `retry_count >= max_retries` or 用户跳过 | `ground_executor_node` |
-| `RETRYING` | `CANCELLED` | 用户取消 | `ground_executor_node` |
+| `SKILL_SELECTED` | `WAITING_CONFIRM` | 预览已发布，等待用户确认 | `real_grounded_runtime_node` |
+| `WAITING_CONFIRM` | `EXECUTING` | 用户确认 (`/runtime/confirm` yes) | `real_grounded_runtime_node` |
+| `WAITING_CONFIRM` | `CANCELLED` | 用户取消 or 确认超时 | `real_grounded_runtime_node` |
+| `EXECUTING` | `VERIFYING` | `skill.execute()` 完成 | `real_grounded_runtime_node` |
+| `EXECUTING` | `FAILED` | `skill.execute()` returned success=false or raised exception | `real_grounded_runtime_node` |
+| `EXECUTING` | `CANCELLED` | 用户取消 or ESTOP 触发 | `real_grounded_runtime_node` |
+| `VERIFYING` | `VERIFIED` | verification precheck/postcheck 通过 | `verification_result_node` |
+| `VERIFYING` | `VERIFICATION_FAILED` | verification 失败 | `verification_result_node` |
+| `VERIFIED` | `DONE` | 验证成功，任务完成 | `real_grounded_runtime_node` |
+| `VERIFICATION_FAILED` | `FAILED` | 验证失败，标记为失败 | `real_grounded_runtime_node` |
+| `FAILED` | `CANCELLED` | 用户取消 | `real_grounded_runtime_node` |
 
 ---
 
@@ -241,7 +267,7 @@ graph TD
 |---|--------|
 | **Teleop** | `source` 区分 `keyboard`/`voice`/`teleop`；`priority` 允许手动命令优先；`PAUSED` 状态为 Teleop 接管预留 |
 | **RobotOps** | `state_history[]` 记录完整状态转移时间线；`/runtime/log` 按 `task_id` 分组聚合；`evidence` 持久化到 SQLite |
-| **Verification** | `result.evidence` 供 Verification 节点填充；`retry_count`/`max_retries` 驱动 retry 决策 |
+| **Verification** | `result.evidence` 供 Verification 节点填充；`retry_count`/`max_retries` 为未来 Retry / Recovery 预留，当前不自动重试 |
 | **未来扩展** | `metadata: dict` 可承载 VLA 模型版本、IK 初始猜测、用户意图向量等字段，不改接口 |
 
 ---
@@ -250,33 +276,42 @@ graph TD
 
 ```
 time →
-──────────────────────────────────────────────────────────────────────────────
-CREATED         PARSED    GROUNDED   SKILL_SEL  EXECUTING          DONE
-  │              │          │           │          │                │
-  │.transition() │          │           │          │                │
-  ├─ /parsed_cmd│          │           │          │                │
-  │              ├─ /grounded_goal     │          │                │
-  │              │          ├─ skill_mgr.select() │                │
-  │              │          │           ├─ skill.precheck()        │
-  │              │          │           │    skill.execute()       │
-  │              │          │           │    ┌──────────────────┐  │
-  │              │          │           │    │ ik + servo +     │  │
-  │              │          │           │    │ gripper steps    │  │
-  │              │          │           │    └──────────────────┘  │
-  │              │          │           │     skill.postcheck()    │
-  │              │          │           │            ├─ success ───┤
-  │              │          │           │            │             │
-  │              │          │           │            ├─ fail ──> RETRYING
-  │              │          │           │            │              │
-  /runtime/state /runtime/state   /runtime/state  /runtime/state /runtime/state
-  /runtime/log   /runtime/log     /runtime/log    /runtime/log   /runtime/log
+──────────────────────────────────────────────────────────────────────────────────────────
+CREATED    PARSED   GROUNDED  SKILL_SEL  WAIT_CONF  EXECUTING  VERIFYING  VERIFIED   DONE
+  │          │         │          │          │           │          │          │        │
+  │.transition()       │          │          │           │          │          │        │
+  ├─/parsed  │         │          │          │           │          │          │        │
+  │          ├─/grounded_goal     │          │           │          │          │        │
+  │          │         ├─skill_mgr.select()  │           │          │          │        │
+  │          │         │         ├──preview──┤           │          │          │        │
+  │          │         │         │   confirm─┤           │          │          │        │
+  │          │         │         │          ├─execute()─┤          │          │        │
+  │          │         │         │          │           ├─verify───┤          │        │
+  │          │         │         │          │           │          ├─success──┤        │
+  │          │         │         │          │           │          │          ├─done───┤
+  │          │         │         │          │           │          ├─fail     │        │
+  │          │         │         │          │           │          │          │        │
+  │          │         │         │          │           │          └─> VERIFICATION_FAILED
+  │          │         │         │          │           │                      │
+  │          │         │         │          │           │                      └─> FAILED
+  │          │         │         │          │           └─> FAILED             │
+  │          │         │         │          └─> CANCELLED                      │
+  │          │         │         └─> CANCELLED                                 │
+  │          │         └─> CANCELLED                                           │
+  │          └─> CANCELLED                                                     │
+  └─> CANCELLED                                                                │
+                                                                               │
+/runtime/state on every transition                                              │
+/runtime/log on every event                                                     │
+/runtime/verification_result on VERIFYING → VERIFIED / VERIFICATION_FAILED      │
+/runtime/execution_result on DONE / FAILED / CANCELLED                          │
 ```
 
 ---
 
 ## 7. 与现有 ground_executor_node 的兼容过渡
 
-Sprint 1 最小改动方案（不改原 10 步序列）：
+> Historical note: this section records the early Sprint 1 transition design. Current execution uses `real_grounded_runtime_node`, `PickSkill`, `RuntimeAdapter`, Preview/Confirm, Verification Runtime, and RobotOps.
 
 ```python
 # 在 ground_executor_node.on_goal() 开头注入
@@ -302,3 +337,121 @@ def on_goal(self, msg):
     ctx.transition(TaskState.DONE)  # or FAILED
     self.pub_state.publish(...)
 ```
+
+---
+
+## 8. Mobile Task Extensions (Planned)
+
+> **Status**: PLANNED — NOT IMPLEMENTED
+>
+> The following extensions are designed for the Mobile Robot Foundation (Phase B)
+> and Mobile Manipulation Platform (Phase C) phases.
+>
+> Existing PickSkill and Runtime execution continue to use current fields.
+> All mobile fields below are optional and planned.
+> Do NOT require mobile fields for existing pick/place tasks.
+
+### 8.1 Task Categories
+
+| Task Type | Status | Example |
+|-----------|--------|---------|
+| pick | ✅ Implemented | pick blue cup |
+| place | ✅ Implemented / existing path | place cup on right side |
+| move | ⏳ Planned | go to kitchen |
+| navigate | ⏳ Planned | navigate to map pose |
+| search | ⏳ Planned | search for blue cup |
+
+### 8.2 Proposed Optional Fields
+
+| Field | Type | Status | Purpose |
+|-------|------|--------|---------|
+| `target_location` | string | ⏳ Planned | semantic location name such as "kitchen" |
+| `goal_pose` | geometry_msgs/PoseStamped or dict | ⏳ Planned | map-frame navigation goal |
+| `target_description` | string | ⏳ Planned | natural-language object/person search target |
+| `frame_id` | string | ⏳ Planned | usually "map" for navigation |
+| `map_id` | string | ⏳ Planned | map version used for semantic locations |
+| `navigation_status` | string | ⏳ Planned | "pending" / "active" / "succeeded" / "failed" |
+
+### 8.3 Task Examples
+
+#### Existing Pick Task (current format)
+
+```json
+{
+  "task_id": "task_001",
+  "action": "pick",
+  "target_object": {
+    "label": "blue_cup",
+    "source": "stable_world_model"
+  }
+}
+```
+
+#### Planned Move Task
+
+```json
+{
+  "task_id": "task_move_001",
+  "action": "move",
+  "target_location": "kitchen",
+  "frame_id": "map",
+  "map_id": "home_map_01_260621"
+}
+```
+
+#### Planned Navigate Task
+
+```json
+{
+  "task_id": "task_nav_001",
+  "action": "navigate",
+  "goal_pose": {
+    "frame_id": "map",
+    "x": 1.2,
+    "y": -0.8,
+    "yaw": 1.57
+  },
+  "map_id": "home_map_01_260621"
+}
+```
+
+#### Planned Search Task
+
+```json
+{
+  "task_id": "task_search_001",
+  "action": "search",
+  "target_description": "blue cup",
+  "search_area": "kitchen",
+  "map_id": "home_map_01_260621"
+}
+```
+
+### 8.4 Future Navigation Flow (Planned)
+
+```
+Natural language command
+↓
+ParsedCommand
+↓
+Grounding
+↓
+TaskContext
+↓
+SemanticLocationResolver
+↓
+MoveSkill / NavigateSkill
+↓
+Nav2
+↓
+RobotOps
+```
+
+### 8.5 Validation Status
+
+- Mobile tasks are **NOT implemented yet**.
+- MoveSkill / NavigateSkill / SearchSkill are **planned only**.
+- Nav2 Goal Pose has **not been verified yet**.
+- AMCL is **still in validation**.
+- Existing PickSkill continues to work with the current schema.
+- No mobile fields are required for existing pick/place tasks.

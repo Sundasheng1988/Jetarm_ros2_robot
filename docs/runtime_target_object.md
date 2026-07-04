@@ -301,3 +301,61 @@ class PickSkill(BaseSkill):
 | **Verification** | `object_id` 用于关联"抓取前/后"同一物体是否消失；`confidence` 用于设定验证阈值 |
 | **RobotOps** | `source` + `source_node` 记录检测来源；`detected_at` 用于时序分析；`metadata` 含原始检测详情 |
 | **未来扩展** | `metadata: dict` 可扩展：物体质量估计、抓取点候选列表、3D bounding box、点云 cluster id |
+
+---
+
+## 9. Current Scope
+
+| Concept | Status | Used By |
+|---------|--------|---------|
+| TargetObject | ✅ Implemented | PickSkill |
+| SemanticLocation | ❌ Planned | MoveSkill |
+| NavigateGoal | ❌ Planned | NavigateSkill |
+| SearchTarget | ❌ Planned | SearchSkill |
+
+> TargetObject represents physical entities only (cup, bottle, person, box).
+> SemanticLocation / NavigateGoal / SearchTarget are NOT TargetObject instances.
+> They belong to the Mobile Manipulation Platform phase.
+
+---
+
+## 10. Future Relationship with Semantic Locations (Planned)
+
+**TargetObject** represents physical entities:
+
+- `blue_cup`
+- `bottle`
+- `person`
+
+**SemanticLocation** represents named places in the environment:
+
+- `kitchen`
+- `living_room`
+- `charging_station`
+
+Planned MoveSkill implementations will operate on SemanticLocation.
+
+Current PickSkill implementations operate on TargetObject.
+
+Grounding resolves natural language into either:
+
+```
+Natural language
+↓
+Grounding
+↓
+TargetObject OR SemanticLocation
+↓
+PickSkill OR MoveSkill
+
+SemanticLocation is expected to be resolved into
+PoseStamped(map) through SemanticLocationResolver.
+
+TargetObject is expected to be resolved into
+source_pose through Grounding.
+
+```
+
+> Note: SemanticLocationResolver, MoveSkill, and SearchSkill are
+> **not implemented yet**. See `runtime_skill_interface.md` section 10
+> for planned skill interfaces.

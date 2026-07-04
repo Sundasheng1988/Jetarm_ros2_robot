@@ -647,11 +647,11 @@ These are now the primary engineering priorities.
 
 | Sprint | 状态 | 目标 | DoD |
 |--------|------|------|-----|
-| 8.1 | PLANNED | Base Driver — ROS2 driver for mobile base chassis | `/cmd_vel` working |
-| 8.2 | PLANNED | Odometry Validation — verify wheel encoders, IMU fusion, TF frames | `/odom` + TF working |
-| 8.3 | PLANNED | Lidar — 2D/3D lidar integration, point cloud processing | `/scan` topic producing data |
-| 8.4 | PLANNED | SLAM — Cartographer / FastSLAM, map building | map generation successful |
-| 8.5 | PLANNED | Navigation2 — AMCL, NavFn, path planning, obstacle avoidance | Nav2 goal execution successful |
+| 8.1 | Done | Base Driver — ROS2 driver for mobile base chassis | `/cmd_vel` working |
+| 8.2 | Done  | Odometry Validation — verify wheel encoders, IMU fusion, TF frames | `/odom` + TF working |
+| 8.3 | Done  | Lidar — 2D/3D lidar integration, point cloud processing | `/scan` topic producing data |
+| 8.4 | Done  | SLAM — Cartographer / FastSLAM, map building | map generation successful |
+| 8.5 | Ongoing| Navigation2 — AMCL, NavFn, path planning, obstacle avoidance | Nav2 goal execution successful |
 
 ### Epic 9 — Mobile World Model
 

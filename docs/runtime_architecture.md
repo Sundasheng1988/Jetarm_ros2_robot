@@ -1,7 +1,34 @@
 # JetArm Robot Runtime — Architecture Diagrams
 
-> 基于 runtime_analysis.md、topic_service_map.md、refactor_plan.md 的图形化表达
-> 使用 Mermaid graph TD 语法，全部为 Markdown 内嵌文本图
+> Current Phase: Mobile Robot Foundation
+>
+> Last Updated: 2026-07-04
+>
+> Source of Truth:
+>
+> - runtime_index.md
+> - topic_service_map.md
+> - jetarm_runtime_roadmap.md
+
+---
+
+# Part A — Runtime Platform (Sprint 1–7A) ✅ COMPLETED
+
+> Historical note:
+>
+> Part A documents the Runtime Platform phase
+> (Sprint 1–7A, 2026-05 to 2026-06).
+>
+> Sections 1–5 describe the core runtime architecture.
+> Sections 6–9 describe the perception fusion and
+> verification pipeline.
+>
+> All diagrams are intentionally preserved for
+> project history.
+>
+> RobotOps acts as a cross-cutting infrastructure layer
+> spanning Runtime Platform, Mobile Robot Foundation,
+> and future Mobile Manipulation capabilities.
 
 ---
 
@@ -251,7 +278,7 @@ graph TD
 
 ---
 
-## 3. 当前系统 Topic / Service 流图
+## 3. Runtime Platform Topic / Service Flow
 
 ```mermaid
 graph TD
@@ -348,7 +375,7 @@ graph TD
 
 ---
 
-## 4. Teleop 与 RobotOps 未来架构图
+## 4. RobotOps & Teleoperation Vision
 
 ```mermaid
 graph TD
@@ -562,7 +589,11 @@ graph TD
 
 ---
 
-## 6. 感知链路重构 — Raw Detection → Stable World Model
+# Part B — Runtime Extensions (Sprint 5–7A) ✅ COMPLETED
+
+---
+
+## 6. Stable World Model Architecture
 
 > **现状**: `/world_model/roi_objects` 是原始检测流 — 同一物体在不同帧之间 class/color 跳变（cup red → cup black → cylinder red）。YOLO `/world_model/objects` 提供稳定语义类名但无颜色/可靠位姿。
 > **目标**: YOLO + ROI 在 Grounding 之前融合 → StableObjectTracker 时序稳定 → 供 Grounding 消费。
@@ -702,7 +733,7 @@ ros2 launch app perception_bringup.launch.py
 
 |------|------|
 
-## 9. Verification Sidecar Node
+## 9. Verification Runtime
 
 > **生效日期**: Sprint 6.1
 
@@ -742,3 +773,201 @@ States are published on `/runtime/state` and events on `/runtime/log` with event
 | 🔴 红色填充 | 当前高风险区域 (硬编码/冲突) |
 | 🟢 绿色填充 | Sprint 1 新建模块 |
 | ⚠ 标记 | 已知 Bug / 安全风险 |
+
+---
+
+# Part C — Mobile Robot Foundation (Sprint 8.x) 🔄 IN PROGRESS
+
+## 10. Autonomous Mobile Manipulation Overview
+
+```mermaid
+graph TD
+
+USER["User"]
+
+VOICE["Voice / Keyboard"]
+PARSER["LLM Parser"]
+GROUND["Grounding"]
+
+RUNTIME["Runtime Platform"]
+
+WM["World Model"]
+
+PICK["PickSkill"]
+PLACE["PlaceSkill"]
+
+MOVE["MoveSkill (future)"]
+NAV["NavigateSkill (future)"]
+
+YOLO["YOLO"]
+ROI["ROI"]
+FUSION["Perception Fusion"]
+TRACK["StableObjectTracker"]
+
+BASE["Mobile Base"]
+SCAN["RPLidar"]
+ODOM["Odometry"]
+TF["TF Bridge"]
+SLAM["SLAM Toolbox"]
+AMCL["AMCL"]
+NAV2["Nav2 (planned)"]
+
+OPS["RobotOps"]
+
+USER --> VOICE
+VOICE --> PARSER
+PARSER --> GROUND
+GROUND --> RUNTIME
+
+RUNTIME --> PICK
+RUNTIME --> PLACE
+RUNTIME --> MOVE
+RUNTIME --> NAV
+
+YOLO --> FUSION
+ROI --> FUSION
+FUSION --> TRACK
+TRACK --> WM
+
+SCAN --> SLAM
+ODOM --> TF
+TF --> AMCL
+SLAM --> AMCL
+AMCL --> NAV2
+
+PICK --> WM
+PLACE --> WM
+MOVE --> NAV2
+NAV --> NAV2
+
+RUNTIME --> OPS
+NAV2 --> OPS
+WM --> OPS
+```
+
+---
+
+## 11. Mobile Base Stack
+
+```mermaid
+graph TD
+
+CMD["/cmd_vel"]
+BASE["turn_on_dlrobot_robot"]
+
+ODOM["/odom_combined"]
+
+TFNODE["odom_tf_bridge_node"]
+
+TF["/tf"]
+
+LIDAR["rplidar_node"]
+
+SCAN["/scan"]
+
+SLAM["slam_toolbox"]
+
+MAP["/map"]
+
+AMCL["AMCL"]
+
+POSE["/amcl_pose"]
+
+CMD --> BASE
+BASE --> ODOM
+ODOM --> TFNODE
+TFNODE --> TF
+
+LIDAR --> SCAN
+
+SCAN --> SLAM
+TF --> SLAM
+
+SLAM --> MAP
+
+MAP --> AMCL
+TF --> AMCL
+SCAN --> AMCL
+
+AMCL --> POSE
+```
+
+---
+
+## 12. Mobile Manipulation Roadmap
+
+```mermaid
+graph TD
+
+MOVE["MoveSkill"]
+
+SEARCH["SearchSkill"]
+
+GROUND["Grounding"]
+
+PICK["PickSkill"]
+
+NAV["NavigateSkill"]
+
+PLACE["PlaceSkill"]
+
+MOVE --> SEARCH
+SEARCH --> GROUND
+GROUND --> PICK
+PICK --> NAV
+NAV --> PLACE
+```
+
+---
+
+## 13. Current Status
+
+| Module | Status |
+|---------|---------|
+| Runtime Platform | ✅ Complete |
+| RobotOps | ✅ Complete |
+| Perception Fusion | ✅ Complete |
+| StableObjectTracker | ✅ Complete |
+| SLAM Mapping | ✅ Complete |
+| AMCL | 🔶 In Validation |
+| Nav2 | ❌ Not Verified |
+| Semantic Locations | ❌ Missing |
+| MoveSkill | ❌ Missing |
+| Mobile Manipulation | 🔶 Planned |
+
+---
+
+# Part D — Mobile Manipulation Platform ⏳ PLANNED
+
+> This phase represents the future of the project.
+> No implementation exists yet.
+> See jetarm_runtime_roadmap.md Phase C for details.
+>
+> RobotOps acts as a cross-cutting infrastructure layer
+> spanning Runtime Platform, Mobile Robot Foundation,
+> and future Mobile Manipulation capabilities.
+
+| Component | Status |
+|-----------|--------|
+| Semantic Locations | ❌ Not Implemented |
+| MoveSkill | ❌ Not Implemented |
+| NavigateSkill | ❌ Not Implemented |
+| SearchSkill | ❌ Not Implemented |
+| Persistent World Model | ❌ Not Implemented |
+| Recovery Runtime | ❌ Not Implemented |
+
+---
+
+# Appendix — Deprecated References
+
+The following documents have been archived:
+
+- runtime_analysis.md
+- refactor_plan.md
+- runtime_session_summary.md
+
+They remain available under:
+
+docs/archive/
+
+and must not be treated as current architecture sources.

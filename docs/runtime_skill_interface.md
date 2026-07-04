@@ -594,3 +594,56 @@ graph TD
 | **Verification** | `precheck()` 和 `postcheck()` 可由独立 `verification_node` 调用；`evidence` dict 携带验证所需数据 |
 | **RobotOps** | Adapter 层统一记录每次 `ik_solve` (输入/输出) 和 `servo_move` (pulses/duration)；`ExecutionResult` 写入日志 |
 | **未来扩展** | 新增 Skill 只需继承 `BaseSkill`+注册到 `SkillRegistry`；新增 adapter 方法不破坏现有 Skill |
+
+---
+
+## 10. Future Mobile Skills (Planned)
+
+> **Status**: PLANNED — NOT IMPLEMENTED
+>
+> The following skills belong to the Mobile Manipulation Platform phase.
+> No implementation exists yet. See `jetarm_runtime_roadmap.md` Epic 10 for details.
+
+### 10.1 MoveSkill
+
+**Purpose**: Move the mobile base to a semantic location.
+
+| Aspect | Detail |
+|--------|--------|
+| Status | ⏳ PLANNED |
+| Input | `semantic_location` (e.g. `"kitchen"`, `"living_room"`) |
+| Output | Mobile robot movement to target position |
+| Dependencies | SemanticLocationResolver, Nav2 |
+
+### 10.2 NavigateSkill
+
+**Purpose**: Navigate the mobile base to a precise goal pose via Nav2.
+
+| Aspect | Detail |
+|--------|--------|
+| Status | ⏳ PLANNED |
+| Input | `goal_pose` (x, y, yaw in map frame) |
+| Output | Nav2 action execution |
+| Dependencies | Nav2, AMCL, map_server |
+
+### 10.3 SearchSkill
+
+**Purpose**: Autonomously search for an object or person using perception + navigation.
+
+| Aspect | Detail |
+|--------|--------|
+| Status | ⏳ PLANNED |
+| Input | `target_description` (object class, color, or person name) |
+| Output | Perception-guided search behavior |
+| Dependencies | MoveSkill, YOLO, StableObjectTracker |
+
+### 10.4 SemanticLocationResolver
+
+**Purpose**: Resolve natural-language location names to map-frame poses.
+
+| Aspect | Detail |
+|--------|--------|
+| Status | ⏳ PLANNED |
+| Input | Location name (e.g. `"kitchen"`, `"charging_station"`) |
+| Output | `geometry_msgs/PoseStamped` in map frame |
+| Dependencies | Semantic Location Registry (YAML or DB) |

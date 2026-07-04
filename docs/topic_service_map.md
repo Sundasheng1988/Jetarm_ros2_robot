@@ -283,9 +283,10 @@ Nav2 goal execution not yet verified.
 | `/depth_cam/rgb/camera_info` | `CameraInfo` | 相机驱动 | `roi_color_detector_node`, `object_pose_publisher` |
 | `/depth_cam/depth/camera_info` | `CameraInfo` | 相机驱动 | `app_compatible_yolo_node`, `calibration_node` |
 | `/tf` / `/tf_static` | `TFMessage` | TF 广播 | `wm_from_tf` |
-| `/cmd_vel` | `geometry_msgs/Twist` | manual teleop / Nav2 (planned) | `turn_on_dlrobot_robot` |
+| `/cmd_vel` | `geometry_msgs/Twist` | manual teleop (dlrobot_keyboard) / Nav2 (planned) | `turn_on_dlrobot_robot` |
 | `/odom_combined` | `nav_msgs/Odometry` | `turn_on_dlrobot_robot` | SLAM / AMCL / RViz |
 | `/scan` | `sensor_msgs/LaserScan` | `rplidar_node` | SLAM / AMCL |
+| `/mobile_base/sensors/imu_data` | `sensor_msgs/Imu` | robot-side IMU publisher (1 verified publisher) | (currently unused) |
 | `/tf` (mobile base) | `tf2_msgs/TFMessage` | `odom_tf_bridge_node` | RViz / Nav stack |
 | `/tf_static` (laser) | `tf2_msgs/TFMessage` | `static_transform_publisher` | all |
 | `/map` | `nav_msgs/OccupancyGrid` | `slam_toolbox` / `map_server` | RViz / AMCL |
@@ -375,7 +376,9 @@ real_grounded_runtime_node
   → verification_result_node → /runtime/verification_result
   → VERIFIED / VERIFICATION_FAILED
 
-Note: RobotOps (SQLite persistence) is not implemented yet. Future RobotOps (Sprint 7A) will persist /runtime/state, /runtime/log, and /runtime/verification_result. /runtime/log serves as the current event stream — no separate /runtime/event topic exists.
+Note: RobotOps SQLite persistence is implemented.
+robotops_recorder_node persists /runtime/state, /runtime/log,/runtime/execution_result, /runtime/verification_result.
+verification_result. /runtime/log serves as the current event stream — no separate /runtime/event topic exists.
 
 Verification Sidecar (Sprint 6.1 + 6.2 + 6.3 + 6.4 completed):
 
@@ -479,12 +482,12 @@ static_transform_publisher → /tf_static base_footprint→laser
 
 | Topic | Type | Publisher | Subscriber | Notes |
 |--------|------|------------|-------------|--------|
-| /cmd_vel | geometry_msgs/Twist | manual teleop / Nav2 (planned) | turn_on_dlrobot_robot | base velocity command |
+| /cmd_vel | geometry_msgs/Twist | manual teleop (dlrobot_keyboard) / Nav2 (planned) | turn_on_dlrobot_robot | base velocity command |
 | /odom_combined | nav_msgs/Odometry | turn_on_dlrobot_robot | SLAM / AMCL / RViz | fused odometry |
 | /scan | sensor_msgs/LaserScan | rplidar_node | SLAM / AMCL | RPLidar A1 |
 | /tf | tf2_msgs/TFMessage | odom_tf_bridge_node | RViz / Nav stack | dynamic transforms |
 | /tf_static | tf2_msgs/TFMessage | static_transform_publisher | all | laser mounting transform |
-| /imu | sensor_msgs/Imu | TBD | TBD | (Not yet verified) |
+| /mobile_base/sensors/imu_data | sensor_msgs/Imu | robot-side IMU publisher (1 verified publisher) | (currently unused) | topic verified on robot runtime |
 
 ---
 
@@ -542,6 +545,11 @@ Publishes:
 Purpose:
 
 - odom → base_footprint transform
+
+Notes:
+
+- Robot-side component (deployed on Jetson/Orin workspace via mobile_base_bridge package)
+- Not required to exist in PC src/
 
 #### static_transform_publisher
 
@@ -630,13 +638,21 @@ Known interfaces (expected, not yet verified):
 
 ## Source of Truth
 
-Mobile Robot topics are verified from:
+Mobile Robot topics are verified from two sources:
 
-- runtime_index.md
-- current SLAM mapping sessions
-- AMCL bringup logs
-- direct ROS2 topic inspection
-- ros2 topic list / echo verification
+1. PC-side workspace source code.
+2. Robot-side runtime verification.
+
+Robot-side verification confirmed:
+
+- /cmd_vel
+- /scan
+- /odom_combined
+- /mobile_base/sensors/imu_data
+- /tf
+- /tf_static
+
+mobile_base_bridge and odom_tf_bridge_node are deployed on the robot-side workspace.
 
 Any item marked:
 
