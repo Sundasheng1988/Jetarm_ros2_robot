@@ -1,0 +1,14 @@
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    yaml_filename: /home/sundasheng/ros2_ws/maps/home_map_01_260621.yaml
+
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    scan_topic: /scan
+    base_frame_id: base_footprint
+    odom_frame_id: odom_combined
+    global_frame_id: map
+    transform_tolerance: 3.0
+    tf_broadcast: true
