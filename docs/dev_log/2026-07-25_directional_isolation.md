@@ -1,7 +1,7 @@
 # Directional Isolation & LaserScan Independent Verification (2026-07-25)
 
-> **阶段**: ACTIVE_DIRECTIONAL_ISOLATION — 方向性运动隔离与 LaserScan 独立几何验证
-> **版本**: v1
+> **阶段**: DUAL_TRACK_DIRECTIONAL_VALIDATION — 双主线方向性验证（Track A 实物执行根因 + Track B CW/CCW 触发验证）
+> **版本**: v2（阶段由 ACTIVE_DIRECTIONAL_ISOLATION 升级）
 > **上一份日志**: [2026-07-17~18 Localization Debug](./2026-07-17_18_localization_debug.md)
 
 ---
@@ -313,7 +313,7 @@ ROS 端对正负 `angular.z` 处理完全对称：无方向分支、无单方向
 
 ## 9. Inferences
 
-- CW 旋转可能相对稳定；CCW 可能是主要异常方向。但该假设**尚未**经逐段 LaserScan 结果确认（Current Inference，非结论）。
+- CW 旋转可能相对稳定；CCW 可能是主要异常方向。但该假设**尚未**经新的单方向重复实验确认（Current Inference，非结论）；旧 E01 逐段 Scan 配准已暂缓（见 12.0）。
 - Odom 平移近零而真实平移约 0.66m，说明当前轮速/Odom 链无法观测或表达旋转过程中的真实侧滑平移。这既可能来自滑移转向运动模型本身对横向滑移不可观测，也可能叠加 STM32 回传或里程计计算问题；目前尚不能定位到具体环节。
 - IMU/Mahony → Odom → TF 链在本次 S0→S4 长序列结束时，与独立 LaserScan 几何结果存在约 7.25° 累计不一致。误差在哪些旋转段形成，仍需逐段分析确认；当前不能据此宣布整条 IMU yaw 链普遍不可信。
 - 静态基线显示 IMU 存在 ~0.5°/min 漂移与 PC 侧 TF 间歇缺失；两者构成独立运行时风险，但 E01 的大幅异常主要由运动触发，非静态自激。
@@ -322,8 +322,8 @@ ROS 端对正负 `angular.z` 处理完全对称：无方向分支、无单方向
 
 ## 10. Unknowns
 
-- R1/R2/R3/R4 各自产生多少真实平移。
-- 0.658m 累计位移主要由哪个方向贡献。
+- R1/R2/R3/R4 各自产生多少真实平移（旧 E01 逐段配准已暂缓，不作为当前任务；见 12.0）。
+- 0.658m 累计位移主要由哪个方向贡献（待 Track B 新单方向实验回答；见 12.2）。
 - CW 方向的 Scan 与 Odom 是否确实一致；CCW 方向是否出现更大的 Scan/Odom 分离。
 - 各段 Scan yaw 与 Odom yaw 的实际误差。
 - STM32 固件内左右轮分解/PID/PWM/死区/编码器比例与正反转差异（固件源码不在本仓库）。
@@ -335,59 +335,113 @@ ROS 端对正负 `angular.z` 处理完全对称：无方向分支、无单方向
 
 ## 11. 当前假设
 
-CW 可能相对正常，CCW 可能是主要异常方向；但尚未通过逐段 Scan 验证。Odom yaw 看似正常不代表真实 SE(2) 运动正常，必须用 LaserScan 逐段独立验证 CW 与 CCW 各自的真实平移与 yaw。
+- CW 方向可能在当前系统中相对可用。
+- CCW 方向可能是动态定位异常的主要触发方向；CCW 时真实底盘运动与 IMU/Odom/TF 表达之间可能出现更严重的不一致。
+- 上述内容尚需新的独立单方向重复实验确认。
+- 重要证据边界：不得把"CCW 是异常触发方向"写成"CCW 是底层根因"。真正根因仍属于 Track A（实物控制与执行链）。Odom yaw 看似正常不代表真实 SE(2) 运动正常。
 
 ---
 
 ## 12. 下一步调试计划
 
-使用现有 E01 rosbag，对四个相邻静态平台做独立 LaserScan SE(2) 配准：S0→S1 (R1 CCW)、S1→S2 (R2 CW)、S2→S3 (R3 CW)、S3→S4 (R4 CCW)。
+### 12.0 计划调整说明（旧 E01 逐段配准暂缓）
 
-每段输出：Scan dx/dy、Scan 平移模长、Scan dyaw、Odom dx/dy、Odom 平移模长、Odom dyaw、Scan/Odom 平移差、Scan/Odom yaw 差、coarse best、distinct second-best、ambiguity ratio、ICP RMSE、overlap、inverse consistency、all/odd/even 子集 spread、valid/confidence、invalid_reason。
+不再把旧 E01 的四段离线 LaserScan 配准（S0→S1、S1→S2、S2→S3、S3→S4）作为当前下一步。原因：Phase 2A 已用独立 LaserScan 配准确认 S0→S4 真实累计平移约 0.6581m，与现场人工测量约 0.666m 高度一致，而 Odom 仅记录约 0.0062m → LaserScan 已能正确反映本次真实几何运动。继续分解旧 E01 最多只能把累计误差分配到各段，当前工程收益有限，故暂缓。
 
-算法约束：
-- 不使用 Odom/IMU 作为 Scan 主配准初值。
-- 90° 平台必须进行足够宽的全局 yaw 搜索。
-- 不允许普通单初值 ICP 直接决定结果。
-- 环境存在重复结构时必须报告 ambiguous 或 invalid。
-- 必须检查逐段矩阵组合是否闭合到 Phase 2A 的 S0→S4 结果。
+后续工作拆成两条并行主线：**Track A（实物执行异常根因确认）** 与 **Track B（CW 可用性与 CCW 异常触发验证）**。
 
-方向分组：CW = {R2, R3}；CCW = {R1, R4}。
+### 12.1 Track A：底盘实物执行异常根因确认
 
-分析目标：
-1. 比较 CW 与 CCW 每段真实平移。
-2. 比较 CW 与 CCW 的 Scan/Odom yaw 一致性。
-3. 判断两次 CW 是否重复；判断两次 CCW 是否重复。
-4. 确定 0.658m 累计位移主要来自哪个方向。
-5. 验证"CW 可能可用、CCW 异常"假设。
+**目标**：确认相同绝对值正负 `angular.z` 命令下，CW 与 CCW 实际速度、旋转中心和净平移严重不对称的底层原因。
 
-若现有 bag 支持该假设，再设计新的独立实验：CW 90° 单独录包重复 3 次、CCW 90° 单独录包重复 3 次，每次恢复到相同起点，不把多方向混在连续实验中。
+**当前已确认**：
+- `angular.z < 0` 为 CW；`angular.z > 0` 为 CCW。
+- CW 约 90° 需约 20s；CCW 约 90° 需约 48–50s；同方向两次结果可重复。
+- ROS 端正负 `angular.z` 打包处理对称；可见 ROS 代码不进行四轮速度分解。
+- 异常来源位于 ROS 串口下发之后的控制与执行链。
+
+**需要进一步确认**：STM32 四轮目标速度分配；四轮 PID 参数；正反转 PWM 与死区；编码器方向、比例和反馈；电机驱动器；电机与减速箱；四轮机械阻力；载荷和抓地差异；实际固件与底盘配置是否匹配。
+
+**当前动作**：
+- 等待外部技术反馈；获取固件、控制参数和显示数据定义。
+- 在确认固件版本前不烧录。
+- 后续根据资料设计悬空轮速测试和落地旋转中心测试。
+
+Track A 的目标是查明物理和控制根因。
+
+### 12.2 Track B：CW 可用性与 CCW 异常触发验证
+
+**目标**：验证在当前底盘状态下——
+1. CW 旋转时，LaserScan/点云在 odom 坐标系中是否保持稳定；
+2. CW 旋转时，静态墙面是否不会出现大面积旋转或滑移；
+3. CW 运动是否可以支撑后续有限的建图或定位测试；
+4. CCW 旋转是否稳定触发 Scan、点云、地图与 Odom/TF 的明显分离；
+5. 历史大面积地图或点云旋转是否主要由 CCW 运动触发。
+
+**不再优先分析旧 E01 连续多方向序列**，改为录制新的单方向、独立 rosbag。
+
+**实验 B1：CW-only**：固定地面起点 → 完全静止≥10s → `linear.x=0`、`angular.z=-0.15 rad/s` → 只执行一次 CW 约 90° → 停止后静止≥15s → 单独保存一个 bag → 恢复相同起点后重复 3 次。
+
+**实验 B2：CCW-only**：与 B1 相同起点/环境/载荷/速度 → `linear.x=0`、`angular.z=+0.15 rad/s` → 只执行一次 CCW 约 90° → 停止后静止≥15s → 单独保存一个 bag → 恢复相同起点后重复 3 次。
+
+**每次录制话题**：`/cmd_vel`、`/robotvel`、`/mobile_base/sensors/imu_data`、`/odom_combined`、`/scan`、`/tf`、`/tf_static`。
+
+**每次现场记录**：初始车身中心、初始朝向、最终车身中心、最终朝向、旋转持续时间、中心实际平移、实际旋转角度、OLED 视频、RViz 录屏。
+
+### 12.3 在线观察顺序
+
+**第一层：Raw TF/Scan 测试**（优先于 SLAM/AMCL，用于隔离底盘 Odom/TF 与 Scan 几何关系）：
+- RViz Fixed Frame 设为 `odom_combined`；显示 TF、LaserScan、机器人模型或坐标轴。
+- 观察：旋转时静态墙体点云是否保持固定位置；Scan 是否随车身错误整体旋转；Scan 是否明显平移/扭曲/跳变；CW 与 CCW 表现是否明显不同；TF 是否连续；停止后点云能否恢复稳定。
+
+**第二层：建图方向验证**（仅当第一层完成后才允许，相同配置分别进行）：
+- CW-only 建图测试；CCW-only 建图测试。
+- 比较：CW 时地图墙面是否稳定；CCW 时是否出现地图/点云大面积旋转；异常是否与旋转方向同步；停止旋转后能否恢复。
+- 不得在同一测试中交替 CW 与 CCW，否则无法判断触发方向。
+
+### 12.4 Track B 重点比较指标
+
+每次实验比较：cmd yaw 积分；IMU gyro 积分；IMU orientation yaw 变化；Odom yaw 变化；TF yaw 变化；`/robotvel.z` 积分；实际人工旋转角；实际中心平移；Scan/点云是否保持静态环境稳定；停止后 yaw 残差；同方向 3 次重复性。
+
+重点不是重新证明 LaserScan 可信，而是判断：CW 是否可用；CCW 是否稳定触发异常；Odom/IMU/TF 在 CCW 下是否比 CW 出现更大动态误差；历史点云/地图旋转是否具有明确方向依赖。
+
+### 12.5 决策规则
+
+- 若 CW 三次均表现为：旋转时间接近、实际中心偏移相对较小且可重复、静态墙面在 `odom_combined` 中基本稳定、Scan 不发生大面积整体旋转、Odom/TF yaw 与实际旋转基本一致 → 记录 `CW_DIRECTION_TEMPORARILY_USABLE`（仅表示 CW 可继续有限开发，不代表完整导航可用）。
+- 若 CCW 三次均表现为：旋转速度明显异常、中心平移明显更大、Scan/点云明显整体旋转或错位、实际运动与 Odom/IMU/TF 差异显著大于 CW → 记录 `CCW_DIRECTION_CONFIRMED_TRIGGER`（表示 CCW 是异常触发方向，不表示已找到底层根因）。
+- 若 CW 和 CCW 都出现点云旋转，则不得继续使用方向规避假设，应重新检查：IMU yaw、TF 时间戳、Scan 时间戳、动态 TF 连续性、Odom 构造、SLAM 输入链。
 
 ---
 
 ## 13. 禁止事项
 
+- 不继续把旧 E01 四段 Scan 配准作为优先任务。
+- 不删除已有 Phase 1 或 Phase 2A 结果。
 - 不修改原始 rosbag。
-- 不覆盖 Phase 1 或 Phase 2A 结果。
-- 不修改 ROS 驱动、TF、IMU/Mahony、Odom。
-- 不调整 SLAM、AMCL 或 Nav2 参数。
-- 不使用 Odom 或 IMU 作为 Scan 主配准初值。
-- 不因 Odom yaw 看似正常就认为真实运动正常。
-- 不自动启动 Nav2 任务。
-- 不宣布历史约 90° 地图旋转根因。
+- 不修改 ROS 驱动、TF、IMU/Mahony 或 Odom。
+- 不调整 SLAM/AMCL/Nav2 参数来掩盖方向问题。
+- 不在一个 bag 中交替执行 CW 与 CCW。
+- 不因 CW 一次表现正常就宣布 CW 可用。
+- 不因 CCW 触发异常就宣布 CCW 是底层根因。
+- 不在固件版本未确认前烧录 STM32。
+- 不宣布历史约 90° 地图旋转的完整根因。
 - 不把 PC 端 launch/源码当作运行时真值引用。
+- 不使用 Odom 或 IMU 作为 Scan 主配准初值（若后续恢复 Scan 配准）。
 
 ---
 
 ## 14. Status Snapshot
 
-- **Current stage**: `ACTIVE_DIRECTIONAL_ISOLATION`
-- **Current hypothesis**: CW 可能相对正常，CCW 可能是主要异常方向，但尚未通过逐段 Scan 验证。
-- **Next action**: 创建或检查逐段 LaserScan 分析工具，之后对 S0→S1、S1→S2、S2→S3、S3→S4 进行离线配准。
+- **Current stage**: `DUAL_TRACK_DIRECTIONAL_VALIDATION`
+- **Track A**: 实物控制与执行链根因确认，等待技术反馈并准备固件/轮速/机械验证（见 12.1）。
+- **Track B**: 创建新的 CW-only 与 CCW-only 独立实验，优先验证 Raw TF/Scan 点云稳定性，再进行方向隔离的建图测试（见 12.2–12.5）。
+- **Current hypothesis**: CW 可能暂时可用，CCW 可能是点云/地图动态异常的主要触发方向；尚未通过新的单方向重复实验确认。不得把"CCW 触发异常"写成"CCW 底层根因"，真正根因属 Track A。
+- **Deferred**: 旧 E01 的 S0→S1、S1→S2、S2→S3、S3→S4 离线逐段配准暂缓，不作为当前下一步（见 12.0）。
+- **Next action**: 先设计并审核 CW-only/CCW-only 测试 runbook；得到人工批准后执行 CW-only 测试，不自动执行 CCW 测试。
 - **Phase 1**: 完成（Step A/B 通过，四段旋转识别有效）。
 - **Phase 2A**: 完成（S0→S4 独立配准 valid=true, confidence=high；真实平移 0.658m，Odom 0.0062m；yaw 偏差 7.25°）。
 - **Jetson 源码审计**: 完成（ROS 端 cmd_vel 对称；左右轮/PID/PWM/编码器在 STM32 固件，不在本仓库）。
 - **Static baseline test**: 完成。静止状态 TF/IMU/Odom/Scan 基线检查已完成（E00_static + E00B 双端），具体结论以第 2 节为准：IMU 静态 yaw 漂移 ~0.50°/min；Odom/TF yaw 为 IMU 复制值；`odom_combined→base_footprint` TF 在 Jetson 发布稳定，PC 侧存在 36 条 TF 接收缺失。
 - **Runtime graph audit**: 完成。已审计 Jetson 运行话题集合、frame_id、TF edge 与 TF 发布责任边界（第 3 节）；完整 node list 未保留，但关键 `/tf`（2 publishers: `dlrobot_robot` + `odom_tf_bridge_node`）、`/tf_static`（1 publisher: `static_transform_publisher`）发布者拓扑、TF 频率（~19.998 Hz）及 `tf2_echo` 结果已从此前 SSH 运行时审计记录恢复；`dlrobot_robot` 为休眠 `/tf` publisher，`odom_tf_bridge_node` 为活跃发布者。
 - **Evidence boundary**: 静态 TF 稳定只能排除静止状态下持续跳变，不能证明动态旋转过程正确。运行节点关系与源码复制链一致性不能替代 LaserScan 独立几何验证。
-- **Phase 2B（逐段配准）**: 未启动。
+- **Phase 2B（旧 E01 逐段配准）**: 暂缓（见 12.0）。
