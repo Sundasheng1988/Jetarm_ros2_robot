@@ -8,32 +8,221 @@
 > - topic_service_map.md
 > - jetarm_runtime_roadmap.md
 > - docs/archive/runtime_analysis.md
-> 
+>
 > 按 P0(阻断) / P1(严重) / P2(隐患) 分级
 >
 > **Legacy Runtime Risk Analysis**: 2026-05
 > **Perception / Runtime Stabilization Risks**: 2026-06
 > **Mobile Robot Foundation Risks**: 2026-06/2026-07
 >
-> **Current Phase**: Mobile Robot Foundation
-> **Last Updated**: 2026-06-29
+> **Long-term Phase**: Mobile Robot Foundation
+> **Current Active Workstream**: Mechanical Arm Reactivation
+> **Mobile Base Status**: PAUSED — Inspection and Repair
+> **Last Updated**: 2026-07-29
 
 
 ## Current Summary
 
 | Category | Status |
-|-----------|---------|
-| Runtime Platform | ✅ Complete |
-| RobotOps | ✅ Complete |
-| Perception Fusion | ✅ Complete |
-| StableObjectTracker | ✅ Complete |
-| SLAM Mapping | ✅ Complete |
-| AMCL | 🔶 In Validation |
-| Nav2 | ❌ Not Validated |
+|----------|--------|
+| Runtime Platform | ✅ Historically Completed |
+| RobotOps | ✅ Completed |
+| Perception Fusion | ✅ Completed |
+| StableObjectTracker | ✅ Completed |
+| Mechanical Arm Hardware | ✅ Recovered — STM32, servos and feedback online |
+| Mechanical Arm Control Stack | ❌ NO-GO — duplicate control-stack instances confirmed; launch root cause pending |
+| Mechanical Arm Runtime | 🔶 Requires code audit and staged revalidation |
+| SLAM Mapping | ✅ Historically Completed |
+| Mobile Base | ⏸ Paused for inspection and repair |
+| AMCL | ⏸ Blocked pending base repair and revalidation |
+| Nav2 | ⏸ Partially tested; full validation blocked |
 | Semantic Locations | ❌ Missing |
-| Semantic Navigation | 🔶 In Planning |
 | MoveSkill / NavigateSkill | ❌ Missing |
 | Mobile Manipulation | ⏳ Future |
+
+## Current Active Risk Matrix — 2026-07-29
+
+| # | Risk | Priority | Status | Blocks |
+|---|------|----------|--------|--------|
+| R31 | Duplicate Mechanical Arm Control-Stack Instances | P0 | Active | All real arm execution |
+| R32 | USB / Serial Device Identity Ambiguity | P1 | Active | Reliable hardware startup |
+| R33 | Mobile Base Traction and Motion-Model Violation | P0 | Active | AMCL / Nav2 validation |
+| R3 | Multiple Unarbitrated `/servo_controller` Publishers | P0 | Active | Runtime real-servo mode |
+| R13 | IK / execution error chain not quantitatively measured | P2 | Active | Precision optimization |
+| R17 | ROI color confidence risk | P1 | Active | Color-based visual pick |
+
+### R31 — Duplicate Mechanical Arm Control-Stack Instances
+
+**Status**: Active
+**Priority**: P0
+**Blocks**: All real mechanical-arm execution
+
+#### Observed Runtime Evidence
+
+The current robot-side ROS 2 graph contains:
+
+```text
+/ros_robot_controller × 2
+/controller_manager × 2
+/servo_manager × 2
+/grasp × 2
+/kinematics × 2
+/buzzer_controller × 2
+```
+
+Observed Endpoint Counts
+/ros_robot_controller/bus_servo/set_position
+Publisher count: 2
+Subscription count: 2
+
+/servo_controller
+Publisher count: 10
+Subscription count: 2
+
+Impact
+
+The same high-level servo command may be processed by two controller stacks.
+Two hardware-driver instances subscribe to the same bus command.
+ROS 2 services from identically named nodes may resolve nondeterministically.
+Servo feedback may be duplicated.
+Real-arm test results are not deterministic or reproducible.
+Starting Runtime real-servo mode would add another control source.
+
+Likely Cause
+
+The robot-side bringup.launch.py or one of its child launch files may start the JetArm control stack through more than one launch path.
+
+The exact launch paths have not yet been confirmed.
+
+Required Mitigation
+
+1. Trace the full launch include tree.
+2. Identify all control-stack startup paths.
+3. Retain exactly one instance of:
+ros_robot_controller
+controller_manager
+servo_manager
+grasp
+kinematics
+4. Verify:
+/ros_robot_controller/bus_servo/set_position
+Publisher count: 1
+Subscription count: 1
+5. Do not run real Runtime, /grasp, joystick, tracking, sorting or calibration motion before this condition is met.
+
+Go / No-Go
+Capability	Decision
+Static inspection	GO
+Runtime dry-run	GO
+IK query without Servo	LIMITED
+Real Servo execution	NO-GO
+Visual Pick execution	NO-GO
+
+---
+
+### R32 — USB / Serial Device Identity Ambiguity
+
+**Status**: Active
+**Priority**: P1
+
+#### Observed Incident
+
+The mechanical arm initially failed to enter its startup pose because:
+
+```text
+ros_robot_controller
+→ attempted to open /dev/ttyUSB0
+→ /dev/ttyUSB0 did not exist
+→ process exited
+```
+
+#### Root cause:
+
+The STM32 controller was connected to the wrong USB port.
+
+#### After reconnecting the STM32 to the correct USB interface:
+
+/dev/ttyUSB0 restored
+→ ros_robot_controller started
+→ servo feedback restored
+→ mechanical arm returned to the initial pose
+
+#### Risk
+
+The project has historically used /dev/ttyUSB0 for more than one USB serial device, including references to the STM32 controller and RPLidar.
+
+Linux enumeration may change after:
+
+reconnecting a USB device;
+changing USB ports;
+boot-order changes;
+connecting STM32 and LiDAR in a different order.
+
+#### Impact
+
+Hardware driver startup failure;
+wrong device opened by a driver;
+mechanical arm or LiDAR unavailable;
+misleading diagnosis of hardware failure.
+
+#### Mitigation
+
+Identify devices through /dev/serial/by-id/;
+introduce stable udev names where possible;
+validate the serial-device identity before starting drivers;
+document the physical USB port allocation;
+do not assume /dev/ttyUSB0 always refers to the same hardware.
+
+
+---
+
+### R33 — Mobile Base Traction and Motion-Model Violation
+
+**Status**: Active — Development Paused
+**Priority**: P0
+**Blocks**: AMCL, Nav2 and mobile manipulation validation
+
+#### Observed Result — 2026-07-27
+
+- Localization showed partial convergence after straight movement.
+- A short straight Nav2 test performed reasonably well.
+- During approximately 30°–45° turns, the base visibly slipped on smooth tile.
+- RViz2 LaserScan points drifted relative to the fixed map after the slip.
+
+#### Risk
+
+The differential-drive odometry model assumes approximately no lateral wheel slip.
+
+On smooth tile, the real base motion no longer reliably matches:
+
+```text
+wheel command
+→ expected differential-drive motion
+→ odometry prediction
+```
+
+#### Impact
+
+Odom translation and rotation may not represent real base motion;
+LaserScan-to-map alignment becomes unstable;
+AMCL may correct inconsistently or diverge;
+Nav2 controller predictions do not match the physical trajectory;
+software parameter tuning may incorrectly compensate for mechanical behavior.
+
+#### Required Mitigation
+
+inspect chassis, wheels, wheel mounting and drivetrain;
+improve or verify tire traction;
+verify left/right wheel consistency;
+repeat controlled straight and rotation tests after repair;
+revalidate Odom, TF, AMCL and Nav2 in that order.
+
+#### Current Decision
+
+Mobile base development: PAUSED
+AMCL parameter tuning: PAUSED
+Nav2 validation: PAUSED
+Mechanical arm development: CURRENT
 
 ---
 
@@ -46,6 +235,16 @@
 >
 > Many risks have since been resolved or mitigated,
 > but they are intentionally preserved for project history.
+>
+> Terminology note:
+>
+> Within R1–R17, expressions such as “当前症状”, “当前系统”
+> and “推荐修复方案” refer to the original 2026-05/2026-06
+> audit snapshot. They do not necessarily describe the current
+> 2026-07 implementation.
+>
+> Current status must be verified against source code, launch files,
+> configuration and runtime evidence.
 
 > **Resolved / mitigated:**
 >
@@ -62,7 +261,7 @@
 |---|------|------|--------|
 | R1 | Topic 不匹配：grounding 收不到视觉数据 | P0 | Grounding |
 | R2 | executor 动作序列硬编码 | P0 | Skill Runtime / Executor |
-| R3 | 6 节点无仲裁同时控制 servo | P0 | Safety / Teleop |
+| R3 | 多节点无仲裁控制 `/servo_controller` | P0 | Safety / Teleop |
 | R4 | executor 绕过 controller_manager 直连硬件总线 | P0 | Safety |
 | R5 | 无 task_id / 任务状态机 | P0 | RobotOps / Verification |
 | R6 | 无系统化验证逻辑 | P1 | Verification |
@@ -202,7 +401,7 @@ class GroundExecutorNode:
 
 ---
 
-### R3: 6 节点无仲裁同时控制 servo
+### R3: 多节点无仲裁控制 `/servo_controller`
 
 **问题描述**
 
@@ -352,7 +551,7 @@ Sprint 1：新建 `runtime_state_node`，为每个 `/parsed_command` 和 `/groun
 class RuntimeStateNode(Node):
     def _task_id(self):
         return f"task_{uuid.uuid4().hex[:12]}_{int(time.time())}"
-    
+
     STATES = ["parsed", "grounded", "executing", "done", "failed", "cancelled"]
 ```
 
@@ -807,6 +1006,12 @@ def _select_object(self, cls, color):
 
 ## 风险依赖关系图
 
+> Historical dependency graph for risks identified during the
+> 2026-05 Runtime Platform audit.
+>
+> Current hardware risks R31–R33 are tracked separately and are not
+> represented in this diagram.
+
 ```mermaid
 graph TD
     R1["R1: topic不匹配<br/>P0"] --> R2["R2: executor写死<br/>P0"]
@@ -959,8 +1164,10 @@ ROI 颜色检测 (`_dominant_color_key` in `roi_color_detector_node.py`) 使用 
 
 ## R18 — Mobile Base Serial Instability
 
-Status: Active
+Status: Active — Deferred while mobile base is under repair
 Priority: P0
+
+This risk remains open, but it is not currently established as the direct cause of the final 2026-07-27 LaserScan drift. The final observed test also contained clear physical chassis slip.
 
 Problem:
 `turn_on_dlrobot_robot` has shown serial instability, including `serial::IOException` and input/output errors.
@@ -1012,19 +1219,28 @@ Mitigation:
 
 ## R20 — AMCL Validation Incomplete
 
-Status: In Progress
+Status: Paused / Blocked by Mobile Base Repair
 Priority: P0
 
 Problem:
-`nav2_bringup localization_launch.py` has launched successfully and map_server/amcl became active, but full localization behavior is not yet validated.
 
-Missing validation:
+AMCL has been launched and partially exercised.
 
-* RViz Initial Pose
-* Particle cloud convergence
-* `/amcl_pose`
-* map → odom transform stability
-* push/drive test with map fixed
+Observed:
+
+- Initial LaserScan-to-map angular deviation could partially converge during straight movement.
+- Localization was sufficiently stable to attempt a short Nav2 straight-line test.
+- Turning validation became invalid after visible physical base slip.
+
+AMCL validation cannot be completed until the mobile base motion is mechanically repeatable.
+
+Required revalidation after mobile-base repair:
+
+- RViz Initial Pose
+- Particle cloud convergence
+- `/amcl_pose`
+- map → odom transform stability
+- controlled straight and rotation tests
 
 Blocks:
 
@@ -1034,11 +1250,16 @@ Blocks:
 
 ## R21 — Nav2 Navigation Unvalidated
 
-Status: Pending
+Status: Partially Exercised / Blocked
 Priority: P1
 
 Problem:
-Nav2 Goal Pose execution has not yet been validated.
+
+A short straight Nav2 movement was executed with a reasonable result.
+
+However, full Nav2 validation was not completed. Turning tests became invalid because the base slipped on smooth tile and RViz2 LaserScan alignment drifted.
+
+Navigation remains NO-GO until the base is repaired and Odom / AMCL are revalidated.
 
 Missing:
 
@@ -1288,29 +1509,51 @@ Mitigation:
 
 # Current Go / No-Go Matrix
 
-| Capability                | Status | Go / No-Go |
-| ------------------------- | ------ | ---------- |
-| Runtime Platform          | ✅      | GO         |
-| RobotOps                  | ✅      | GO         |
-| Perception Fusion         | ✅      | GO         |
-| StableObjectTracker       | ✅      | GO         |
-| SLAM Mapping              | ✅      | GO         |
-| AMCL                      | 🔶     | LIMITED    |
-| Nav2                      | ❌      | NO-GO      |
-| Semantic Locations        | ❌      | NO-GO      |
-| MoveSkill / NavigateSkill | ❌      | NO-GO      |
-| Mobile Manipulation       | ❌      | NO-GO      |
+| Capability | Status | Go / No-Go |
+|------------|--------|------------|
+| Documentation / Source Audit | ✅ | GO |
+| Runtime Unit Tests | 🔶 Allowed; current rerun pending | GO |
+| Runtime Dry-Run | ✅ | GO |
+| RobotOps | ✅ Historically validated | GO |
+| Perception Fusion | ✅ Historically validated | GO |
+| StableObjectTracker | ✅ Historically validated | GO |
+| Mechanical Arm Hardware Feedback | ✅ | GO |
+| Mechanical Arm Real Servo Execution | ❌ Duplicate control stack | NO-GO |
+| Hover-only Hardware Test | ❌ Blocked by R31 | NO-GO |
+| Visual Pick | ❌ Blocked by R31 and staged revalidation | NO-GO |
+| SLAM Mapping | ✅ Historically completed | GO as historical asset |
+| Mobile Base Motion Test | ⏸ Under repair | NO-GO |
+| AMCL | ⏸ Blocked | NO-GO |
+| Nav2 | ⏸ Blocked | NO-GO |
+| Semantic Locations | ❌ Missing | NO-GO |
+| MoveSkill / NavigateSkill | ❌ Missing | NO-GO |
+| Mobile Manipulation | ❌ Not ready | NO-GO |
 
 ---
 
 # Current Focus
 
-AMCL Validation
+```text
+Duplicate SDK Root-Cause Analysis
 ↓
-Nav2 Goal Pose
+Single Mechanical Arm Control Stack
 ↓
-Semantic Locations
+Minimum Hardware Health and Safety Baseline
 ↓
-MoveSkill / NavigateSkill
+Runtime / Skill / Adapter Code Audit
 ↓
-Mobile Manipulation
+Runtime Dry-Run
+↓
+Real IK without Servo
+↓
+Minimal Servo Health Test
+↓
+Hover-only Revalidation
+↓
+Fixed-Pose Pick
+↓
+Visual Pick Closed Loop
+↓
+Resume Mobile Base Validation after Repair
+
+```
