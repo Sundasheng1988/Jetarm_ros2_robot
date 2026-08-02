@@ -1,959 +1,1747 @@
-# Robot Runtime v0.1 — Debug Guide
+# Robot Runtime — Operations & Debug Guide
 
-> 面向真实 ROS2 终端调试，逐步验证 Runtime 全链路
-> 所有命令在 `dry_run=True` 模式下执行，不移动真实舵机
+> **项目**：JetArm ROS 2 Robot  
+> **文档职责**：启动、运行、监听、确认、验收与故障隔离  
+> **当前基线日期**：2026-08-02  
+> **当前通信基线**：PC 与 Orin 新启动的 ROS 2 进程统一使用 Cyclone DDS，`ROS_DOMAIN_ID=23`  
+> **当前主线状态**：已完成一次真实视觉杯子抓取  
+> **注意**：Topic / Service 的完整发布订阅关系见 `docs/topic_service_map.md`
 
 ---
 
-## 1. 构建
+# 1. 当前系统架构
+
+## 1.1 机器职责
+
+### Orin Nano
+
+负责：
+
+- Gemini 深度相机
+- Kinematics
+- `controller_manager`
+- `ServoManager`
+- `ros_robot_controller`
+- STM32 与舵机硬件控制
+- `/depth_cam/*`
+- `/kinematics/*`
+- `/servo_controller` 的执行下游
+- `/controller_manager/joint_states`
+
+Orin 主栈通过 systemd 自动启动：
+
+```bash
+systemctl status start_app_node.service
+```
+
+正常状态：
+
+```text
+active (running)
+```
+
+启动链：
+
+```text
+start_app_node.service
+→ source /home/ubuntu/.zshrc
+→ ros2 launch bringup bringup.launch.py
+```
+
+### PC
+
+负责：
+
+- YOLO
+- ROI
+- Perception Fusion
+- Stable Object Tracker
+- 自然语言 Parser
+- Grounding
+- Runtime
+- Verification
+- RobotOps
+- 调试、日志和 SQLite 查询
+
+---
+
+## 1.2 DDS / RMW 基线
+
+### Orin
+
+```bash
+export ROS_DOMAIN_ID=23
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file:///home/ubuntu/ros2_ws/config/cyclonedds/orin_camera_eth0.xml
+```
+
+### PC
+
+```bash
+export ROS_DOMAIN_ID=23
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
+```
+
+PC 新终端检查：
+
+```bash
+printenv ROS_DOMAIN_ID
+printenv RMW_IMPLEMENTATION
+printenv CYCLONEDDS_URI
+```
+
+预期：
+
+```text
+23
+rmw_cyclonedds_cpp
+file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
+```
+
+调试时建议：
+
+```bash
+export ROS2CLI_DISABLE_DAEMON=1
+```
+
+> 修改 RMW 环境后，已经运行的 ROS 2 进程不会动态切换，必须重启进程。
+
+---
+
+# 2. 当前正式执行链
+
+```text
+Orin Gemini Camera
+    ↓
+/depth_cam/rgb/image_raw
+    ├─→ simple_yolo_node
+    │      ↓
+    │   /world_model/objects
+    │
+    └─→ roi_color_detector_node
+           ↓
+        /world_model/roi_objects
+
+YOLO + ROI
+    ↓
+perception_fusion_node
+    ↓
+/world_model/perception_objects
+    ↓
+stable_object_tracker_node
+    ↓
+/world_model/stable_objects
+    ↓
+grounding_node
+
+自然语言
+    ↓
+llm_command_parser_node
+    ↓
+/parsed_command
+    ↓
+grounding_node
+    ↓
+/grounded_task_context
+    ↓
+real_grounded_runtime_node
+    ↓
+Preview / Confirm
+    ↓
+SkillManager + PickSkill
+    ↓
+RuntimeAdapter
+    ├─→ /kinematics/set_pose_target
+    └─→ /servo_controller
+             ↓
+       controller_manager
+             ↓
+         ServoManager
+             ↓
+       ros_robot_controller
+             ↓
+            STM32
+             ↓
+        Physical Robot Arm
+
+/executor/done
+    ↓
+verification_result_node
+    ↓
+/runtime/verification_result
+
+/runtime/*
+    ↓
+robotops_recorder_node
+    ↓
+SQLite
+```
+
+---
+
+# 3. 启动前检查
+
+## 3.1 Orin 主栈
+
+在 Orin 执行：
+
+```bash
+systemctl is-active start_app_node.service
+```
+
+预期：
+
+```text
+active
+```
+
+检查关键 Service：
+
+```bash
+export ROS2CLI_DISABLE_DAEMON=1
+
+ros2 service list | grep -E \
+'/kinematics/get_current_pose|/kinematics/set_pose_target'
+```
+
+检查关节状态：
+
+```bash
+timeout 10 ros2 topic echo \
+  /controller_manager/joint_states \
+  --once
+```
+
+## 3.2 PC 环境
 
 ```bash
 cd ~/ros2_ws
-source install/setup.bash 2>/dev/null || true
 
-# 只构建 sketch_runtime
-colcon build --packages-select sketch_runtime --symlink-install
-
-# 确认构建成功（无红字错误）
-# 输出末尾应有: Summary: 1 package finished
-
-source install/setup.bash
-```
-
----
-
-## 2. 源环境
-
-```bash
-source /opt/ros/humble/setup.bash    # 或 jazzy / iron
+source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
+
+export ROS2CLI_DISABLE_DAEMON=1
 ```
 
-验证包可用：
-```bash
-ros2 pkg list | grep sketch_runtime
-# 期望输出: sketch_runtime
+检查包：
 
-ros2 pkg executables sketch_runtime
-# 期望输出: sketch_runtime runtime_test_node
+```bash
+ros2 pkg list | grep -E \
+'vision_yolo|app|grounding|sketch_runtime|robotops'
+```
+
+## 3.3 检查重复节点
+
+在启动 PC 主线前执行：
+
+```bash
+ros2 node list | sort | grep -E \
+'simple_yolo|roi_color|perception_fusion|stable_object|llm_command_parser|grounding|real_grounded_runtime|verification_result|robotops'
+```
+
+检查重复名称：
+
+```bash
+ros2 node list | sort | uniq -d
+```
+
+进程检查：
+
+```bash
+pgrep -af \
+'simple_yolo_node|roi_color_detector_node|perception_fusion_node|stable_object_tracker_node|llm_command_parser_node|grounding_node|real_grounded_runtime_node|verification_result_node|robotops'
+```
+
+> 如果已经存在相同节点，先停止旧进程，不要重复启动。
+
+---
+
+# 4. 正式启动方式
+
+当前推荐按 3 个常驻终端启动：
+
+```text
+Terminal 1：Perception
+Terminal 2：Runtime
+Terminal 3：RobotOps
+```
+
+自然语言输入、Confirm 和 Topic 监听可在其他临时终端中执行。
+
+---
+
+## 4.1 Terminal 1 — Perception Bringup
+
+推荐：
+
+```bash
+cd ~/ros2_ws
+./scripts/start_cyclone_perception.sh
+```
+
+当前该脚本负责启动：
+
+```text
+simple_yolo_node
+roi_color_detector_node
+perception_fusion_node
+stable_object_tracker_node
+```
+
+等效核心 Launch：
+
+```bash
+ros2 launch app perception_bringup.launch.py \
+  start_grounding:=false
+```
+
+当前感知 Bringup **不启动**：
+
+```text
+grounding_node
+real_grounded_runtime_node
+verification_result_node
+robotops_recorder_node
+Orin camera driver
+```
+
+预期节点：
+
+```bash
+ros2 node list | sort | grep -E \
+'simple_yolo|roi_color|perception_fusion|stable_object'
+```
+
+预期 Topic：
+
+```bash
+ros2 topic list | sort | grep -E \
+'/vision_target|/roi_vision_target|/world_model/objects|/world_model/roi_objects|/world_model/perception_objects|/world_model/stable_objects'
 ```
 
 ---
 
-## 3. 启动
+## 4.2 Terminal 2 — Runtime Bringup
 
-### 3.1 启动 runtime_test_node（单次执行，默认模式）
+### 模式 A：Dry-run
+
+用于验证：
+
+```text
+真实相机
+→ 真实感知
+→ 真实 Parser
+→ 真实 Grounding
+→ Runtime 状态机
+→ 模拟 IK
+→ 模拟 Servo
+```
+
+命令：
 
 ```bash
-ros2 run sketch_runtime runtime_test_node
-```
+cd ~/ros2_ws
 
-**期望输出**（启动时）：
-
-```
-[INFO] [runtime_test_node]: ============================================================
-[INFO] [runtime_test_node]:  RuntimeTestNode started --- DRY_RUN --- ONCE
-[INFO] [runtime_test_node]:  test_command  = pick red cup to right side
-[INFO] [runtime_test_node]:  run_once      = True
-[INFO] [runtime_test_node]:  interval_sec  = 1.0
-[INFO] [runtime_test_node]:  dry_run       = True
-[INFO] [runtime_test_node]:  Registered skills: ['pick_skill']
-[INFO] [runtime_test_node]: ============================================================
-```
-
-### 3.2 启动 runtime_test_node（自定义指令）
-
-```bash
-ros2 run sketch_runtime runtime_test_node --ros-args \
-  -p test_command:="grasp blue ball left side" \
-  -p hover_height:=0.10 \
-  -p approach_z:=0.02
-```
-
-### 3.3 通过 launch 单次执行
-
-```bash
-ros2 launch sketch_runtime runtime_test.launch.py run_once:=true
-```
-
-自定义指令 + 单次：
-```bash
-ros2 launch sketch_runtime runtime_test.launch.py \
-  test_command:="pick yellow box center" \
-  run_once:=true
-```
-
-### 3.4 循环执行模式
-
-```bash
-ros2 launch sketch_runtime runtime_test.launch.py run_once:=false interval_sec:=2.0
-```
-
-每 2 秒执行一次完整 Runtime 链路，持续运行直到 Ctrl+C。
-
-自定义指令 + 循环：
-```bash
-ros2 launch sketch_runtime runtime_test.launch.py \
-  test_command:="grasp blue ball" \
-  run_once:=false \
-  interval_sec:=3.0
-```
-
-### 3.5 非 dry_run 模式（慎用 — 会连接真实硬件）
-
-```bash
-ros2 launch sketch_runtime runtime_test.launch.py dry_run:=false
-```
-
-> ⚠ 仅在确认 servo_controller 和 IK service 安全可用时使用。
-
-### 3.6 集成 ground + runtime bringup（推荐调试方式）
-
-一次性启动 parser + grounding + world_model + runtime 桥接节点：
-
-```bash
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py
-```
-
-默认参数：`dry_run:=true` `run_once:=true` `use_dummy_wm:=true`
-
-自定义指令 + 单次执行：
-```bash
 ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
-  use_dummy_wm:=true \
+  use_dummy_wm:=false \
   dry_run:=true \
+  enable_real_ik:=false \
+  enable_real_servo:=false \
+  require_confirm:=true \
   run_once:=true
 ```
 
-> 与 `ground_bringup.launch.py` 的区别：
-> - `ground_bringup.launch.py` 只启动 parser / grounding / world_model
-> - `ground_runtime_bringup.launch.py` 额外启动 `real_grounded_runtime_node`，将 grounding 输出接入 Runtime Skill 执行链
+预期启动节点：
 
-### 3.7 启用 publish_runtime（grounding → Runtime 桥接）
-
-`real_grounded_runtime_node` 订阅 `/grounded_task_context`，该 topic 由 `grounding_node` 在 `publish_runtime=true` 时发布。
-
-**方式 1 — grounding_params.yaml（推荐，已默认开启）**：
-```yaml
-# grounding/config/grounding_params.yaml
-grounding_node:
-  ros__parameters:
-    publish_runtime: true    # ← 已在 Sprint 4.1 设为 true
+```text
+llm_command_parser_node
+grounding_node
+real_grounded_runtime_node
+verification_result_node
 ```
 
-**方式 2 — 命令行覆盖**：
+预期 Runtime 日志：
+
+```text
+DRY_RUN
+ik=mock
+servo=mock
+CONFIRM_REQUIRED
+Registered skills: ['pick_skill']
+```
+
+---
+
+### 模式 B：真实 IK、Servo 关闭
+
+用于验证：
+
+```text
+真实视觉目标
+→ 真实调用 /kinematics/set_pose_target
+→ 取得真实五轴脉冲
+→ 不发布 /servo_controller
+→ 机械臂不运动
+```
+
+命令：
+
 ```bash
-ros2 run sketch_runtime real_grounded_runtime_node --ros-args -p dry_run:=true
-# 另开终端：
-ros2 run grounding grounding_node --ros-args -p publish_runtime:=true
+cd ~/ros2_ws
+
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
+  use_dummy_wm:=false \
+  dry_run:=false \
+  enable_real_ik:=true \
+  enable_real_servo:=false \
+  require_confirm:=true \
+  run_once:=true
 ```
 
-**方式 3 — 带参数的 launch**：
+预期：
+
+```text
+adapter mode = LIVE: ik=REAL servo=OFF
+```
+
+> 此模式下日志会打印 `servo_move` 与 `gripper_set`，但因为 `servo=OFF`，机械臂不会运动。
+
+---
+
+### 模式 C：完整真实执行
+
+用于：
+
+```text
+真实视觉
+→ 真实自然语言
+→ 真实 Grounding
+→ 人工确认
+→ 真实 IK
+→ 真实 Servo
+→ 完整 Pick
+```
+
+命令：
+
 ```bash
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py
-# grounding_params.yaml 已默认 publish_runtime:=true
+cd ~/ros2_ws
+
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
+  use_dummy_wm:=false \
+  dry_run:=false \
+  enable_real_ik:=true \
+  enable_real_servo:=true \
+  require_confirm:=true \
+  run_once:=true
 ```
 
-**验证发布**：
+预期：
+
+```text
+adapter mode = LIVE: ik=REAL servo=REAL
+```
+
+当前 `PickSkill` 真实动作序列：
+
+```text
+1. Hover
+2. 打开夹爪
+3. Approach
+4. 关闭夹爪
+5. Lift
+```
+
+已实机确认夹爪：
+
+```text
+ID10 pulse=200：打开
+ID10 pulse=700：关闭
+```
+
+> 此模式会让机械臂真实运动。执行前必须清空工作区域，并保持可立即断电。
+
+---
+
+## 4.3 Terminal 3 — RobotOps
+
 ```bash
-ros2 topic echo /grounded_task_context
+cd ~/ros2_ws
+ros2 launch robotops robotops_recorder.launch.py
 ```
 
-期望看到 grounding 匹配到对象后发布的 JSON:
-```json
-{
-  "intent": "pick",
-  "parsed_command": {"action":"pick","from":"red_cup",...},
-  "target_object": {"class_name":"cup","color":"red","world_x":0.15,...},
-  "target_pose": {"frame":"table","xyz":[0.2,-0.15,0.02],...},
-  "status": "ok"
-}
+RobotOps 订阅：
+
+```text
+/runtime/state
+/runtime/log
+/runtime/execution_result
+/runtime/verification_result
 ```
 
-### 3.8 Preview / Confirm 安全层（默认开启）
+查找数据库：
 
-`real_grounded_runtime_node` 在 `require_confirm=True`（默认）时，接收到 `/grounded_task_context` 后会先发布预览，等待用户确认后才执行 Skill。
+```bash
+find ~/ros2_ws ~/.ros \
+  -maxdepth 3 \
+  -name 'robotops.db' \
+  -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' \
+  2>/dev/null
+```
 
-**监听预览**：
+打开数据库：
+
+```bash
+sqlite3 /实际路径/robotops.db
+```
+
+SQLite 常用命令：
+
+```sql
+.tables
+.schema
+SELECT COUNT(*) FROM events;
+SELECT * FROM events ORDER BY id DESC LIMIT 20;
+.quit
+```
+
+---
+
+# 5. 自然语言输入
+
+## 5.1 推荐入口
+
+```bash
+ros2 topic pub --once \
+  /voice_input/input \
+  std_msgs/msg/String \
+  "{data: '拿起杯子'}"
+```
+
+链路：
+
+```text
+/voice_input/input
+→ llm_command_parser_node
+→ /parsed_command
+→ grounding_node
+→ /grounded_task_context
+→ real_grounded_runtime_node
+```
+
+首次测试建议使用：
+
+```text
+拿起杯子
+```
+
+因为 ROI 未提供稳定颜色时，Stable Object 可能输出：
+
+```text
+class_name=cup
+color=unknown
+```
+
+此时：
+
+```text
+拿起蓝色杯子
+```
+
+可能因为颜色约束而 `no_match`。
+
+---
+
+## 5.2 结构化输入
+
+绕过 Parser，仅测试 Grounding 和 Runtime：
+
+```bash
+ros2 topic pub --once \
+  /parsed_command \
+  std_msgs/msg/String \
+  'data: "{\"action\":\"pick\",\"from\":\"cup\",\"to\":\"right_side\",\"raw\":\"拿起杯子\"}"'
+```
+
+该方式不验证：
+
+```text
+自然语言 → Parser
+```
+
+---
+
+## 5.3 键盘节点
+
+旧 `keyboard_input_node` 发布：
+
+```text
+/text_input
+```
+
+Parser 订阅：
+
+```text
+/keyboard_input/input
+/voice_input/input
+```
+
+需要 remap 才可直接使用：
+
+```bash
+ros2 run keyboard_input keyboard_input_node \
+  --ros-args \
+  -r /text_input:=/keyboard_input/input
+```
+
+由于 Grounding 也可能订阅 `/keyboard_input/input` 作为 raw-text fallback，该入口存在双路径风险。主线测试优先使用 `/voice_input/input`。
+
+---
+
+# 6. Preview 与 Confirm
+
+## 6.1 监听 Preview
+
 ```bash
 ros2 topic echo /runtime/preview
 ```
 
-期望输出：
-```json
-{
-  "task_id": "task_a1b2c3d4_1715900000",
-  "intent": "pick",
-  "selected_skill": "pick_skill",
-  "target_object": {"class_name":"cup","color":"red",...},
-  "target_pose": {...},
-  "dry_run": true,
-  "require_confirm": true,
-  "summary": "pick_skill: cup (red)",
-  "status": "waiting_confirm",
-  "timestamp": 1715900005.0
-}
+Runtime 接收有效任务后应输出：
+
+```text
+task_id=...
+skill=pick_skill
+status=waiting_confirm
 ```
 
-**确认执行（简单方式 — 推荐）**：
-```bash
-ros2 topic pub --once /runtime/confirm std_msgs/msg/String 'data: "yes"'
-# 支持: yes y true ok confirm go
+Runtime 终端日志应出现：
+
+```text
+[state] grounded
+[state] skill_selected
+[state] waiting_confirm
+[confirm] waiting for /runtime/confirm
 ```
 
-**取消执行（简单方式）**：
-```bash
-ros2 topic pub --once /runtime/confirm std_msgs/msg/String 'data: "no"'
-# 支持: no n false cancel stop
-```
-
-**确认执行（task_id 精确方式）**：
-```bash
-ros2 topic pub --once /runtime/confirm std_msgs/msg/String \
-  'data: "{\"task_id\":\"task_a1b2c3d4_1715900000\",\"confirm\":true}"'
-```
-
-**取消执行（task_id 精确方式）**：
-```bash
-ros2 topic pub --once /runtime/confirm std_msgs/msg/String \
-  'data: "{\"task_id\":\"task_a1b2c3d4_1715900000\",\"confirm\":false}"'
-```
-
-**超时**：`confirm_timeout_sec` 秒内未收到确认即自动取消（默认 300 秒 = 5 分钟）。
-
-**跳过确认**（直接自动执行）：
-```bash
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py require_confirm:=false
-```
-
-**完整安全流**：
-```
-/grounded_task_context
-  → /runtime/preview  (waiting_confirm)
-  → /runtime/confirm  (用户确认)
-  → Skill execution   (dry_run)
-  → /executor/done
-```
-
-### 3.9 RuntimeAdapter 安全状态（新增）
-
-`RuntimeAdapter` 通过 3 个参数控制硬件连接级别：
-
-| dry_run | enable_real_ik | enable_real_servo | IK 行为 | Servo 行为 | 用途 |
-|---------|---------------|-------------------|---------|-----------|------|
-| `true` | 忽略 | 忽略 | mock `[500,500,500,500,500]` | 日志不发布 | 默认调试 |
-| `false` | `false` | `false` | 报错: enable_real_ik false | 报错 | 无效组合 |
-| `false` | `true` | `false` | 调用真实 IK 服务，记录脉冲 | 日志不发布 | **IK 验证模式（推荐用于实机调试）** |
-| `false` | `true` | `true` | 调用真实 IK 服务 | 发布到 `/servo_controller` | ⚠ 全实物（慎用） |
-
-**IK 验证模式示例**（调用真实 IK 但不发 servo）：
+## 6.2 简单确认
 
 ```bash
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
-  dry_run:=false \
-  enable_real_ik:=true \
-  enable_real_servo:=false \
-  require_confirm:=true
+ros2 topic pub --once \
+  /runtime/confirm \
+  std_msgs/msg/String \
+  'data: "yes"'
 ```
 
-期望在 adapter 日志中看到真实脉冲值：
-```
-[RuntimeAdapter] ik_solve OK → pulses=[512, 580, 145, 130, 512]
-[RuntimeAdapter] servo_move pulses=[512, 580, 145, 130, 512] duration_ms=2000 mode=LIVE: ik=REAL servo=OFF
+支持的确认词通常包括：
+
+```text
+yes
+y
+true
+ok
+confirm
+go
 ```
 
-**全实物模式**（⚠ 仅确认硬件安全后使用）：
+## 6.3 取消
 
 ```bash
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
-  dry_run:=false \
-  enable_real_ik:=true \
-  enable_real_servo:=true \
-  require_confirm:=true
+ros2 topic pub --once \
+  /runtime/confirm \
+  std_msgs/msg/String \
+  'data: "cancel"'
+```
+
+## 6.4 按 task_id 精确确认
+
+```bash
+ros2 topic pub --once \
+  /runtime/confirm \
+  std_msgs/msg/String \
+  'data: "{\"task_id\":\"<TASK_ID>\",\"confirm\":true}"'
+```
+
+取消：
+
+```bash
+ros2 topic pub --once \
+  /runtime/confirm \
+  std_msgs/msg/String \
+  'data: "{\"task_id\":\"<TASK_ID>\",\"confirm\":false}"'
+```
+
+## 6.5 Confirm 超时
+
+默认：
+
+```text
+confirm_timeout_sec=300
+```
+
+即 5 分钟。
+
+超时后再发送 `yes` 不会执行，因为 pending task 已被取消。
+
+检查订阅：
+
+```bash
+ros2 topic info /runtime/confirm --verbose
+```
+
+预期：
+
+```text
+Subscription count: 1
+Node name: real_grounded_runtime_node
+```
+
+> `/executor/confirm` 和 `/executor/confirm_str` 属于 Legacy `ground_executor_node`。当前主线不要使用。
+
+---
+
+# 7. 感知四层输出检查
+
+## 7.1 YOLO
+
+世界模型输出：
+
+```bash
+timeout 15 ros2 topic echo \
+  /world_model/objects \
+  --once \
+  --full-length
+```
+
+原始 DetectionResult：
+
+```bash
+timeout 15 ros2 topic echo \
+  /vision_target \
+  --once \
+  --full-length
+```
+
+重点：
+
+```text
+class_name
+confidence
+pose.xyz
+center_z
 ```
 
 ---
 
-## 4. Topic 监听命令（另开终端）
-
-### 终端 A: 运行测试节点（单次）
+## 7.2 ROI
 
 ```bash
-ros2 launch sketch_runtime runtime_test.launch.py run_once:=true
+timeout 15 ros2 topic echo \
+  /world_model/roi_objects \
+  --once \
+  --full-length
 ```
 
-循环模式：
+原始 DetectionResult：
 
 ```bash
-ros2 launch sketch_runtime runtime_test.launch.py run_once:=false interval_sec:=2.0
+timeout 15 ros2 topic echo \
+  /roi_vision_target \
+  --once \
+  --full-length
 ```
 
-### 终端 B: 监听 Runtime state
+重点：
+
+```text
+class_name
+color
+pose.xyz
+pose.rpy
+confidence
+```
+
+ROI 可能 15 秒内没有输出，此时命令只有 Cyclone DDS 提示，没有消息内容。
+
+---
+
+## 7.3 Fusion
+
 ```bash
-ros2 topic echo /runtime/state
+timeout 15 ros2 topic echo \
+  /world_model/perception_objects \
+  --once \
+  --full-length
 ```
 
-**期望输出**（每个 state 一次）：
-```json
-{"task_id":"task_a1b2c3d4e5f6_1715900000","state":"parsed",...}
-{"task_id":"task_a1b2c3d4e5f6_1715900000","state":"grounded",...}
-{"task_id":"task_a1b2c3d4e5f6_1715900000","state":"skill_selected",...}
-{"task_id":"task_a1b2c3d4e5f6_1715900000","state":"executing",...}
-{"task_id":"task_a1b2c3d4e5f6_1715900000","state":"done",...}
+重点：
+
+```text
+class_name
+color
+pose.xyz
+pose.rpy
+source
+yolo_class
+roi_class
+match_distance
 ```
 
-### 终端 C: 监听 Runtime event log
+可能的 `source`：
+
+```text
+yolo_only
+roi_only
+yolo_roi_fused
+```
+
+---
+
+## 7.4 Stable Tracker
+
 ```bash
-ros2 topic echo /runtime/log
+timeout 15 ros2 topic echo \
+  /world_model/stable_objects \
+  --once \
+  --full-length
 ```
 
-**期望输出**（每个事件一行 JSON）：
-```json
-{"task_id":"task_...","event":"parsed_command","data":{...},"timestamp":1.7e9}
-{"task_id":"task_...","event":"grounded_goal","data":{...},"timestamp":1.7e9}
-{"task_id":"task_...","event":"skill_selection","data":{"selected":"pick_skill"},"timestamp":1.7e9}
-{"task_id":"task_...","event":"execution_started","data":{"skill":"pick_skill"},"timestamp":1.7e9}
-{"task_id":"task_...","event":"execution_result","data":{...},"timestamp":1.7e9}
+重点：
+
+```text
+track_id
+class_name
+color
+pose.xyz
+pose.rpy
+confidence_smooth
+frames_tracked
+class_votes
+color_votes
+source_votes
 ```
 
-### 终端 D: 监听执行结果
-```bash
-ros2 topic echo /runtime/execution_result
-```
+成功抓取前的稳定输出示例：
 
-**期望输出**：
 ```json
 {
-  "task_id": "task_...",
-  "success": true,
-  "reason": "pick_completed",
-  "confidence": 0.95,
-  "evidence": {
-    "ik_calls": 3, "ik_failures": 0,
-    "steps_completed": 5, "steps_total": 5
+  "track_id": "track_002",
+  "class_name": "cup",
+  "color": "unknown",
+  "pose": {
+    "frame": "base",
+    "xyz": [0.237, -0.007, 0.041],
+    "rpy": [0.0, 0.0, 1.57]
+  },
+  "confidence": 0.959,
+  "source": "stable",
+  "source_votes": {
+    "yolo_only": 20
   }
 }
 ```
 
-### 终端 E: 监听执行完成信号
+---
+
+## 7.5 并排持续观察
+
+终端 A：
+
 ```bash
-ros2 topic echo /executor/done
+ros2 topic echo /world_model/objects
 ```
 
-**期望输出**：
-```json
-data: true
+终端 B：
+
+```bash
+ros2 topic echo /world_model/roi_objects
 ```
+
+终端 C：
+
+```bash
+ros2 topic echo /world_model/perception_objects
+```
+
+终端 D：
+
+```bash
+ros2 topic echo /world_model/stable_objects
+```
+
+按：
+
+```text
+Ctrl+C
+```
+
+停止。
 
 ---
 
-## 5. Topic Pub 测试（手动发布模拟数据）
+# 8. Grounding 与 Runtime 监听
 
-### 5.1 模拟 parsed_command（触发 grounding）
-
-如果 grounding_node 在运行：
-```bash
-ros2 topic pub -1 /parsed_command std_msgs/msg/String \
-  'data: "{\"action\":\"pick\",\"from\":\"red_cup\",\"to\":\"right_side\",\"raw\":\"pick red cup to right\"}"'
-```
-
-### 5.2 模拟 grounded_goal（触发 executor）
-
-如果 executor_node 在运行：
-```bash
-ros2 topic pub -1 /grounded_goal std_msgs/msg/String \
-  'data: "{\"intent\":\"pick\",\"object_hints\":{\"class\":\"cup\",\"color\":\"red\"},\"object_id\":1,\"source_pose\":{\"frame\":\"table\",\"xyz\":[0.15,-0.1,0.03],\"rpy\":[0,0,1.57]},\"target_pose\":{\"frame\":\"table\",\"xyz\":[0.2,-0.15,0.02],\"rpy\":[0,0,1.57]},\"status\":\"ok\"}"'
-```
-
-### 5.3 触发执行确认
+Parser：
 
 ```bash
-ros2 topic pub -1 /executor/confirm std_msgs/msg/Bool 'data: true'
+ros2 topic echo /parsed_command
 ```
 
-或字符串方式：
-```bash
-ros2 topic pub -1 /executor/confirm_str std_msgs/msg/String 'data: "yes"'
-```
-
----
-
-## 6. 完整链路验证流程
-
-```mermaid
-graph TD
-    subgraph SETUP["0. 环境准备"]
-        A0["source install/setup.bash"]
-        A1["colcon build --packages-select sketch_runtime"]
-        A2["ros2 pkg executables sketch_runtime"]
-    end
-
-    subgraph TEST["1. 启动测试"]
-        B1["ros2 run sketch_runtime runtime_test_node"]
-        B2["ros2 topic echo /runtime/state"]
-        B3["ros2 topic echo /runtime/log"]
-    end
-
-    subgraph VERIFY["2. 验证六个阶段"]
-        C1["Step 1: 检查 Parsed state<br/>state=parsed, parsed_command 有 action/from/to"]
-        C2["Step 2: 检查 Grounded state<br/>state=grounded, target_object 有 class/color"]
-        C3["Step 3: SkillManager<br/>intent pick -> pick_skill"]
-        C4["Step 4: Skill instantiate<br/>skill.name = pick_skill"]
-        C5["Step 5: precheck<br/>passed (returns None)"]
-        C6["Step 6: execute dry_run<br/>ik_solve x3, servo_move x3, gripper_set x2"]
-        C7["Step 7: postcheck + done<br/>state=done, /executor/done=true"]
-    end
-
-    SETUP --> TEST
-    TEST --> VERIFY
-```
-
----
-
-## 7. 每一步的期望输出
-
-| 步骤 | 日志关键字 | 期望 |
-|------|-----------|------|
-| ① parsed_command | `[1/7] Simulating parsed_command` | `state = parsed`, `task_id = task_...` |
-| ② grounded_goal | `[2/7] Simulating grounded_goal` | `state = grounded`, `target_obj = cup red` |
-| ③ SkillManager.select | `[3/7] SkillManager.select` | `skill_name = pick_skill` |
-| ④ instantiate | `[4/7] SkillManager.instantiate` | `skill class = PickSkill` |
-| ⑤ precheck | `[5/7] skill.precheck` | `precheck OK (passed)` |
-| ⑥ execute | `[6/7] skill.execute` | Adapter 日志 8 行以上 |
-| ⑦ result | `[7/7] postcheck + publish` | `success = True`, `reason = pick_completed` |
-
-**Adapter 调用日志示例（dry_run）**：
-
-```
-[RuntimeAdapter] ik_solve position=[0.15, -0.1, 0.11] rpy=[0.0, 0.0, 1.57]
-[RuntimeAdapter] servo_move pulses=[500, 500, 500, 500, 500] duration_ms=2000 dry_run=True
-[RuntimeAdapter] gripper_set servo_id=10 pulse=200 duration_ms=300 dry_run=True
-[RuntimeAdapter] ik_solve position=[0.15, -0.1, 0.015] rpy=[0.0, 0.0, 1.57]
-[RuntimeAdapter] servo_move pulses=[500, 500, 500, 500, 500] duration_ms=2000 dry_run=True
-[RuntimeAdapter] gripper_set servo_id=10 pulse=700 duration_ms=300 dry_run=True
-[RuntimeAdapter] ik_solve position=[0.15, -0.1, 0.11] rpy=[0.0, 0.0, 1.57]
-[RuntimeAdapter] servo_move pulses=[500, 500, 500, 500, 500] duration_ms=2000 dry_run=True
-```
-
----
-
-## 8. 常见失败场景
-
-### 8.1 包未构建
-
-**症状**：
-```
-Package 'sketch_runtime' not found
-```
-
-**修复**：
-```bash
-colcon build --packages-select sketch_runtime --symlink-install
-source install/setup.bash
-```
-
-### 8.2 import 错误（缺少依赖）
-
-**症状**：
-```
-ModuleNotFoundError: No module named 'sketch_runtime'
-```
-
-**修复**：确认已 source install/setup.bash，且 colcon build 成功。
-
-### 8.3 SkillRegistry 为空
-
-**症状**：
-```
-skill_name = unknown_skill
-```
-
-**检查**：
-```bash
-# 查看节点日志
-ros2 run sketch_runtime runtime_test_node 2>&1 | grep "Registered"
-# 期望: Registered skills: ['pick_skill']
-```
-
-### 8.4 precheck 失败 — target_object 为 None
-
-**症状**：
-```
-FAIL: precheck blocked -- no_target_object
-```
-
-**修复**：确认 grounded goal 中 `source_pose` 不为 None 且含 `xyz` 字段。
-
-### 8.5 IK solve 返回 None（真实模式下）
-
-**症状**：
-```
-ik_failures > 0
-reason = ik_failed_hover
-```
-
-**修复**：
-- 检查 `/kinematics/set_pose_target` 服务是否可用
-- 检查目标位姿是否在机械臂工作空间内
-- dry_run 模式下不应出现此问题
-
-### 8.6 asyncio 错误
-
-**症状**：
-```
-RuntimeError: This event loop is already running
-```
-
-**修复**：runtime_test_node 在 `new_event_loop()` 中运行，不应出现此错误。如果出现，检查是否有其他节点共享此 event loop。
-
----
-
-## 9. 完整集成验证（逐步）
-
-### Step 1: 验证 grounding → TaskContext
+Grounding：
 
 ```bash
-# 终端 A: 启动 grounding_node (可选，需要 ros2 环境)
-ros2 run grounding grounding_node --ros-args \
-  -p publish_runtime:=true
+ros2 topic echo /grounded_task_context
+```
 
-# 终端 B: 监听 runtime state
+Preview：
+
+```bash
+ros2 topic echo /runtime/preview
+```
+
+状态：
+
+```bash
 ros2 topic echo /runtime/state
-
-# 终端 C: 发送 parsed_command
-ros2 topic pub -1 /parsed_command std_msgs/msg/String \
-  'data: "{\"action\":\"pick\",\"from\":\"red_cup\",\"to\":\"right_side\",\"raw\":\"pick red cup\"}"'
 ```
 
-期望：如果 `/world_model/objects` 有匹配对象，`/grounded_goal` 发布，`/runtime/state` 出现。
-
-### Step 2: 验证 TaskContext → SkillManager（纯 Python 测试）
+事件流：
 
 ```bash
-cd ~/ros2_ws/src/Jetarm_ros2_robot
-PYTHONPATH=src/sketch_runtime python3 -c "
-from sketch_runtime import TaskBuilder, SkillManager, TaskContext, TaskState
-from sketch_runtime.skill_registry import SkillRegistry
-from sketch_runtime.skills.pick_skill import PickSkill
-
-SkillRegistry.register(PickSkill)
-mgr = SkillManager()
-ctx = TaskContext(parsed_command={'action':'pick'})
-name = mgr.select(ctx)
-print(f'Skill selected: {name}')
-skill = mgr.instantiate(name)
-print(f'Skill instantiated: {skill.name}')
-"
-# 期望: Skill selected: pick_skill
-#       Skill instantiated: pick_skill
+ros2 topic echo /runtime/log
 ```
 
-### Step 3: 验证 PickSkill → RuntimeAdapter（dry_run）
+执行结果：
 
 ```bash
-cd ~/ros2_ws/src/Jetarm_ros2_robot
-PYTHONPATH=src/sketch_runtime python3 -c "
-import asyncio
-from sketch_runtime.skill_registry import SkillRegistry
-from sketch_runtime.skills.pick_skill import PickSkill
-from sketch_runtime.runtime_adapter import RuntimeAdapter
-from sketch_runtime import TaskBuilder
-
-SkillRegistry.register(PickSkill)
-
-adapter = RuntimeAdapter(dry_run=True)
-skill = PickSkill(adapter)
-
-parsed = {'action':'pick','from':'red_cup','raw':'test'}
-grounded = {
-    'intent':'pick','object_hints':{'class':'cup','color':'red'},
-    'source_pose':{'frame':'table','xyz':[0.15,-0.1,0.03],'rpy':[0,0,1.57]},
-    'target_pose':{'frame':'table','xyz':[0.2,-0.15,0.02],'rpy':[0,0,1.57]},
-    'status':'ok'
-}
-ctx = TaskBuilder.build_full_task(parsed, grounded)
-
-result = asyncio.run(skill.execute(ctx))
-print(f'success={result.success} reason={result.reason}')
-print(f'evidence: {result.evidence}')
-print(f'adapter calls: {len(adapter._call_log)}')
-"
-# 期望: success=True reason=pick_completed
-#       evidence: {'ik_calls':3,'ik_failures':0,'steps_completed':5,...}
-#       adapter calls: 8
+ros2 topic echo /runtime/execution_result
 ```
 
-### Step 4: 验证 RuntimeAdapter → executor/done
+Verification：
 
 ```bash
-# 终端 A: 启动测试节点
-ros2 run sketch_runtime runtime_test_node
+ros2 topic echo /runtime/verification_result
+```
 
-# 终端 B: 确认 /executor/done 收到 true
+执行完成：
+
+```bash
 ros2 topic echo /executor/done
-# 期望输出: data: true (在测试节点输出 COMPLETE 后出现)
 ```
 
 ---
 
-## 10. Topic 关系速查
+# 9. Topic、节点与 Service 快速检查
 
-```
-runtime_test_node
-    │ PUB  /runtime/state           String JSON  {task_id, state, ...}
-    │ PUB  /runtime/log             String JSON  {task_id, event, data, ...}
-    │ PUB  /runtime/execution_result String JSON  {task_id, success, reason, evidence, ...}
-    │ PUB  /executor/done           Bool         {data: true}
-    │
-    │ (内部) RuntimeAdapter(dry_run=True)
-    │ (内部) SkillRegistry: ['pick_skill']
-    │ (内部) TaskBuilder: parsed + grounded → TaskContext
-    └ (内部) SkillManager: intent→skill_name→instantiate→execute
-```
-
----
-
-## 11. 快速排查命令
+## 9.1 节点
 
 ```bash
-# 查看所有 sketch_runtime 相关的 topic
-ros2 topic list | grep -E "(runtime|executor/done)"
+ros2 node list | sort
+```
 
-# 查看当前所有 topic 发布频率
-ros2 topic hz /runtime/state --window 5
+主线节点：
 
-# 查看 grounding 节点的 runtime 功能是否开启
-ros2 param get /grounding_node publish_runtime
+```bash
+ros2 node list | sort | grep -E \
+'simple_yolo|roi_color|perception_fusion|stable_object|llm_command_parser|grounding|real_grounded_runtime|verification_result|robotops'
+```
 
-# 查看 executor 节点的 done 发布功能是否开启
-ros2 param get /ground_executor_node publish_done
+## 9.2 Topic
 
-# 手动触发 runtime_test_node 并查看完整输出
-ros2 run sketch_runtime runtime_test_node --ros-args \
-  -p test_command:="grasp blue ball" 2>&1 | tee /tmp/runtime_test.log
+```bash
+ros2 topic list | sort
+```
 
-# 查看日志中的关键事件
-cat /tmp/runtime_test.log | grep -E "\[[0-9]/7\]|success|FAIL|evidence"
+主线 Topic：
+
+```bash
+ros2 topic list | sort | grep -E \
+'/world_model|/vision_target|/parsed_command|/grounded_task_context|/runtime|/executor/done|/servo_controller'
+```
+
+Topic 详细关系：
+
+```bash
+ros2 topic info /world_model/stable_objects --verbose
+```
+
+```bash
+ros2 topic info /grounded_task_context --verbose
+```
+
+```bash
+ros2 topic info /runtime/confirm --verbose
+```
+
+## 9.3 Service
+
+```bash
+ros2 service list | sort
+```
+
+关键 Service：
+
+```bash
+ros2 service list | grep -E \
+'kinematics|grounding|init_finish|bus_servo'
+```
+
+类型：
+
+```bash
+ros2 service type /kinematics/get_current_pose
+ros2 service type /kinematics/set_pose_target
+```
+
+只读获取当前机械臂位姿：
+
+```bash
+ros2 service call \
+  /kinematics/get_current_pose \
+  kinematics_msgs/srv/GetRobotPose \
+  "{}"
+```
+
+## 9.4 相机频率
+
+```bash
+timeout 15 ros2 topic hz /depth_cam/rgb/image_raw
+```
+
+正常约：
+
+```text
+30 Hz
+```
+
+## 9.5 查看图像
+
+PC 默认已使用 Cyclone DDS，可直接运行：
+
+```bash
+ros2 run rqt_image_view rqt_image_view
 ```
 
 ---
 
-## 12. 对现有执行器无干扰
+# 10. 当前真实抓取验收记录
 
-- `runtime_test_node` 发布到 `/executor/done`（与 `executor_done_sayer` 兼容）
-- 所有 adapter 调用均为 `dry_run=True`，不触碰 `/servo_controller` 或 `/ros_robot_controller/bus_servo/set_position`
-- 与 `ground_executor_node` 可同时运行，互不干扰
+## 10.1 目标
+
+```text
+对象：cup
+Stable Object：
+  class_name = cup
+  color = unknown
+  frame = base
+  xyz ≈ [0.236, -0.007, 0.041]
+```
+
+## 10.2 真实 IK
+
+Hover：
+
+```text
+position = [0.236, -0.007, 0.121]
+pulses   = [492, 354, 414, 59, 504]
+```
+
+Approach：
+
+```text
+position = [0.236, -0.007, 0.015]
+pulses   = [492, 343, 240, 207, 504]
+```
+
+Lift：
+
+```text
+position = [0.236, -0.007, 0.121]
+pulses   = [492, 354, 414, 59, 504]
+```
+
+## 10.3 夹爪
+
+```text
+打开：ID10 pulse=200
+关闭：ID10 pulse=700
+```
+
+## 10.4 结果
+
+```text
+真实视觉：PASS
+自然语言 Parser：PASS
+Grounding：PASS
+Confirm：PASS
+真实 IK：PASS
+真实 Servo：PASS
+Hover：PASS
+Approach：PASS
+Close：PASS
+Lift：PASS
+杯子离开桌面：PASS
+```
+
+当前结论：
+
+```text
+首次真实视觉杯子抓取成功
+```
+
+仍需继续验证：
+
+```text
+重复性
+抓取姿态
+ROI 稳定性
+Verification 可靠性
+PlaceSkill
+```
 
 ---
 
-## 13. Perception Audit (ROI Detection Stability)
+# 11. 常见问题
 
-审计 ROI 检测输出的类名/颜色/置信度稳定性。
+## 11.1 Grounding `no_match`
+
+示例：
+
+```text
+status=no_match
+detail=未找到对象（class=cup, color=blue）
+```
+
+检查：
 
 ```bash
-# 构建 app 包
+timeout 15 ros2 topic echo \
+  /world_model/stable_objects \
+  --once \
+  --full-length
+```
+
+如果 Stable Object 为：
+
+```text
+class_name=cup
+color=unknown
+```
+
+则：
+
+```text
+拿起蓝色杯子
+```
+
+无法匹配。
+
+使用：
+
+```text
+拿起杯子
+```
+
+继续验证主链。
+
+---
+
+## 11.2 ROI 间歇性误检
+
+曾出现：
+
+```text
+ROI:
+class_name=cube
+color=white
+xyz=[0.185, -0.011, 0.034]
+```
+
+同时 YOLO：
+
+```text
+class_name=cup
+xyz=[0.237, -0.007, 0.041]
+```
+
+风险：
+
+```text
+YOLO 类别
++
+错误 ROI 位姿
+→ yolo_roi_fused
+→ Stable Object 位姿跳变
+```
+
+真实执行前检查：
+
+```bash
+ros2 topic echo /world_model/perception_objects
+ros2 topic echo /world_model/stable_objects
+```
+
+如果位置在短时间内明显跳变，不要确认执行。
+
+---
+
+## 11.3 Confirm 没反应
+
+检查：
+
+```bash
+ros2 topic info /runtime/confirm --verbose
+```
+
+可能原因：
+
+- Runtime 未运行；
+- 没有 pending task；
+- 已超过 300 秒；
+- 发到了 Legacy `/executor/confirm`；
+- 有重复 Runtime；
+- 上一任务 `run_once=true` 已结束。
+
+---
+
+## 11.4 机械臂没有运动
+
+检查启动参数：
+
+```text
+enable_real_servo=false
+```
+
+时不会运动。
+
+IK-only 正常日志：
+
+```text
+mode=LIVE: ik=REAL servo=OFF
+```
+
+完整真实执行需要：
+
+```text
+dry_run=false
+enable_real_ik=true
+enable_real_servo=true
+```
+
+---
+
+## 11.5 IK 无解
+
+检查 Service：
+
+```bash
+ros2 service list | grep /kinematics/set_pose_target
+```
+
+检查目标位姿：
+
+```text
+x
+y
+z
+```
+
+检查 Runtime 日志：
+
+```text
+IK response
+success
+pulse
+```
+
+---
+
+## 11.6 Verification 假阳性
+
+在：
+
+```text
+enable_real_servo=false
+```
+
+机械臂未执行的情况下，曾出现：
+
+```text
+object_no_longer_at_source
+state=verified
+```
+
+当前 Verification 不能单独作为成功证据。
+
+真实成功必须结合：
+
+- 机械臂确实执行；
+- 物体实际离开桌面；
+- 执行日志；
+- 图片或现场观察。
+
+后续需要：
+
+- 模式门控；
+- 连续多帧确认；
+- Tracker 丢失与真实位移区分；
+- 与 Servo 执行状态关联。
+
+---
+
+## 11.7 Grounding yaw 丢失
+
+曾观察：
+
+```text
+Grounding:
+rpy=[0.0, 0.0, 1.57]
+
+Runtime IK:
+rpy=[0.0, 0.0, 0.0]
+```
+
+圆形杯子抓取已成功，但方向敏感物体需要继续修复。
+
+---
+
+## 11.8 临时 IK 节点警告
+
+日志可能出现：
+
+```text
+creating temp IK node
+Publisher already registered for provided node name
+```
+
+本次真实 IK 可正常返回，但后续应：
+
+```text
+复用长期 IK Client
+```
+
+或：
+
+```text
+给临时 IK Node 唯一名称
+```
+
+---
+
+## 11.9 Cyclone DDS XML 警告
+
+```text
+NetworkInterfaceAddress: deprecated element
+```
+
+当前不影响：
+
+```text
+Topic
+Service
+相机
+真实 IK
+真实 Servo
+```
+
+暂不原地修改已验证 XML。
+
+---
+
+## 11.10 多写者风险
+
+以下节点可能发布 `/servo_controller`：
+
+```text
+real_grounded_runtime_node / RuntimeAdapter
+grasp
+llm_voice_agent
+face_follow_node
+env_scan_node
+gesture_player_node
+ground_executor_node（Legacy）
+```
+
+真实抓取期间不要同时启动可能主动控制机械臂的其他节点。
+
+---
+
+# 12. 停止与清理
+
+## 12.1 停止 PC 节点
+
+在各启动终端按：
+
+```text
+Ctrl+C
+```
+
+然后检查：
+
+```bash
+ros2 node list | sort | grep -E \
+'simple_yolo|roi_color|perception_fusion|stable_object|llm_command_parser|grounding|real_grounded_runtime|verification_result|robotops'
+```
+
+进程检查：
+
+```bash
+pgrep -af \
+'simple_yolo_node|roi_color_detector_node|perception_fusion_node|stable_object_tracker_node|llm_command_parser_node|grounding_node|real_grounded_runtime_node|verification_result_node|robotops'
+```
+
+## 12.2 Orin 主栈
+
+正常测试结束后不需要停止：
+
+```text
+start_app_node.service
+```
+
+只有在维护 Orin 主栈时才执行：
+
+```bash
+sudo systemctl stop start_app_node.service
+```
+
+恢复：
+
+```bash
+sudo systemctl start start_app_node.service
+```
+
+---
+
+# 13. 单节点故障隔离
+
+> 以下命令只用于排查，不与对应 Bringup 同时运行。
+
+## 13.1 ROI
+
+```bash
+ros2 run app roi_color_detector_node \
+  --ros-args \
+  -p transform_yaml:=/home/sundasheng/ros2_ws/src/app/config/transform.yaml \
+  -p lab_config:=/home/sundasheng/ros2_ws/src/app/config/lab_config.yaml
+```
+
+## 13.2 YOLO
+
+```bash
+ros2 run vision_yolo simple_yolo_node
+```
+
+## 13.3 Fusion
+
+```bash
+ros2 run app perception_fusion_node
+```
+
+## 13.4 Tracker
+
+```bash
+ros2 run app stable_object_tracker_node
+```
+
+## 13.5 Grounding
+
+```bash
+ros2 run grounding grounding_node \
+  --ros-args \
+  -p publish_runtime:=true \
+  -p world_model_topic:=/world_model/stable_objects
+```
+
+## 13.6 Runtime
+
+```bash
+ros2 run sketch_runtime real_grounded_runtime_node \
+  --ros-args \
+  -p dry_run:=true \
+  -p require_confirm:=true
+```
+
+## 13.7 Verification
+
+```bash
+ros2 run sketch_runtime verification_result_node
+```
+
+## 13.8 RobotOps
+
+```bash
+ros2 launch robotops robotops_recorder.launch.py
+```
+
+---
+
+# 14. 离线与开发测试
+
+## 14.1 构建 Runtime
+
+```bash
 cd ~/ros2_ws
-colcon build --packages-select app --symlink-install
+
+colcon build \
+  --packages-select sketch_runtime \
+  --symlink-install
+
+source install/setup.bash
+```
+
+## 14.2 runtime_test_node
+
+```bash
+ros2 run sketch_runtime runtime_test_node
+```
+
+自定义：
+
+```bash
+ros2 run sketch_runtime runtime_test_node \
+  --ros-args \
+  -p test_command:="pick cup" \
+  -p hover_height:=0.08 \
+  -p approach_z:=0.015
+```
+
+Launch：
+
+```bash
+ros2 launch sketch_runtime runtime_test.launch.py \
+  run_once:=true
+```
+
+循环：
+
+```bash
+ros2 launch sketch_runtime runtime_test.launch.py \
+  run_once:=false \
+  interval_sec:=2.0
+```
+
+> `runtime_test_node` 是内部 Runtime 测试工具，不代表真实视觉主线。
+
+## 14.3 ROI Audit
+
+```bash
+cd ~/ros2_ws
+
+colcon build \
+  --packages-select app \
+  --symlink-install
+
 source install/setup.bash
 
-# 运行审计（默认 100 帧，最大 30 秒）
 ros2 run app roi_detection_audit_node
+```
 
-# 自定义样本数
-ros2 run app roi_detection_audit_node --ros-args -p sample_count:=200
+自定义样本数：
 
-# 查看结果
+```bash
+ros2 run app roi_detection_audit_node \
+  --ros-args \
+  -p sample_count:=200
+```
+
+结果：
+
+```bash
 cat artifacts/perception_audit/roi_perception_audit.md
 cat artifacts/perception_audit/audit_summary.json
 ```
 
 ---
 
-## 14. Stable Object Tracker
+# 15. Legacy 接口
 
-对 RAW 检测进行空间匹配 + 时间投票平滑，输出稳定的 world_model。
+当前主线：
+
+```text
+/grounded_task_context
+→ real_grounded_runtime_node
+→ /runtime/preview
+← /runtime/confirm
+```
+
+Legacy：
+
+```text
+/grounded_goal
+→ ground_executor_node
+→ /executor/preview*
+← /executor/confirm
+← /executor/confirm_str
+```
+
+不要同时启动：
+
+```text
+ground_executor_node
+real_grounded_runtime_node
+```
+
+当前不要使用：
 
 ```bash
-ros2 run app stable_object_tracker_node
-ros2 run app stable_object_tracker_node --ros-args -p input_topic:=/world_model/roi_objects
-ros2 topic echo /world_model/stable_objects --once
+ros2 topic pub --once \
+  /executor/confirm \
+  std_msgs/msg/Bool \
+  'data: true'
+```
+
+当前应使用：
+
+```bash
+ros2 topic pub --once \
+  /runtime/confirm \
+  std_msgs/msg/String \
+  'data: "yes"'
 ```
 
 ---
 
-## 15. Perception Fusion Node
+# 16. Mobile Robot Debugging
 
-融合 YOLO 语义类名与 ROI 颜色/位姿。
+> 本节属于 Mobile Robot Foundation，与当前机械臂视觉抓取主线分开。
 
-```bash
-ros2 run app perception_fusion_node
-ros2 topic echo /world_model/perception_objects
-```
-
----
-
-## 16. Verification Result Node
-
-### 16.1 启动验证节点
-
-```bash
-ros2 run sketch_runtime verification_result_node
-```
-
-验证节点订阅 `/grounded_task_context`、`/world_model/stable_objects`、`/executor/done`，发布 `/runtime/verification_result`。
-
-### 16.2 监听验证结果
-
-```bash
-ros2 topic echo /runtime/verification_result
-```
-
-期望输出（precheck 通过）：
-```json
-{"stage": "precheck", "success": true, "reason": "object_found", "evidence": {...}}
-```
-
-期望输出（postcheck 通过）：
-```json
-{"stage": "postcheck", "success": true, "reason": "object_no_longer_at_source", "evidence": {...}}
-```
-
-期望输出（post_place 通过）：
-```json
-{"stage": "post_place", "success": true, "reason": "object_found_at_target", "evidence": {...}}
-```
-
-### 16.3 验证调试工作流
-
-```bash
-# 终端 A: 启动 verification_result_node
-ros2 run sketch_runtime verification_result_node
-
-# 终端 B: 启动 Runtime
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py
-
-# 终端 C: 监听验证状态变化
-ros2 topic echo /runtime/verification_result
-ros2 topic echo /runtime/state
-ros2 topic echo /runtime/log
-```
-
-### 16.4 期望状态流
-
-成功路径：
-```
-grounded → skill_selected → waiting_confirm → executing → verifying → verified
-```
-
-失败路径：
-```
-grounded → skill_selected → waiting_confirm → executing → verifying → verification_failed
-```
-
----
-
-## 17. ROI Color Confidence Sandbox
-
-离线验证 ROI 置信度过滤逻辑（不修改生产代码）。
-
-```bash
-# 运行置信度过滤仿真
-python3 sandbox/roi_runtime_experiment/scripts/simulate_roi_runtime.py
-
-# 查看结果
-cat sandbox/roi_runtime_experiment/reports/roi_runtime_eval.md
-
-# ROI Color Tuner 离线评估
-python3 tools/vision_roi_tuner/scripts/evaluate_strategy_debug.py
-cat tools/vision_roi_tuner/outputs/reports_v2/strategy_debug_eval.md
-```
-
----
-
-## 18. Mobile Robot Debugging (Sprint 8.x)
-
-> **Phase**: Mobile Robot Foundation — Sprint 8.x 🔄 IN PROGRESS
->
-> These commands run on the **robot-side workspace** (Jetson Orin).
-> They are separate from PC-side Runtime debugging.
->
-> Robot-side binaries:
-> - `turn_on_dlrobot_robot` (mobile base driver)
-> - `rplidar_node` (RPLidar A1)
-> - `odom_tf_bridge_node` (odometry → TF bridge)
-> - `static_transform_publisher` (laser mounting transform)
-
----
-
-### 18.1 Robot-side Startup Checklist
-
-```
-□ turn_on_dlrobot_robot running
-□ /cmd_vel exists
-□ /odom_combined exists
-□ /scan exists
-□ /tf exists
-□ /mobile_base/sensors/imu_data exists
-□ RPLidar connected
-□ static TF published
-```
-
-### 18.2 Robot-side Commands
-
-#### Start mobile base
+## 16.1 底盘启动
 
 ```bash
 ros2 launch turn_on_dlrobot_robot tank.launch.py
 ```
 
-#### Start lidar
+## 16.2 激光雷达
 
 ```bash
 ros2 launch rplidar_ros rplidar_a1_launch.py \
   serial_port:=/dev/ttyUSB0
 ```
 
-#### Start odom TF bridge
+## 16.3 Odom TF Bridge
 
 ```bash
 ros2 run mobile_base_bridge odom_tf_bridge_node
 ```
 
-#### Publish laser static transform
+## 16.4 Laser Static TF
 
 ```bash
 ros2 run tf2_ros static_transform_publisher \
   0 0 0.15 0 0 0 base_footprint laser
 ```
 
-### 18.3 Verification Commands
+## 16.5 检查
 
 ```bash
-# List all active topics
-ros2 topic list
-
-# Inspect IMU topic
-ros2 topic info /mobile_base/sensors/imu_data
-
-# Check odometry
 ros2 topic echo /odom_combined --once
+```
 
-# Check TF broadcast
-ros2 topic echo /tf --once
-
-# Check lidar data
+```bash
 ros2 topic echo /scan --once
 ```
 
-### 18.4 AMCL Validation (In Progress)
-
-**Status**: 🔶 IN VALIDATION
+```bash
+ros2 topic echo /tf --once
+```
 
 ```bash
-# Launch AMCL with current map
+ros2 topic info /mobile_base/sensors/imu_data
+```
+
+## 16.6 AMCL
+
+```bash
 ros2 launch nav2_bringup localization_launch.py \
-  map:=/home/sundasheng/ros2_ws/maps/home_map_01_260621.yaml
+  map:=/home/ubuntu/ros2_ws/maps/home_map_clean_02_260705.yaml \
+  use_sim_time:=false \
+  params_file:=/home/ubuntu/ros2_ws/config/nav2_amcl_params.yaml
 ```
 
-**Checklist**:
+状态：
 
-```
-□ map loaded
-□ initial pose set (via RViz /initialpose)
-□ particle cloud visible
-□ /amcl_pose available
-□ localization stable
-```
-
-> ⚠ Nav2 must NOT be enabled before AMCL validation is complete.
-
-### 18.5 Nav2 Validation (Not Yet Verified)
-
-**Status**: ❌ NOT VERIFIED
-
-Expected future interfaces:
-
-- NavigateToPose action
-- FollowWaypoints action
-- /goal_pose
-- global planner
-- local controller
-
-> ⚠ Do not assume Nav2 is operational.
-> No MoveSkill or NavigateSkill implementation depends on Nav2 yet.
-
-### 18.6 PC-side Runtime Debugging
-
-These commands run on the PC workspace alongside mobile robot debugging.
-
-#### Runtime Platform
-
-```bash
-ros2 topic echo /runtime/state
-ros2 topic echo /runtime/log
-```
-
-#### RobotOps
-
-```bash
-sqlite3 ~/ros2_ws/robotops.db
-```
-
-#### Stable World Model
-
-```bash
-ros2 topic echo /world_model/stable_objects
-```
-
-#### Grounding
-
-```bash
-ros2 topic echo /grounded_task_context
-```
-
-### 18.7 Cross-machine Debugging
-
-**Robot-side publishes**:
-
-- odom (`/odom_combined`)
-- lidar (`/scan`)
-- TF (`/tf`, `/tf_static`)
-- IMU (`/mobile_base/sensors/imu_data`)
-
-**PC-side subscribes**:
-
-- perception
-- grounding
-- runtime
-- RobotOps
-
-**Suggested checks**:
-
-```bash
-# Verify network connectivity
-ping <robot-ip>
-
-# Confirm ROS_DOMAIN_ID matches on both machines
-echo $ROS_DOMAIN_ID
-
-# List visible topics from PC side
-ros2 topic list
-
-# Check if robot-side topics appear on PC
-ros2 topic echo /odom_combined --once
+```text
+AMCL：In validation
+Nav2：Not verified
+MoveSkill：Missing
+Semantic Locations：Missing
 ```
 
 ---
 
-## 19. Known Limitations (2026-07)
+# 17. 当前验收状态
 
-| Item | Status |
-|-------|---------|
-| Runtime Platform | ✅ Complete |
-| RobotOps | ✅ Complete |
-| SLAM Mapping | ✅ Complete |
-| AMCL | 🔶 In Validation |
-| Nav2 | ❌ Not Verified |
+| 模块 | 状态 |
+|---|---|
+| PC / Orin 全 Cyclone DDS | ✅ Verified |
+| 跨机相机 Topic | ✅ Verified |
+| 跨机 Kinematics Service | ✅ Verified |
+| YOLO | ✅ Verified |
+| ROI | 🔶 Working，存在间歇性误检 |
+| Perception Fusion | ✅ Working |
+| Stable Tracker | ✅ Working |
+| Parser | ✅ Verified |
+| Grounding | ✅ Verified |
+| Runtime Confirm | ✅ Verified |
+| Dry-run | ✅ Verified |
+| Real IK | ✅ Verified |
+| Real Servo | ✅ Verified |
+| 首次真实杯子抓取 | ✅ Complete |
+| RobotOps | ✅ Implemented，真实任务写入需核查 |
+| Verification | 🔶 In validation |
+| 抓取重复性 | 🔶 To validate |
+| PlaceSkill | ❌ Not verified |
+| AMCL | 🔶 In validation |
+| Nav2 | ❌ Not verified |
 | MoveSkill | ❌ Missing |
-| Semantic Locations | ❌ Missing |
-| Mobile Manipulation | ⏳ Future |
+
+---
+
+# 18. 文档维护规则
+
+本文件只维护：
+
+```text
+如何启动
+如何监听
+如何输入
+如何确认
+如何验收
+如何排查
+```
+
+Topic / Service 的完整关系维护在：
+
+```text
+docs/topic_service_map.md
+```
+
+系统组成和架构图维护在：
+
+```text
+docs/runtime_architecture.md
+```
+
+风险维护在：
+
+```text
+docs/runtime_risks.md
+```
+
+每次具体开发过程记录在：
+
+```text
+docs/dev_log/
+```
+
+当以下内容变化时，必须更新本文件：
+
+- Bringup 启动节点变化；
+- Runtime 参数变化；
+- 输入 Topic 变化；
+- Confirm Topic 变化；
+- 实机安全流程变化；
+- Topic 查看命令变化；
+- RobotOps 启动或数据库路径变化；
+- Current / Legacy 执行链变化。
+

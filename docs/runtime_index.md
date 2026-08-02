@@ -1,12 +1,66 @@
 # JetArm Robot Runtime — Documentation Index
 
-> 最后更新：2026-07-30
+> 最后更新：2026-08-02
 > 长期项目目标：Intelligent Autonomous Mobile Manipulation Robot
-> 当前阶段：Fixed-Arm Runtime Reactivation and Revalidation
-> 当前活动主线：Runtime / Skill / Action / RuntimeAdapter 审查与 Dry-run 复验
-> 已解决 P0：Duplicate Mechanical Arm Control-Stack Instances
-> 当前 P0：确认当前分支、install、launch、参数与 Runtime 执行链一致；真实动作继续受控
-> 移动底盘状态：PAUSED — 底盘正在检查维修
+> 当前阶段：Fixed-Workspace Task Manipulation MVP
+> 当前活动主线：固定工作区内的任务级闭环——AprilTag 标定与自检、目标轮廓、抓取位姿、Pick / Place、Verification 与 RobotOps
+> 已解决 P0：Duplicate Mechanical Arm Control-Stack Instances；PC / Orin DDS 统一；首次真实视觉杯子抓取
+> 当前 P0：Task MVP 1 — 整理蓝色积木
+> 移动底盘状态：PAUSED — AMCL / Nav2 等待后续重新验证
+
+---
+
+## 2026-08-02 Update Snapshot
+
+本次更新只修正当前状态，不改变本文原有的项目目标、历史恢复过程、文档导航和 Source of Truth 结构。
+
+新增已验证事实：
+
+```text
+PC + Orin 新启动 ROS 2 进程统一使用 Cyclone DDS
+跨机 RGB 图像约 30 Hz
+跨机 /kinematics/get_current_pose 验证通过
+跨机 /kinematics/set_pose_target 真实 IK 验证通过
+Runtime Confirm 验证通过
+真实 Servo 完整 Pick 验证通过
+机械臂成功拿起杯子
+```
+
+当前实机夹爪基线：
+
+```text
+Servo ID10:
+200 = open
+700 = close
+```
+
+当前不是“恢复 Runtime 是否能运行”的阶段，而是：
+
+```text
+首次真实成功
+→ 固定工作区与 AprilTag 坐标基线
+→ 目标轮廓与任务级抓取位姿
+→ Pick + Place
+→ 源区与目标区 Verification
+→ RobotOps 数据完整性
+→ Retry / Recovery
+```
+
+当前任务方向已收敛为有限场景下的真实任务闭环：
+
+```text
+Task MVP 1：整理蓝色积木
+Task MVP 2：整理圆珠笔
+Task MVP 3：搬运空茶杯
+```
+
+其中：
+
+```text
+object pose ≠ grasp pose
+```
+
+YOLO / 分类器负责粗类别，ROI / segmentation 负责精确轮廓，AprilTag 负责工作区坐标与视觉自检，Grasp Pose Estimator 负责真正的抓取点、方向与夹爪开度。
 
 ---
 
@@ -92,22 +146,22 @@ NavigateSkill
 |------|------|
 | **Project Mission** | 构建具备任务理解、状态控制、动作执行、结果验证、数据积累和失败恢复能力的智能机器人 Runtime |
 | **Runtime Foundation** | ✅ 历史完成：TaskContext、TaskState、SkillManager、PickSkill、ActionExecutor、RuntimeAdapter |
-| **Real Arm Execution** | ✅ 历史完成：真实 IK、Servo Adapter、Hover-only、最小完整 Pick |
+| **Real Arm Execution** | ✅ 当前实测：真实 IK、真实 Servo 和完整 Pick 已通过；2026-08-02 成功拿起杯子 |
 | **Perception Fusion** | ✅ 历史完成：YOLO + ROI → Perception Fusion |
 | **Stable World Model** | ✅ 历史完成：StableObjectTracker |
-| **Verification** | ✅ Verification Runtime 已实现并集成状态机 |
-| **RobotOps** | ✅ SQLite 事件持久化与任务历史基础已完成 |
+| **Verification** | 🔶 Runtime 已实现并集成状态机；曾出现 Servo OFF 条件下假阳性，可靠性仍需修复与复验 |
+| **RobotOps** | ✅ SQLite 事件持久化与任务历史基础已完成；本次真实 Pick 的数据完整性待核查 |
 | **Retry / Recovery** | ⏳ 尚未实现，计划基于真实失败数据开发 |
 | **Control Arbitration** | ⏳ 尚未实现 AUTO / MANUAL / PAUSED / ESTOP 仲裁 |
 | **Data Collection / VLA** | ⏳ 轨迹、图像和动作数据采集尚未完成 |
-| **Current Phase** | 🔶 Fixed-Arm Runtime Reactivation and Revalidation |
+| **Current Phase** | 🔶 Fixed-Workspace Task Manipulation MVP |
 | **Duplicate Control Stack** | ✅ 已解决：核心机械臂节点均为单实例；底层控制端点恢复一对一 |
 | **Mechanical Arm Hardware** | ✅ STM32 通信正常；舵机 ID `1/2/3/4/5/10` 在线；反馈与初始姿态正常 |
 | **Network / Time** | ✅ `eth-static` 冷启动自动恢复；Jetson 自动从 PC `192.168.100.2` 校时；机器人服务不以网络或时间为启动门禁 |
-| **Cross-host DDS** | ✅ PC 已验证可发现完整机械臂节点与 Topic；已定位冷启动接口时序风险，仍需保留启动顺序验收 |
-| **Current P0** | 🔶 审查当前 Runtime / Skill / Action / RuntimeAdapter 实现、启动入口、参数默认值、`src/install` 一致性和 legacy 旁路 |
-| **Current Real-Motion Gate** | ⛔ 在 Runtime 审查、单元测试、Dry-run 与真实 IK 分级验收完成前，禁止真实 Servo、Hover 与 Pick |
-| **Near-Term Outcome** | 恢复单一、安全、可验证的机械臂智能任务执行闭环 |
+| **Cross-host DDS** | ✅ PC 与 Orin 已统一为 Cyclone DDS；跨机图像、Topic 与 Kinematics Service 已验证 |
+| **Current P0** | 🔶 Task MVP 1：固定工作区内识别、抓取并收纳蓝色积木 |
+| **Current Real-Motion Gate** | ⚠ 已完成分级验收并允许受控真实执行；仍必须保留单一控制栈、稳定目标位姿、`require_confirm=true` 和现场急停条件 |
+| **Near-Term Outcome** | 完成“蓝色积木识别 → 抓取 → 放入指定区域 → 双区域验证 → RobotOps 记录”的真实任务闭环 |
 | **Mobile Base** | ⏸ 底盘维修中，AMCL/Nav2 暂停 |
 | **Long-Term Direction** | Autonomous Mobile Manipulation Robot |
 
@@ -115,18 +169,17 @@ NavigateSkill
 
 当前工作不是重新设计整个 Runtime，也不是回到底盘继续调参。
 
-当前阶段目标仍然是：
-
-```text
-恢复并重新验证固定机械臂 Runtime 的真实执行能力
-```
-
-2026-07-30 已完成前三个恢复门槛：
+固定机械臂 Runtime 的“恢复与首次真实执行”已经完成：
 
 ```text
 重复控制栈根因与修复              ✅
 单一底层机械臂控制栈              ✅
-最小硬件、网络、时间与 DDS 基线   ✅
+硬件、网络与时间基线              ✅
+PC / Orin 全 Cyclone DDS          ✅
+单元测试与 Dry-run                ✅
+真实 IK（Servo OFF）              ✅
+真实 Servo 完整 Pick              ✅
+首次真实视觉杯子抓取              ✅
 ```
 
 当前主线正式进入：
@@ -134,17 +187,22 @@ NavigateSkill
 ```text
 项目长期目标
 └── 智能机器人 Runtime
-    └── 当前阶段：固定机械臂 Runtime 恢复与复验
-        └── 当前 P0：Runtime / Skill / Action / RuntimeAdapter 当前状态审查
-            └── 下一门槛：单元测试 + Dry-run 状态流
+    └── 当前阶段：固定工作区任务级操作 MVP
+        ├── P0：AprilTag 工作区标定与视觉自检
+        ├── P0：统一权威坐标链
+        ├── P0：积木轮廓与 Grasp Pose
+        ├── P0：Pick + Place + 双区域 Verification
+        └── P1：RobotOps 任务数据与 Retry / Recovery
 ```
+
+当前不再把“物体中心坐标更准”作为最终目标；视觉输出必须服务于具体任务，并区分对象位姿与抓取位姿。
 
 移动底盘继续保持暂停：
 
 ```text
-不启动 tank.launch.py
 不发布 /cmd_vel
 不继续 AMCL / Nav2 参数调试
+恢复底盘开发前重新建立 Odom / IMU / TF / Localization 基线
 ```
 
 ## Current Development Stop Point
@@ -251,9 +309,11 @@ home_pulses = [500, 560, 130, 115, 500]
 注意：
 
 - ID10 当前开机初始反馈为 `200`；
-- 历史记录中的 `100`、`500` 可能分别表示夹爪闭合和完全打开控制值；
-- 在源码审查完成前，不得直接将历史夹爪参数用于真实动作；
-- 所有历史参数只能作为代码搜索线索，不能自动视为当前控制事实。
+- 2026-08-02 已通过实机命令与完整 Pick 确认：
+  - `200` = 夹爪打开；
+  - `700` = 夹爪关闭；
+- 历史记录中的 `100`、`500` 不再作为当前 Runtime 的夹爪控制事实；
+- 后续修改夹爪参数仍必须通过受控实机验证。
 
 ---
 
@@ -411,34 +471,46 @@ os.system('rm /etc/NetworkManager/system-connections/*')
 
 ### Current Safety Gate
 
-重复控制栈问题虽已解决，但真实动作尚未开放。当前仍禁止：
+分级验收已经完成到首次真实视觉 Pick：
 
 ```text
-真实 Runtime Pick
-直接发布 /servo_controller
-发布 /grasp
-直接发布 bus_servo/set_position
-启动 legacy ground_executor_node
-启动 joystick / tracking / sorting / calibration 控制机械臂
-dry_run=false
-enable_real_servo=true
+Runtime 审查                            ✅
+单元测试                                ✅
+Dry-run 状态流                          ✅
+真实 IK（Servo OFF）                    ✅
+真实 Servo                              ✅
+Hover / Approach / Gripper / Lift       ✅
+首次真实视觉杯子抓取                    ✅
 ```
 
-解除顺序必须是：
+真实动作现在属于**受控开放**，而不是默认开放。
+
+每次真实执行必须满足：
 
 ```text
-Runtime 审查
-→ 单元测试
-→ Dry-run 状态流
-→ 真实 IK（禁止 Servo）
-→ 最小 Servo 健康测试
-→ Hover-only
-→ 固定坐标 Pick
+核心硬件节点保持单实例
+PC 不启动第二套 Orin 硬件驱动
+require_confirm=true
+目标 Stable Object 位姿无明显跳变
+工作区清空
+操作员现场观察
+可立即断电
+无其他主动 /servo_controller 写者
+```
+
+当前仍禁止：
+
+```text
+启动 legacy ground_executor_node 与 Current Runtime 并行执行
+直接写 /ros_robot_controller/bus_servo/set_position
+未检查目标位姿就发送 /runtime/confirm
+同时启用 joystick / tracking / sorting / gesture 等机械臂控制源
+首次实验使用 require_confirm=false
 ```
 
 ## Current Control Surface
 
-当前实测运行图中的硬件写入链已经恢复为唯一链路：
+当前 Orin 常驻硬件栈的基础写入链已经恢复为唯一链路；PC Runtime 启动并进入真实执行时，会通过 `/servo_controller` 增加受控上层写入：
 
 ```text
 /grasp ×1
@@ -450,13 +522,15 @@ Runtime 审查
 → STM32
 ```
 
-当前端点：
+Orin 常驻空闲基线曾实测为：
 
 ```text
 /servo_controller
 Publisher count: 1       node: /grasp
 Subscription count: 1    node: /controller_manager
 ```
+
+PC `real_grounded_runtime_node` 启动且 `enable_real_servo=true` 时，`RuntimeAdapter` 也会成为 `/servo_controller` 的发布源。真实执行前必须重新检查发布者列表。
 
 ```text
 /ros_robot_controller/bus_servo/set_position
@@ -595,17 +669,38 @@ System clock synchronized: yes
 Server: 192.168.100.2
 ```
 
-PC 与 Jetson 使用：
+PC 与 Orin 当前使用：
 
 ```text
 ROS_DOMAIN_ID=23
-RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
+
+PC：
+
+```text
+CYCLONEDDS_URI=file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
+```
+
+Orin：
+
+```text
+CYCLONEDDS_URI=file:///home/ubuntu/ros2_ws/config/cyclonedds/orin_camera_eth0.xml
+```
+
+2026-08-02 已验证：
+
+- Orin 重启后主 Bringup 继续继承 Cyclone DDS；
+- PC 可持续接收约 30 Hz RGB 图像；
+- PC 可调用 Orin `/kinematics/get_current_pose`；
+- Runtime 可调用 Orin `/kinematics/set_pose_target`；
+- 真实 Servo 完整 Pick 成功。
 
 DDS 注意事项：
 
-- ROS 2 进程创建 DDS Participant 时，物理接口是否已建立会影响跨主机发现；
-- 冷启动后必须检查 PC 是否直接看到 `/controller_manager`、`/servo_manager`、`/ros_robot_controller`、`/grasp`、`/kinematics`；
+- 已运行的 ROS 2 进程不会因 shell 环境变化而动态切换 RMW，必须重启；
+- 冷启动后仍应检查 PC 是否看到 `/controller_manager`、`/servo_manager`、`/ros_robot_controller`、`/grasp`、`/kinematics`；
+- 当前 Cyclone XML 会提示 `NetworkInterfaceAddress` deprecated，但不阻塞已验证功能；
 - 不得通过永久等待 `network-online.target` 或 PC 响应来阻塞机器人本地启动。
 
 历史临时地址 `172.20.10.2` 不再作为当前默认地址。
@@ -666,6 +761,20 @@ PC 不得启动第二套 Jetson 硬件驱动。
 - 独立 gripper command
 - Hover-only 安全级别
 - 最小完整 Pick
+
+2026-08-02 已验证：
+
+```text
+真实目标位姿
+→ 真实 IK
+→ /servo_controller
+→ Hover
+→ gripper open
+→ Approach
+→ gripper close
+→ Lift
+→ 杯子离开桌面
+```
 
 ### Verification
 
@@ -815,25 +924,39 @@ Mobile Manipulation
 ↓
 固化单一机械臂控制栈                       ✅
 ↓
-建立硬件、网络、时间与 DDS 安全基线        ✅
+建立硬件、网络与时间基线                   ✅
 ↓
-审查 Runtime / Skill / Action / Adapter     🔶 CURRENT
+PC / Orin 统一 Cyclone DDS                 ✅
 ↓
-恢复单元测试、Dry-run 与状态流              ⏳
+审查 Runtime / Skill / Action / Adapter     ✅
 ↓
-验证真实 IK，但禁止 Servo                   ⏳
+恢复单元测试、Dry-run 与状态流              ✅
 ↓
-最小 Servo 健康测试                         ⏳
+验证真实 IK，但禁止 Servo                   ✅
 ↓
-Hover-only                                  ⏳
+最小 Servo 健康测试                         ✅
 ↓
-固定坐标 Pick                               ⏳
+Hover / Approach / Gripper / Lift           ✅
 ↓
-视觉抓取闭环                                ⏳
+固定坐标 Pick                               ✅
 ↓
-Verification 实机验证                       ⏳
+真实视觉抓取闭环                            ✅
 ↓
-RobotOps 数据完整性验证                     ⏳
+固定工作区与 AprilTag 坐标基线               🔶 CURRENT
+↓
+RGB 图像 / CameraInfo 与权威坐标链统一       🔶 CURRENT
+↓
+积木 mask / contour / orientation            ⏳
+↓
+任务级 Grasp Pose Estimator                  ⏳
+↓
+PlaceSkill 与固定收纳区域                    ⏳
+↓
+源区 + 目标区 Verification                   ⏳
+↓
+RobotOps 数据完整性与任务回放                ⏳
+↓
+Task MVP 1 重复性测试与失败分类              ⏳
 ↓
 根据真实失败数据开发 Retry / Recovery       ⏳
 ↓
@@ -853,195 +976,47 @@ RobotOps 数据完整性验证                     ⏳
 | `runtime_index.md` | 项目目标、当前状态、活动任务和停止点 |
 | `CLAUDE.md` | Agent 工作规则和禁止事项 |
 
-### Current P0 Task — Runtime Execution-Chain Audit and Dry-run Revalidation
+### Current P0 Task
 
-| 优先级 | 文件或代码 | 用途 |
-|--------|------------|------|
-| MUST | `runtime_index.md` | 当前阶段、已完成门槛、停止点和安全边界 |
-| MUST | `CLAUDE.md` | Agent 工作规则和硬件禁止事项 |
-| MUST | `runtime_task_schema.md` | `TaskContext` / `TaskState` 当前契约 |
-| MUST | `runtime_target_object.md` | `TargetObject`、坐标与目标语义 |
-| MUST | `runtime_skill_interface.md` | Skill / Action / Adapter 接口设计 |
-| MUST | `real_grounded_runtime_node` 源码与入口 | 当前 Runtime 主节点、参数默认值和状态流 |
-| MUST | `SkillManager` / `PickSkill` / `ActionExecutor` / `RuntimeAdapter` | 当前主执行链和硬件边界 |
-| MUST | `setup.py` / launch / YAML / tests | 真实可执行入口、默认参数和测试覆盖 |
-| MUST | 当前 `src` 与 `install` 空间 | 排除代码与部署版本偏差 |
-| SHOULD | `runtime_architecture.md` | 对照整体设计意图 |
-| SHOULD | `topic_service_map.md` | 对照 Runtime、IK、Servo 和反馈接口 |
-| SHOULD | `runtime_risks.md` | 检查旁路、并发、超时、取消和安全风险 |
-| SHOULD | 机械臂相关 dev log | 追溯历史 Hover、Pick、IK、Servo 验证条件 |
-
-本任务不执行真实动作。感知、Verification 和 RobotOps 只审查接口与依赖，详细实机验收在后续阶段进行。
-
-### Mechanical Arm Runtime Audit
-
-在单一底层控制栈建立后读取：
-
-| 文件 | 用途 |
-|------|------|
-| `runtime_task_schema.md` | TaskContext / TaskState |
-| `runtime_target_object.md` | TargetObject 和坐标语义 |
-| `runtime_skill_interface.md` | Skill / Action / Adapter |
-| 机械臂相关 dev log | Hover、Pick、IK、Servo 历史过程 |
-| Runtime source / config / tests | 当前实现的最终事实来源 |
-
-### Verification / RobotOps / Retry
-
-按需读取：
-
-| 文件或代码 | 用途 |
-|------------|------|
-| Verification 相关源码与测试 | 结果确认逻辑 |
-| RobotOps 源码与数据库 schema | 事件持久化与任务历史 |
-| `runtime_risks.md` | Retry、数据和仲裁风险 |
-| 最新真实失败日志 | Recovery 策略设计输入 |
-
-### Mobile Base Reference — Currently Paused
-
-仅在恢复底盘开发时读取：
-
-| 文件 | 用途 |
-|------|------|
-| `dev_log/2026-07-27_nav2 debug.md` | 底盘暂停原因 |
-| `dev_log/2026-07-27_terminal_summary.md` | 当日终端状态 |
-| AMCL / Nav2 配置和日志 | 维修完成后重新验证 |
-
----
-
-## Source of Truth Hierarchy
-
-### Runtime Facts
-
-判断当前机器人实际运行状态时：
-
-1. 当前 ROS 2 node / topic / service / endpoint 查询；
-2. 当前 systemd 状态、process tree 与 journal；
-3. 当前 `install` 空间中的实际 executable、launch 与配置；
-4. 当前 `src` 源码、launch 与配置；
-5. 当前自动化测试结果；
-6. 当前文档；
-7. 历史日志与归档文档。
-
-### Design Intent
-
-判断项目目标架构时：
-
-1. 当前 Git 分支源码；
-2. 当前 launch 与 YAML 配置；
-3. 当前测试；
-4. `runtime_index.md`；
-5. `topic_service_map.md`；
-6. `runtime_architecture.md`；
-7. `jetarm_runtime_roadmap.md`；
-8. dev log 与 `docs/archive/`。
-
-### Rules
-
-- 文档是调查入口，不是代码事实。
-- 文档中的 `COMPLETED` 表示历史上完成过，不代表当前分支仍可直接复现。
-- 文档与源码冲突时，必须明确报告冲突。
-- `src`、`install`、systemd 和当前 ROS 2 运行图不一致时，必须同时记录。
-- 当前运行关系必须使用 launch、源码、配置、进程树与实机 ROS 2 图联合验证。
-- 不得只根据文件名或旧日志推断节点当前仍在使用。
-- `runtime_session_summary.md`、`runtime_analysis.md`、`refactor_plan.md` 等归档文件只能用于历史追溯。
-
----
-
-## Current Runtime Path vs Legacy Path
-
-### Current Runtime Main Path Candidate
+当前任务范围：完成 Task MVP 1——在固定工作区内整理蓝色积木。
 
 ```text
-/parsed_command
-→ grounding_node
-→ /grounded_task_context
-→ real_grounded_runtime_node
-→ SkillManager
-→ PickSkill
-→ ActionExecutor
-→ RuntimeAdapter
-→ /kinematics/set_pose_target
-→ /servo_controller
-→ controller_manager
-→ ServoManager
-→ ros_robot_controller
-→ STM32
-→ Servos
+1. 保留 2026-08-02 首次真实 Pick 的日志、图片、task_id、目标位姿和 IK pulses，作为历史基线
+2. 固定机械臂观察姿态，使用 AprilTag 建立 workspace frame 与启动自检
+3. 修复 RGB image / RGB CameraInfo 配对，并确定唯一权威坐标链
+4. 从 ROI / segmentation 获取积木的 mask / contour
+5. 计算积木 centroid、minAreaRect、yaw、length、width
+6. 生成任务级 grasp candidate：
+   - 抓取点
+   - 夹爪 yaw
+   - 所需开度
+   - approach / lift 参数
+7. 实现或验证 PlaceSkill，并定义固定收纳区域
+8. Verification 必须同时确认：
+   - 源区域目标消失
+   - 收纳区域目标出现
+   - Servo OFF 或短暂漏检不得报告真实成功
+9. RobotOps 保存 pre-pick / post-pick / post-place 图像、抓取位姿、IK、执行与验证结果
+10. 执行受控重复性测试，记录成功率和失败类型
+11. 只在真实失败分类后设计受限 Retry / Recovery
 ```
 
-该链路必须通过当前 launch、源码、配置与运行图重新验证。
-
-### Legacy Execution Path
+当前交付物建议：
 
 ```text
-/grounded_goal
-→ ground_executor_node
-→ hard-coded execution sequence
-→ IK
-→ /servo_controller
-或直接写入
-/ros_robot_controller/bus_servo/set_position
-```
-
-审查规则：
-
-- `ground_executor_node` 默认视为 legacy；
-- 不得默认它仍由当前 launch 启动；
-- 必须检查是否仍有脚本或 launch 启动它；
-- 必须确认当前 Runtime 是否完全通过 `RuntimeAdapter` 和 `/servo_controller`；
-- 不允许新的 Runtime 代码直接写入底层 `bus_servo` Topic。
-
----
-
-## Current P0 Task
-
-当前任务范围：审查当前部署中的 Runtime 主路径，并建立可安全执行 Dry-run 的事实基线。
-
-```text
-1. 读取 runtime_index.md、CLAUDE.md 与 Runtime 接口文档
-2. 确认 PC workspace、Git 分支、package prefix 和 install 来源
-3. 定位 real_grounded_runtime_node 的 setup.py / launch / YAML / executable
-4. 审查 TaskContext、TaskState、SkillManager、PickSkill、ActionExecutor、RuntimeAdapter
-5. 确认参数默认值：
-   - dry_run
-   - require_confirm
-   - enable_real_ik
-   - enable_real_servo
-   - timeout / run_once / dummy world model
-6. 绘制当前主路径：
-   /parsed_command
-   → grounding
-   → /grounded_task_context
-   → real_grounded_runtime_node
-   → SkillManager
-   → ActionExecutor
-   → RuntimeAdapter
-7. 审查 legacy ground_executor_node 是否仍可被默认 launch 或脚本启动
-8. 搜索所有直接写入：
-   - /servo_controller
-   - /grasp
-   - /ros_robot_controller/bus_servo/set_position
-9. 核对 src / install / launch / tests / 当前 ROS 图是否一致
-10. 运行单元测试；只允许 dry_run=true、enable_real_servo=false
-11. 形成审查报告和最小修改建议
-12. 停止，等待人工批准后再进入真实 IK 阶段
-```
-
-当前交付物：
-
-```text
-runtime_execution_chain_audit_20260730.md
+task_mvp1_block_sorting_design.md
+task_mvp1_block_sorting_dev_log.md
+task_mvp1_repeatability_report.md
 ```
 
 当前禁止：
 
 ```text
-真实 Servo
-Hover
-Pick
-/runtime/confirm 触发真实动作
-legacy executor
-直接写底层总线
+并行启动 Current Runtime 与 legacy ground_executor_node
+直接写 /ros_robot_controller/bus_servo/set_position
+未确认 Stable Object 位姿就触发真实执行
+同时运行其他主动机械臂控制节点
+将单次 verified 直接当作真实成功证据
 ```
 
 ## Subsequent Mechanical Arm Work Order
@@ -1051,18 +1026,27 @@ legacy executor
 ```text
 1. 修复重复启动                              ✅
 2. 验证核心节点均只有一个实例                ✅
-3. 建立最小硬件、网络、时间与 DDS 基线       ✅
-4. 执行完整 Runtime / Skill / Adapter 审查   🔶 CURRENT
-5. 运行单元测试和 Dry-run                    ⏳
-6. 验证真实 IK，但禁止 Servo                 ⏳
-7. 最小幅度 Servo 健康测试                   ⏳
-8. Hover-only                                ⏳
-9. 固定坐标 Pick                             ⏳
-10. 视觉抓取闭环                             ⏳
-11. Verification 实机验证                    ⏳
-12. RobotOps 数据完整性验证                  ⏳
-13. 记录真实失败模式                         ⏳
-14. 设计 Retry / Recovery                    ⏳
+3. 建立硬件、网络、时间与 DDS 基线           ✅
+4. 完成 Runtime / Skill / Adapter 审查        ✅
+5. 运行单元测试和 Dry-run                    ✅
+6. 验证真实 IK，但禁止 Servo                 ✅
+7. 最小幅度 Servo 健康测试                   ✅
+8. Hover / Approach                          ✅
+9. 固定坐标 Pick                             ✅
+10. 真实视觉抓取闭环                         ✅
+11. 保存 2026-08-02 首次真实 Pick 证据      ✅
+12. AprilTag 固定工作区坐标与自检             🔶 CURRENT
+13. RGB CameraInfo 与权威坐标链统一           🔶 CURRENT
+14. 积木 mask / contour / orientation         ⏳
+15. 任务级 Grasp Pose Estimator               ⏳
+16. PlaceSkill 与固定收纳区域                 ⏳
+17. 源区 + 目标区 Verification                ⏳
+18. RobotOps 任务数据完整性验证               ⏳
+19. Task MVP 1 重复性测试                     ⏳
+20. 记录真实失败模式                          ⏳
+21. 设计 Retry / Recovery                     ⏳
+22. Task MVP 2：圆珠笔整理                    ⏳
+23. Task MVP 3：空茶杯搬运                    ⏳
 ```
 
 ## Full Mechanical Arm Runtime Audit Scope
@@ -1245,51 +1229,58 @@ sudo pstree -ap "$MAIN_PID"
 
 ---
 
-## Safe Runtime Dry-Run
+## Runtime Execution Modes
 
-真实硬件控制修复前，只允许 Dry-run：
+当前 Runtime 已完成三种模式的分级验收。
 
-```bash
-ros2 launch sketch_runtime ground_runtime_bringup.launch.py \
-  dry_run:=true \
-  require_confirm:=true \
-  run_once:=true \
-  use_dummy_wm:=true
-```
-
-单独启动 Runtime 时：
+### Dry-run
 
 ```bash
-ros2 run sketch_runtime real_grounded_runtime_node \
---ros-args \
--p dry_run:=true \
--p require_confirm:=true
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py   use_dummy_wm:=false   dry_run:=true   enable_real_ik:=false   enable_real_servo:=false   require_confirm:=true   run_once:=true
 ```
 
-规则：
+### Real IK / Servo OFF
+
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py   use_dummy_wm:=false   dry_run:=false   enable_real_ik:=true   enable_real_servo:=false   require_confirm:=true   run_once:=true
+```
+
+### Real IK / Real Servo
+
+```bash
+ros2 launch sketch_runtime ground_runtime_bringup.launch.py   use_dummy_wm:=false   dry_run:=false   enable_real_ik:=true   enable_real_servo:=true   require_confirm:=true   run_once:=true
+```
+
+完整命令、监听方法和 Confirm 流程统一见：
 
 ```text
-不得将 dry_run 改为 false
-不得启用 enable_real_servo
-不得通过 /runtime/confirm 触发真实动作
+docs/runtime_debug_guide.md
 ```
 
 ---
 
 ## Hardware Execution Warning
 
-当前代码审查阶段禁止：
+真实硬件执行已经验证，但必须受控。
+
+始终禁止：
 
 - 启动第二套 `jetarm_sdk.launch.py` 或其他底层控制栈；
-- 在 `start_app_node.service` 运行时手动启动底层 SDK；
-- 设置 `dry_run:=false`；
-- 设置 `enable_real_servo:=true`；
-- 向 `/servo_controller` 发布控制消息；
-- 向 `/grasp` 发布控制消息；
-- 向 `/ros_robot_controller/bus_servo/set_position` 发布消息；
-- 运行真实 IK + Servo 联动；
-- 启动 legacy `ground_executor_node`；
-- 使用 joystick、object tracking、object sorting、calibration 等节点控制机械臂。
+- 在 `start_app_node.service` 运行时手动启动重复 SDK；
+- 同时启动 legacy `ground_executor_node` 和 Current Runtime；
+- 直接发布 `/ros_robot_controller/bus_servo/set_position`；
+- 在存在其他主动 `/servo_controller` 写者时执行 Pick；
+- 未检查 Stable Object 位姿就发送 Confirm；
+- 使用 `require_confirm=false` 进行首次或未知场景实机测试。
+
+真实执行前必须：
+
+- 检查节点唯一性；
+- 检查 `/servo_controller --verbose`；
+- 确认目标位姿稳定；
+- 清空机械臂工作区；
+- 操作员现场观察；
+- 保持可立即断电。
 
 ---
 
@@ -1343,19 +1334,35 @@ lsusb
 
 ### Perception Bringup
 
+推荐：
+
 ```bash
-ros2 launch app perception_bringup.launch.py
+cd ~/ros2_ws
+./scripts/start_cyclone_perception.sh
 ```
 
-该 launch 预计启动：
+等效核心 Launch：
+
+```bash
+ros2 launch app perception_bringup.launch.py   start_grounding:=false
+```
+
+当前启动：
 
 ```text
 ROI
 YOLO
 Perception Fusion
 StableObjectTracker
-Grounding
 ```
+
+Grounding 由：
+
+```text
+ground_runtime_bringup.launch.py
+```
+
+统一启动，避免重复节点。
 
 注意：
 
@@ -1448,20 +1455,22 @@ sqlite3 ~/ros2_ws/robotops.db
 
 | Topic | 用途 | 当前状态 |
 |-------|------|----------|
-| `/servo_controller` | 上层舵机控制入口 | ✅ 当前 `grasp ×1` 发布，`controller_manager ×1` 订阅；真实发布仍禁止 |
-| `/grasp` | GraspNode 输入 | ✅ `grasp` 节点单实例；当前禁止人工发布 |
+| `/servo_controller` | 上层舵机控制入口 | ✅ `controller_manager` 订阅；Current Runtime 已通过该 Topic 完成真实 Pick；执行前仍需检查多写者 |
+| `/grasp` | GraspNode 输入 | ✅ `grasp` 节点单实例；不属于当前 Runtime 主输入，人工发布仍需单独审批 |
 | `/controller_manager/servo_states` | 原始舵机状态 | ✅ 已验证 ID `1/2/3/4/5/10` 有数据 |
 | `/controller_manager/joint_states` | 关节角状态 | ✅ 已验证 `joint1~joint5`、`r_joint` 有数据 |
 | `/ros_robot_controller/bus_servo/set_position` | 底层总线位置命令 | ✅ 当前 `servo_manager ×1` 发布，`ros_robot_controller ×1` 订阅；禁止上层旁路直写 |
 | `/ros_robot_controller/bus_servo/set_state` | 底层舵机状态控制 | 🔶 Runtime 审查阶段核对调用者和安全边界 |
 | `/joint_controller` | JointState 控制入口 | 🔶 Runtime 审查阶段核对是否属于当前主路径 |
-| `/kinematics/set_pose_target` | IK 求解服务 | ✅ `kinematics` 单实例；真实 IK 尚未进入验收 |
-| `/kinematics/get_current_pose` | 当前末端姿态服务 | ✅ `kinematics` 单实例；接口待 Runtime 审查 |
+| `/kinematics/set_pose_target` | IK 求解服务 | ✅ `kinematics` 单实例；PC Runtime 跨机真实 IK 已验证 |
+| `/kinematics/get_current_pose` | 当前末端姿态服务 | ✅ `kinematics` 单实例；PC 跨机调用已验证 |
 
 当前舵机基线：
 
 ```text
-ID1=500  ID2=560  ID3=130  ID4=115  ID5=500  ID10=200
+ID1=500  ID2=560  ID3=130  ID4=115  ID5=500
+ID10=200（open）
+ID10=700（close）
 ```
 
 ## Mobile Base Topics
@@ -1513,8 +1522,8 @@ ID1=500  ID2=560  ID3=130  ID4=115  ID5=500  ID10=200
 |------|------|------|
 | Runtime Platform | ✅ HISTORICALLY COMPLETED | 固定机械臂 Runtime 执行系统 |
 | RobotOps Foundation | ✅ HISTORICALLY COMPLETED | Runtime 事件持久化 |
-| Verification Runtime | ✅ HISTORICALLY COMPLETED | 任务完成状态验证 |
-| Mechanical Arm Reactivation | 🔶 CURRENT | 单一控制栈与硬件基础已通过；当前审查 Runtime 主执行链并恢复 Dry-run |
+| Verification Runtime | 🔶 HARDENING | 已实现并接入状态机；当前修复假阳性和证据可靠性 |
+| Mechanical Arm Reactivation | ✅ COMPLETE | 单一控制栈、Dry-run、真实 IK、真实 Servo 与首次真实视觉 Pick 已通过 |
 | Retry / Recovery | ⏳ PLANNED | 基于真实失败数据恢复任务 |
 | Teleop Arbitration | ⏳ PLANNED | AUTO / MANUAL / PAUSED / ESTOP |
 | Data Collection | ⏳ PLANNED | 图像、动作、状态、轨迹和失败数据 |
@@ -1535,33 +1544,34 @@ ID1=500  ID2=560  ID3=130  ID4=115  ID5=500  ID10=200
 
 ### Phase 1 — Select Documentation by Task
 
-当前任务是 Runtime 执行链审查，不再是重复控制栈根因分析。
+当前任务是首次真实视觉 Pick 之后的稳定化，不再是 Runtime 执行链审查。
 
 必须读取：
 
 1. `runtime_index.md`
 2. `CLAUDE.md`
-3. `runtime_task_schema.md`
-4. `runtime_target_object.md`
-5. `runtime_skill_interface.md`
-6. `real_grounded_runtime_node` 源码与入口
-7. `SkillManager`、`PickSkill`、`ActionExecutor`、`RuntimeAdapter`
-8. Runtime 相关 launch、YAML、setup.py 和 tests
-9. 2026-07-30 固定机械臂恢复调试日志
+3. `runtime_debug_guide.md`
+4. `topic_service_map.md`
+5. `runtime_risks.md`
+6. 最新 2026-08-02 真实 Pick 日志
+7. Verification 源码与测试
+8. Fusion / Tracker 源码与参数
+9. RobotOps 源码、launch 与 SQLite schema
 
 按需参考：
 
 - `runtime_architecture.md`
-- `topic_service_map.md`
-- `runtime_risks.md`
+- `runtime_task_schema.md`
+- `runtime_target_object.md`
+- `runtime_skill_interface.md`
 - 历史 Hover / Pick / IK / Servo dev log
 
 当前任务不要求：
 
 - 恢复底盘驱动；
-- 读取 AMCL / Nav2 详细日志；
-- 启动感知全链或执行视觉抓取；
-- 运行真实 Servo。
+- 继续 AMCL / Nav2 参数调试；
+- 重构整个 Runtime；
+- 在没有明确验证目标时重复真实动作。
 
 ### Phase 2 — Inspect Repository and Deployment
 
@@ -1667,11 +1677,13 @@ Intelligent Robot Runtime
 ↓
 Single and Safe Mechanical Arm Control Stack
 ↓
-Runtime / Skill / Action / Adapter Revalidation
+First Real Visual Pick                         ✅
 ↓
-Real Arm Task Execution
+Fixed-Workspace Task Manipulation MVP           🔶 CURRENT
 ↓
-Verification
+Task MVP 1：Blue Block Sorting                  🔶 CURRENT
+↓
+Pick + Place + Dual-Area Verification
 ↓
 RobotOps Data Integrity
 ↓
@@ -1689,7 +1701,8 @@ Autonomous Mobile Manipulation
 ### Immediate Next Step
 
 ```text
-Runtime / Skill / Action / RuntimeAdapter Current-State Audit
-→ Unit Tests
-→ Safe Dry-run State-Flow Revalidation
+建立 AprilTag 固定工作区坐标基线
+→ 统一 RGB CameraInfo 与权威坐标链
+→ 输出蓝色积木 mask / contour / grasp pose
+→ 实现 Pick + Place + 双区域 Verification
 ```
