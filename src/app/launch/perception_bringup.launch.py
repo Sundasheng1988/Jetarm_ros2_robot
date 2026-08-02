@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -14,6 +15,12 @@ def generate_launch_description():
     lab_config_arg = DeclareLaunchArgument(
         'lab_config',
         default_value='/home/sundasheng/ros2_ws/src/app/config/lab_config.yaml',
+    )
+
+    start_grounding_arg = DeclareLaunchArgument(
+        'start_grounding',
+        default_value='true',
+        description='Whether to start grounding_node',
     )
 
     roi_node = Node(
@@ -57,11 +64,15 @@ def generate_launch_description():
             {'publish_runtime': True},
             {'world_model_topic': '/world_model/stable_objects'},
         ],
+        condition=IfCondition(
+            LaunchConfiguration('start_grounding')
+        ),
     )
 
     return LaunchDescription([
         transform_yaml_arg,
         lab_config_arg,
+        start_grounding_arg,
         roi_node,
         yolo_node,
         fusion_node,

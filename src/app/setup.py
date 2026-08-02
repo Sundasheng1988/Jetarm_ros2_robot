@@ -25,7 +25,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'working_calibration_node = app.working_calibration_node:main',
             'working_calibration_pose_node = app.working_calibration_pose_node:main',
             'get_robot_pose_client = app.get_robot_pose_client:main',
             'calibration_node = app.calibration_node:main',
