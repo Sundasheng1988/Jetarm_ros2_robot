@@ -1,0 +1,23 @@
+[
+  {
+    "image": "blue_block_001.jpg",
+    "true_color": "blue",
+    "true_class": "block",
+    "mask_quality": "bad",
+    "note": "轮廓主要包含背景，颜色结果不可信"
+  },
+  {
+    "image": "blue_cup_001.jpg",
+    "true_color": "blue",
+    "true_class": "cup",
+    "mask_quality": "medium",
+    "note": "轮廓覆盖杯子，但包含明显阴影"
+  },
+  {
+    "image": "red_block_001.jpg",
+    "true_color": "red",
+    "true_class": "block",
+    "mask_quality": "bad",
+    "note": "轮廓包含背景，颜色结果不可信"
+  }
+]

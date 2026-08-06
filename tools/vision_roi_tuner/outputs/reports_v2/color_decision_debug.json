@@ -1,0 +1,2202 @@
+[
+  {
+    "image": "blue_block_001.jpg",
+    "expected_color": "blue",
+    "expected_class": "block",
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": true,
+    "stats": {
+      "total_px": 13331,
+      "lab": {
+        "L": {
+          "mean": 69.52,
+          "std": 6.73,
+          "p5": 60,
+          "p50": 69,
+          "p95": 80,
+          "count": 13331
+        },
+        "A": {
+          "mean": 131.32,
+          "std": 1.57,
+          "p5": 129,
+          "p50": 131,
+          "p95": 134,
+          "count": 13331
+        },
+        "B": {
+          "mean": 136.36,
+          "std": 2.48,
+          "p5": 134,
+          "p50": 136,
+          "p95": 140,
+          "count": 13331
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 15.52,
+          "std": 12.52,
+          "p5": 10,
+          "p50": 14,
+          "p95": 20,
+          "count": 13331
+        },
+        "S": {
+          "mean": 77.57,
+          "std": 11.99,
+          "p5": 60,
+          "p50": 77,
+          "p95": 96,
+          "count": 13331
+        },
+        "V": {
+          "mean": 74.29,
+          "std": 6.92,
+          "p5": 64,
+          "p50": 74,
+          "p95": 85,
+          "count": 13331
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.39,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 13331
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 13331
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 13331
+        }
+      },
+      "hits": {
+        "black": 13255,
+        "blue": 13331,
+        "green": 0,
+        "red": 13151,
+        "tennis": 0,
+        "white": 6,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=13331/13331)",
+      "red/blue": {
+        "red_hits": 13151,
+        "blue_hits": 13331,
+        "overlap_both": 13151,
+        "red_only": 0,
+        "blue_only": 180,
+        "red_blue_ratio": 0.9865
+      }
+    }
+  },
+  {
+    "image": "blue_block_002.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 13648,
+      "lab": {
+        "L": {
+          "mean": 69.89,
+          "std": 6.91,
+          "p5": 60,
+          "p50": 69,
+          "p95": 81,
+          "count": 13648
+        },
+        "A": {
+          "mean": 131.85,
+          "std": 1.63,
+          "p5": 129,
+          "p50": 132,
+          "p95": 134,
+          "count": 13648
+        },
+        "B": {
+          "mean": 136.48,
+          "std": 2.58,
+          "p5": 134,
+          "p50": 136,
+          "p95": 140,
+          "count": 13648
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 15.16,
+          "std": 13.74,
+          "p5": 9,
+          "p50": 13,
+          "p95": 19,
+          "count": 13648
+        },
+        "S": {
+          "mean": 79.97,
+          "std": 13.49,
+          "p5": 60,
+          "p50": 80,
+          "p95": 100,
+          "count": 13648
+        },
+        "V": {
+          "mean": 75.41,
+          "std": 6.76,
+          "p5": 65,
+          "p50": 75,
+          "p95": 86,
+          "count": 13648
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 13648
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 13648
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 13648
+        }
+      },
+      "hits": {
+        "black": 13573,
+        "blue": 13648,
+        "green": 0,
+        "red": 13441,
+        "tennis": 0,
+        "white": 7,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=13648/13648)",
+      "red/blue": {
+        "red_hits": 13441,
+        "blue_hits": 13648,
+        "overlap_both": 13441,
+        "red_only": 0,
+        "blue_only": 207,
+        "red_blue_ratio": 0.9848
+      }
+    }
+  },
+  {
+    "image": "blue_block_003.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 14408,
+      "lab": {
+        "L": {
+          "mean": 68.16,
+          "std": 7.14,
+          "p5": 58,
+          "p50": 68,
+          "p95": 80,
+          "count": 14408
+        },
+        "A": {
+          "mean": 131.62,
+          "std": 1.62,
+          "p5": 129,
+          "p50": 132,
+          "p95": 134,
+          "count": 14408
+        },
+        "B": {
+          "mean": 136.28,
+          "std": 2.32,
+          "p5": 134,
+          "p50": 136,
+          "p95": 140,
+          "count": 14408
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 14.68,
+          "std": 10.89,
+          "p5": 10,
+          "p50": 14,
+          "p95": 19,
+          "count": 14408
+        },
+        "S": {
+          "mean": 79.09,
+          "std": 11.15,
+          "p5": 62,
+          "p50": 78,
+          "p95": 98,
+          "count": 14408
+        },
+        "V": {
+          "mean": 73.43,
+          "std": 7.31,
+          "p5": 62,
+          "p50": 73,
+          "p95": 85,
+          "count": 14408
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 14408
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 14408
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 14408
+        }
+      },
+      "hits": {
+        "black": 14357,
+        "blue": 14408,
+        "green": 0,
+        "red": 14262,
+        "tennis": 0,
+        "white": 4,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=14408/14408)",
+      "red/blue": {
+        "red_hits": 14262,
+        "blue_hits": 14408,
+        "overlap_both": 14262,
+        "red_only": 0,
+        "blue_only": 146,
+        "red_blue_ratio": 0.9899
+      }
+    }
+  },
+  {
+    "image": "blue_block_004.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 20120,
+      "lab": {
+        "L": {
+          "mean": 61.63,
+          "std": 10.49,
+          "p5": 44,
+          "p50": 63,
+          "p95": 77,
+          "count": 20120
+        },
+        "A": {
+          "mean": 131.18,
+          "std": 1.6,
+          "p5": 129,
+          "p50": 131,
+          "p95": 134,
+          "count": 20120
+        },
+        "B": {
+          "mean": 136.35,
+          "std": 1.92,
+          "p5": 134,
+          "p50": 136,
+          "p95": 140,
+          "count": 20120
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 14.81,
+          "std": 7.28,
+          "p5": 10,
+          "p50": 14,
+          "p95": 19,
+          "count": 20120
+        },
+        "S": {
+          "mean": 83.39,
+          "std": 10.8,
+          "p5": 67,
+          "p50": 84,
+          "p95": 101,
+          "count": 20120
+        },
+        "V": {
+          "mean": 66.92,
+          "std": 10.69,
+          "p5": 49,
+          "p50": 68,
+          "p95": 83,
+          "count": 20120
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20120
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20120
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20120
+        }
+      },
+      "hits": {
+        "black": 20107,
+        "blue": 20119,
+        "green": 0,
+        "red": 20035,
+        "tennis": 0,
+        "white": 0,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=20119/20120)",
+      "red/blue": {
+        "red_hits": 20035,
+        "blue_hits": 20119,
+        "overlap_both": 20034,
+        "red_only": 1,
+        "blue_only": 85,
+        "red_blue_ratio": 0.9958
+      }
+    }
+  },
+  {
+    "image": "blue_cube_001.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 27282,
+      "lab": {
+        "L": {
+          "mean": 75.79,
+          "std": 10.61,
+          "p5": 61,
+          "p50": 75,
+          "p95": 95,
+          "count": 27282
+        },
+        "A": {
+          "mean": 130.53,
+          "std": 2.62,
+          "p5": 124,
+          "p50": 131,
+          "p95": 134,
+          "count": 27282
+        },
+        "B": {
+          "mean": 134.47,
+          "std": 3.9,
+          "p5": 123,
+          "p50": 135,
+          "p95": 139,
+          "count": 27282
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 22.16,
+          "std": 24.9,
+          "p5": 9,
+          "p50": 14,
+          "p95": 103,
+          "count": 27282
+        },
+        "S": {
+          "mean": 64.06,
+          "std": 18.77,
+          "p5": 27,
+          "p50": 67,
+          "p95": 92,
+          "count": 27282
+        },
+        "V": {
+          "mean": 78.93,
+          "std": 9.67,
+          "p5": 65,
+          "p50": 78,
+          "p95": 96,
+          "count": 27282
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.38,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 27282
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 27282
+        },
+        "B": {
+          "mean": 0.29,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 27282
+        }
+      },
+      "hits": {
+        "black": 22628,
+        "blue": 27282,
+        "green": 1,
+        "red": 24896,
+        "tennis": 0,
+        "white": 81,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=27282/27282)",
+      "red/blue": {
+        "red_hits": 24896,
+        "blue_hits": 27282,
+        "overlap_both": 24896,
+        "red_only": 0,
+        "blue_only": 2386,
+        "red_blue_ratio": 0.9125
+      }
+    }
+  },
+  {
+    "image": "blue_cube_002.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 30367,
+      "lab": {
+        "L": {
+          "mean": 77.07,
+          "std": 11.06,
+          "p5": 61,
+          "p50": 76,
+          "p95": 96,
+          "count": 30367
+        },
+        "A": {
+          "mean": 129.45,
+          "std": 3.19,
+          "p5": 123,
+          "p50": 130,
+          "p95": 133,
+          "count": 30367
+        },
+        "B": {
+          "mean": 134.41,
+          "std": 3.85,
+          "p5": 129,
+          "p50": 135,
+          "p95": 139,
+          "count": 30367
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 26.7,
+          "std": 25.58,
+          "p5": 10,
+          "p50": 15,
+          "p95": 80,
+          "count": 30367
+        },
+        "S": {
+          "mean": 60.68,
+          "std": 21.78,
+          "p5": 21,
+          "p50": 64,
+          "p95": 92,
+          "count": 30367
+        },
+        "V": {
+          "mean": 79.01,
+          "std": 9.6,
+          "p5": 65,
+          "p50": 78,
+          "p95": 96,
+          "count": 30367
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.37,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 30367
+        },
+        "G": {
+          "mean": 0.34,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 30367
+        },
+        "B": {
+          "mean": 0.29,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 30367
+        }
+      },
+      "hits": {
+        "black": 23785,
+        "blue": 30367,
+        "green": 6,
+        "red": 26870,
+        "tennis": 0,
+        "white": 92,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=30367/30367)",
+      "red/blue": {
+        "red_hits": 26870,
+        "blue_hits": 30367,
+        "overlap_both": 26870,
+        "red_only": 0,
+        "blue_only": 3497,
+        "red_blue_ratio": 0.8848
+      }
+    }
+  },
+  {
+    "image": "blue_cube_003.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 27793,
+      "lab": {
+        "L": {
+          "mean": 75.95,
+          "std": 10.8,
+          "p5": 61,
+          "p50": 75,
+          "p95": 95,
+          "count": 27793
+        },
+        "A": {
+          "mean": 130.25,
+          "std": 2.7,
+          "p5": 124,
+          "p50": 131,
+          "p95": 134,
+          "count": 27793
+        },
+        "B": {
+          "mean": 134.3,
+          "std": 3.9,
+          "p5": 123,
+          "p50": 135,
+          "p95": 139,
+          "count": 27793
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 23.58,
+          "std": 26.2,
+          "p5": 9,
+          "p50": 14,
+          "p95": 103,
+          "count": 27793
+        },
+        "S": {
+          "mean": 62.45,
+          "std": 18.55,
+          "p5": 24,
+          "p50": 65,
+          "p95": 89,
+          "count": 27793
+        },
+        "V": {
+          "mean": 78.73,
+          "std": 9.85,
+          "p5": 65,
+          "p50": 78,
+          "p95": 96,
+          "count": 27793
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.38,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 27793
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 27793
+        },
+        "B": {
+          "mean": 0.29,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 27793
+        }
+      },
+      "hits": {
+        "black": 22619,
+        "blue": 27793,
+        "green": 0,
+        "red": 25180,
+        "tennis": 0,
+        "white": 49,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=27793/27793)",
+      "red/blue": {
+        "red_hits": 25180,
+        "blue_hits": 27793,
+        "overlap_both": 25180,
+        "red_only": 0,
+        "blue_only": 2613,
+        "red_blue_ratio": 0.906
+      }
+    }
+  },
+  {
+    "image": "blue_cube_004.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 29002,
+      "lab": {
+        "L": {
+          "mean": 76.36,
+          "std": 10.68,
+          "p5": 61,
+          "p50": 76,
+          "p95": 95,
+          "count": 29002
+        },
+        "A": {
+          "mean": 129.87,
+          "std": 2.98,
+          "p5": 123,
+          "p50": 130,
+          "p95": 133,
+          "count": 29002
+        },
+        "B": {
+          "mean": 134.52,
+          "std": 3.93,
+          "p5": 129,
+          "p50": 135,
+          "p95": 139,
+          "count": 29002
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 25.05,
+          "std": 25.67,
+          "p5": 10,
+          "p50": 15,
+          "p95": 80,
+          "count": 29002
+        },
+        "S": {
+          "mean": 62.54,
+          "std": 20.66,
+          "p5": 22,
+          "p50": 66,
+          "p95": 92,
+          "count": 29002
+        },
+        "V": {
+          "mean": 78.83,
+          "std": 9.57,
+          "p5": 65,
+          "p50": 78,
+          "p95": 96,
+          "count": 29002
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.37,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 29002
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 29002
+        },
+        "B": {
+          "mean": 0.29,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 29002
+        }
+      },
+      "hits": {
+        "black": 23449,
+        "blue": 29001,
+        "green": 1,
+        "red": 26088,
+        "tennis": 0,
+        "white": 40,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=29001/29002)",
+      "red/blue": {
+        "red_hits": 26088,
+        "blue_hits": 29001,
+        "overlap_both": 26087,
+        "red_only": 1,
+        "blue_only": 2914,
+        "red_blue_ratio": 0.8996
+      }
+    }
+  },
+  {
+    "image": "blue_cup_001.jpg",
+    "expected_color": "blue",
+    "expected_class": "cup",
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": true,
+    "stats": {
+      "total_px": 18399,
+      "lab": {
+        "L": {
+          "mean": 43.4,
+          "std": 12.03,
+          "p5": 28,
+          "p50": 42,
+          "p95": 65,
+          "count": 18399
+        },
+        "A": {
+          "mean": 129.46,
+          "std": 3.02,
+          "p5": 124,
+          "p50": 130,
+          "p95": 134,
+          "count": 18399
+        },
+        "B": {
+          "mean": 108.63,
+          "std": 9.59,
+          "p5": 99,
+          "p50": 106,
+          "p95": 132,
+          "count": 18399
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 98.97,
+          "std": 17.83,
+          "p5": 51,
+          "p50": 106,
+          "p95": 107,
+          "count": 18399
+        },
+        "S": {
+          "mean": 189.82,
+          "std": 61.47,
+          "p5": 33,
+          "p50": 215,
+          "p95": 232,
+          "count": 18399
+        },
+        "V": {
+          "mean": 70.6,
+          "std": 15.89,
+          "p5": 45,
+          "p50": 70,
+          "p95": 96,
+          "count": 18399
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.12,
+          "std": 0.08,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 18399
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 18399
+        },
+        "B": {
+          "mean": 0.54,
+          "std": 0.1,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 18399
+        }
+      },
+      "hits": {
+        "black": 18275,
+        "blue": 18399,
+        "green": 0,
+        "red": 1839,
+        "tennis": 0,
+        "white": 25,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=18399/18399)",
+      "red/blue": {
+        "red_hits": 1839,
+        "blue_hits": 18399,
+        "overlap_both": 1839,
+        "red_only": 0,
+        "blue_only": 16560,
+        "red_blue_ratio": 0.1
+      }
+    }
+  },
+  {
+    "image": "blue_cup_002.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 9650,
+      "lab": {
+        "L": {
+          "mean": 49.51,
+          "std": 13.15,
+          "p5": 30,
+          "p50": 50,
+          "p95": 68,
+          "count": 9650
+        },
+        "A": {
+          "mean": 129.85,
+          "std": 3.09,
+          "p5": 124,
+          "p50": 130,
+          "p95": 134,
+          "count": 9650
+        },
+        "B": {
+          "mean": 105.48,
+          "std": 8.58,
+          "p5": 96,
+          "p50": 104,
+          "p95": 131,
+          "count": 9650
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 102.16,
+          "std": 12.87,
+          "p5": 56,
+          "p50": 105,
+          "p95": 108,
+          "count": 9650
+        },
+        "S": {
+          "mean": 194.79,
+          "std": 47.41,
+          "p5": 46,
+          "p50": 212,
+          "p95": 229,
+          "count": 9650
+        },
+        "V": {
+          "mean": 80.53,
+          "std": 19.39,
+          "p5": 48,
+          "p50": 83,
+          "p95": 107,
+          "count": 9650
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.12,
+          "std": 0.07,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 9650
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 9650
+        },
+        "B": {
+          "mean": 0.55,
+          "std": 0.08,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 9650
+        }
+      },
+      "hits": {
+        "black": 9507,
+        "blue": 9650,
+        "green": 0,
+        "red": 442,
+        "tennis": 0,
+        "white": 36,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=9650/9650)",
+      "red/blue": {
+        "red_hits": 442,
+        "blue_hits": 9650,
+        "overlap_both": 442,
+        "red_only": 0,
+        "blue_only": 9208,
+        "red_blue_ratio": 0.0458
+      }
+    }
+  },
+  {
+    "image": "blue_cup_003.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 6047,
+      "lab": {
+        "L": {
+          "mean": 61.55,
+          "std": 17.15,
+          "p5": 47,
+          "p50": 55,
+          "p95": 104,
+          "count": 6047
+        },
+        "A": {
+          "mean": 127.77,
+          "std": 3.47,
+          "p5": 123,
+          "p50": 128,
+          "p95": 133,
+          "count": 6047
+        },
+        "B": {
+          "mean": 112.69,
+          "std": 13.95,
+          "p5": 98,
+          "p50": 106,
+          "p95": 133,
+          "count": 6047
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 87.62,
+          "std": 26.19,
+          "p5": 40,
+          "p50": 105,
+          "p95": 107,
+          "count": 6047
+        },
+        "S": {
+          "mean": 144.9,
+          "std": 82.32,
+          "p5": 24,
+          "p50": 193,
+          "p95": 224,
+          "count": 6047
+        },
+        "V": {
+          "mean": 82.63,
+          "std": 17.13,
+          "p5": 49,
+          "p50": 85,
+          "p95": 106,
+          "count": 6047
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.18,
+          "std": 0.11,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 6047
+        },
+        "G": {
+          "mean": 0.34,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 6047
+        },
+        "B": {
+          "mean": 0.48,
+          "std": 0.12,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 6047
+        }
+      },
+      "hits": {
+        "black": 5344,
+        "blue": 6047,
+        "green": 0,
+        "red": 1487,
+        "tennis": 0,
+        "white": 162,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=6047/6047)",
+      "red/blue": {
+        "red_hits": 1487,
+        "blue_hits": 6047,
+        "overlap_both": 1487,
+        "red_only": 0,
+        "blue_only": 4560,
+        "red_blue_ratio": 0.2459
+      }
+    }
+  },
+  {
+    "image": "blue_cup_004.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 0.9737,
+    "correct": null,
+    "stats": {
+      "total_px": 1598,
+      "lab": {
+        "L": {
+          "mean": 90.12,
+          "std": 26.77,
+          "p5": 63,
+          "p50": 84,
+          "p95": 125,
+          "count": 1598
+        },
+        "A": {
+          "mean": 125.33,
+          "std": 2.46,
+          "p5": 122,
+          "p50": 125,
+          "p95": 130,
+          "count": 1598
+        },
+        "B": {
+          "mean": 116.52,
+          "std": 12.89,
+          "p5": 100,
+          "p50": 113,
+          "p95": 132,
+          "count": 1598
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 85.54,
+          "std": 24.5,
+          "p5": 43,
+          "p50": 103,
+          "p95": 107,
+          "count": 1598
+        },
+        "S": {
+          "mean": 96.59,
+          "std": 67.49,
+          "p5": 18,
+          "p50": 97,
+          "p95": 188,
+          "count": 1598
+        },
+        "V": {
+          "mean": 104.23,
+          "std": 28.75,
+          "p5": 61,
+          "p50": 104,
+          "p95": 151,
+          "count": 1598
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.25,
+          "std": 0.07,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 1598
+        },
+        "G": {
+          "mean": 0.34,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 1598
+        },
+        "B": {
+          "mean": 0.41,
+          "std": 0.08,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 1598
+        }
+      },
+      "hits": {
+        "black": 866,
+        "blue": 1556,
+        "green": 0,
+        "red": 461,
+        "tennis": 0,
+        "white": 195,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 0.9737,
+      "win_reason": "chromatic 'blue' conf=0.9737 >= 0.1 (hits=1556/1598)",
+      "red/blue": {
+        "red_hits": 461,
+        "blue_hits": 1556,
+        "overlap_both": 461,
+        "red_only": 0,
+        "blue_only": 1095,
+        "red_blue_ratio": 0.2963
+      }
+    }
+  },
+  {
+    "image": "blue_cup_005.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 9618,
+      "lab": {
+        "L": {
+          "mean": 46.8,
+          "std": 13.02,
+          "p5": 28,
+          "p50": 46,
+          "p95": 68,
+          "count": 9618
+        },
+        "A": {
+          "mean": 129.77,
+          "std": 3.04,
+          "p5": 124,
+          "p50": 130,
+          "p95": 134,
+          "count": 9618
+        },
+        "B": {
+          "mean": 105.65,
+          "std": 7.1,
+          "p5": 96,
+          "p50": 105,
+          "p95": 119,
+          "count": 9618
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 104.05,
+          "std": 8.2,
+          "p5": 101,
+          "p50": 106,
+          "p95": 107,
+          "count": 9618
+        },
+        "S": {
+          "mean": 200.2,
+          "std": 36.3,
+          "p5": 132,
+          "p50": 212,
+          "p95": 230,
+          "count": 9618
+        },
+        "V": {
+          "mean": 77.48,
+          "std": 18.53,
+          "p5": 49,
+          "p50": 78,
+          "p95": 108,
+          "count": 9618
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.11,
+          "std": 0.05,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 9618
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 9618
+        },
+        "B": {
+          "mean": 0.56,
+          "std": 0.06,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 9618
+        }
+      },
+      "hits": {
+        "black": 9535,
+        "blue": 9618,
+        "green": 0,
+        "red": 154,
+        "tennis": 0,
+        "white": 8,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=9618/9618)",
+      "red/blue": {
+        "red_hits": 154,
+        "blue_hits": 9618,
+        "overlap_both": 154,
+        "red_only": 0,
+        "blue_only": 9464,
+        "red_blue_ratio": 0.016
+      }
+    }
+  },
+  {
+    "image": "blue_cup_006.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 2510,
+      "lab": {
+        "L": {
+          "mean": 91.13,
+          "std": 16.76,
+          "p5": 66,
+          "p50": 91,
+          "p95": 119,
+          "count": 2510
+        },
+        "A": {
+          "mean": 125.16,
+          "std": 1.89,
+          "p5": 123,
+          "p50": 124,
+          "p95": 129,
+          "count": 2510
+        },
+        "B": {
+          "mean": 125.08,
+          "std": 12.16,
+          "p5": 101,
+          "p50": 131,
+          "p95": 134,
+          "count": 2510
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 63.93,
+          "std": 26.76,
+          "p5": 30,
+          "p50": 60,
+          "p95": 106,
+          "count": 2510
+        },
+        "S": {
+          "mean": 57.66,
+          "std": 60.96,
+          "p5": 17,
+          "p50": 25,
+          "p95": 183,
+          "count": 2510
+        },
+        "V": {
+          "mean": 94.49,
+          "std": 17.14,
+          "p5": 64,
+          "p50": 95,
+          "p95": 120,
+          "count": 2510
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.29,
+          "std": 0.07,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 2510
+        },
+        "G": {
+          "mean": 0.35,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 2510
+        },
+        "B": {
+          "mean": 0.36,
+          "std": 0.08,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 2510
+        }
+      },
+      "hits": {
+        "black": 1007,
+        "blue": 2510,
+        "green": 0,
+        "red": 1617,
+        "tennis": 0,
+        "white": 422,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=2510/2510)",
+      "red/blue": {
+        "red_hits": 1617,
+        "blue_hits": 2510,
+        "overlap_both": 1617,
+        "red_only": 0,
+        "blue_only": 893,
+        "red_blue_ratio": 0.6442
+      }
+    }
+  },
+  {
+    "image": "red_block_001.jpg",
+    "expected_color": "red",
+    "expected_class": "block",
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": false,
+    "stats": {
+      "total_px": 20305,
+      "lab": {
+        "L": {
+          "mean": 69.54,
+          "std": 9.83,
+          "p5": 55,
+          "p50": 69,
+          "p95": 85,
+          "count": 20305
+        },
+        "A": {
+          "mean": 130.56,
+          "std": 2.74,
+          "p5": 124,
+          "p50": 131,
+          "p95": 134,
+          "count": 20305
+        },
+        "B": {
+          "mean": 135.13,
+          "std": 4.04,
+          "p5": 123,
+          "p50": 136,
+          "p95": 140,
+          "count": 20305
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 23.45,
+          "std": 25.47,
+          "p5": 10,
+          "p50": 14,
+          "p95": 106,
+          "count": 20305
+        },
+        "S": {
+          "mean": 72.3,
+          "std": 20.63,
+          "p5": 24,
+          "p50": 77,
+          "p95": 97,
+          "count": 20305
+        },
+        "V": {
+          "mean": 73.62,
+          "std": 9.14,
+          "p5": 60,
+          "p50": 73,
+          "p95": 87,
+          "count": 20305
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.39,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20305
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20305
+        },
+        "B": {
+          "mean": 0.28,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20305
+        }
+      },
+      "hits": {
+        "black": 19826,
+        "blue": 20305,
+        "green": 0,
+        "red": 18559,
+        "tennis": 0,
+        "white": 45,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=20305/20305)",
+      "red/blue": {
+        "red_hits": 18559,
+        "blue_hits": 20305,
+        "overlap_both": 18559,
+        "red_only": 0,
+        "blue_only": 1746,
+        "red_blue_ratio": 0.914
+      }
+    }
+  },
+  {
+    "image": "red_block_002.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 0.9996,
+    "correct": null,
+    "stats": {
+      "total_px": 19535,
+      "lab": {
+        "L": {
+          "mean": 72.01,
+          "std": 9.42,
+          "p5": 58,
+          "p50": 72,
+          "p95": 86,
+          "count": 19535
+        },
+        "A": {
+          "mean": 130.04,
+          "std": 3.16,
+          "p5": 123,
+          "p50": 131,
+          "p95": 134,
+          "count": 19535
+        },
+        "B": {
+          "mean": 134.83,
+          "std": 4.37,
+          "p5": 122,
+          "p50": 136,
+          "p95": 140,
+          "count": 19535
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 26.56,
+          "std": 27.37,
+          "p5": 10,
+          "p50": 15,
+          "p95": 106,
+          "count": 19535
+        },
+        "S": {
+          "mean": 68.79,
+          "std": 22.28,
+          "p5": 23,
+          "p50": 74,
+          "p95": 96,
+          "count": 19535
+        },
+        "V": {
+          "mean": 75.41,
+          "std": 8.26,
+          "p5": 63,
+          "p50": 75,
+          "p95": 88,
+          "count": 19535
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.38,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 19535
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 19535
+        },
+        "B": {
+          "mean": 0.29,
+          "std": 0.03,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 19535
+        }
+      },
+      "hits": {
+        "black": 18695,
+        "blue": 19527,
+        "green": 9,
+        "red": 17244,
+        "tennis": 0,
+        "white": 35,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 0.9996,
+      "win_reason": "chromatic 'blue' conf=0.9996 >= 0.1 (hits=19527/19535)",
+      "red/blue": {
+        "red_hits": 17244,
+        "blue_hits": 19527,
+        "overlap_both": 17236,
+        "red_only": 8,
+        "blue_only": 2291,
+        "red_blue_ratio": 0.8831
+      }
+    }
+  },
+  {
+    "image": "red_block_003.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 20119,
+      "lab": {
+        "L": {
+          "mean": 61.8,
+          "std": 10.4,
+          "p5": 45,
+          "p50": 63,
+          "p95": 78,
+          "count": 20119
+        },
+        "A": {
+          "mean": 131.26,
+          "std": 1.62,
+          "p5": 129,
+          "p50": 131,
+          "p95": 134,
+          "count": 20119
+        },
+        "B": {
+          "mean": 136.43,
+          "std": 1.98,
+          "p5": 134,
+          "p50": 136,
+          "p95": 140,
+          "count": 20119
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 14.67,
+          "std": 6.31,
+          "p5": 10,
+          "p50": 14,
+          "p95": 19,
+          "count": 20119
+        },
+        "S": {
+          "mean": 83.88,
+          "std": 11.16,
+          "p5": 65,
+          "p50": 84,
+          "p95": 101,
+          "count": 20119
+        },
+        "V": {
+          "mean": 67.2,
+          "std": 10.78,
+          "p5": 49,
+          "p50": 68,
+          "p95": 83,
+          "count": 20119
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20119
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20119
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20119
+        }
+      },
+      "hits": {
+        "black": 20111,
+        "blue": 20119,
+        "green": 0,
+        "red": 20030,
+        "tennis": 0,
+        "white": 0,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=20119/20119)",
+      "red/blue": {
+        "red_hits": 20030,
+        "blue_hits": 20119,
+        "overlap_both": 20030,
+        "red_only": 0,
+        "blue_only": 89,
+        "red_blue_ratio": 0.9956
+      }
+    }
+  },
+  {
+    "image": "red_block_004.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 0.9999,
+    "correct": null,
+    "stats": {
+      "total_px": 21735,
+      "lab": {
+        "L": {
+          "mean": 63.1,
+          "std": 11.17,
+          "p5": 45,
+          "p50": 63,
+          "p95": 80,
+          "count": 21735
+        },
+        "A": {
+          "mean": 131.39,
+          "std": 1.77,
+          "p5": 129,
+          "p50": 131,
+          "p95": 134,
+          "count": 21735
+        },
+        "B": {
+          "mean": 135.67,
+          "std": 2.45,
+          "p5": 133,
+          "p50": 136,
+          "p95": 139,
+          "count": 21735
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 15.46,
+          "std": 13.3,
+          "p5": 10,
+          "p50": 14,
+          "p95": 21,
+          "count": 21735
+        },
+        "S": {
+          "mean": 79.06,
+          "std": 12.06,
+          "p5": 60,
+          "p50": 80,
+          "p95": 95,
+          "count": 21735
+        },
+        "V": {
+          "mean": 68.36,
+          "std": 11.29,
+          "p5": 50,
+          "p50": 69,
+          "p95": 85,
+          "count": 21735
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 21735
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 21735
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.02,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 21735
+        }
+      },
+      "hits": {
+        "black": 21578,
+        "blue": 21733,
+        "green": 0,
+        "red": 21369,
+        "tennis": 0,
+        "white": 10,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 0.9999,
+      "win_reason": "chromatic 'blue' conf=0.9999 >= 0.1 (hits=21733/21735)",
+      "red/blue": {
+        "red_hits": 21369,
+        "blue_hits": 21733,
+        "overlap_both": 21367,
+        "red_only": 2,
+        "blue_only": 366,
+        "red_blue_ratio": 0.9833
+      }
+    }
+  },
+  {
+    "image": "red_block_005.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 21247,
+      "lab": {
+        "L": {
+          "mean": 62.11,
+          "std": 10.83,
+          "p5": 44,
+          "p50": 63,
+          "p95": 79,
+          "count": 21247
+        },
+        "A": {
+          "mean": 130.71,
+          "std": 1.63,
+          "p5": 128,
+          "p50": 131,
+          "p95": 133,
+          "count": 21247
+        },
+        "B": {
+          "mean": 136.36,
+          "std": 2.0,
+          "p5": 134,
+          "p50": 136,
+          "p95": 140,
+          "count": 21247
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 15.76,
+          "std": 7.35,
+          "p5": 11,
+          "p50": 15,
+          "p95": 21,
+          "count": 21247
+        },
+        "S": {
+          "mean": 81.44,
+          "std": 11.89,
+          "p5": 65,
+          "p50": 82,
+          "p95": 99,
+          "count": 21247
+        },
+        "V": {
+          "mean": 66.71,
+          "std": 10.92,
+          "p5": 49,
+          "p50": 67,
+          "p95": 83,
+          "count": 21247
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 21247
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 21247
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 21247
+        }
+      },
+      "hits": {
+        "black": 21220,
+        "blue": 21246,
+        "green": 0,
+        "red": 21128,
+        "tennis": 0,
+        "white": 0,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=21246/21247)",
+      "red/blue": {
+        "red_hits": 21128,
+        "blue_hits": 21246,
+        "overlap_both": 21127,
+        "red_only": 1,
+        "blue_only": 119,
+        "red_blue_ratio": 0.9944
+      }
+    }
+  },
+  {
+    "image": "red_block_006.jpg",
+    "expected_color": null,
+    "expected_class": null,
+    "predicted": "blue",
+    "confidence": 1.0,
+    "correct": null,
+    "stats": {
+      "total_px": 20954,
+      "lab": {
+        "L": {
+          "mean": 62.66,
+          "std": 10.75,
+          "p5": 45,
+          "p50": 63,
+          "p95": 79,
+          "count": 20954
+        },
+        "A": {
+          "mean": 131.47,
+          "std": 1.62,
+          "p5": 129,
+          "p50": 131,
+          "p95": 134,
+          "count": 20954
+        },
+        "B": {
+          "mean": 135.88,
+          "std": 2.09,
+          "p5": 134,
+          "p50": 136,
+          "p95": 139,
+          "count": 20954
+        }
+      },
+      "hsv": {
+        "H": {
+          "mean": 14.47,
+          "std": 9.7,
+          "p5": 10,
+          "p50": 14,
+          "p95": 19,
+          "count": 20954
+        },
+        "S": {
+          "mean": 80.51,
+          "std": 11.56,
+          "p5": 63,
+          "p50": 81,
+          "p95": 97,
+          "count": 20954
+        },
+        "V": {
+          "mean": 68.05,
+          "std": 10.78,
+          "p5": 50,
+          "p50": 69,
+          "p95": 84,
+          "count": 20954
+        }
+      },
+      "rgb": {
+        "R": {
+          "mean": 0.4,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20954
+        },
+        "G": {
+          "mean": 0.33,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20954
+        },
+        "B": {
+          "mean": 0.27,
+          "std": 0.01,
+          "p5": 0,
+          "p50": 0,
+          "p95": 0,
+          "count": 20954
+        }
+      },
+      "hits": {
+        "black": 20909,
+        "blue": 20953,
+        "green": 0,
+        "red": 20781,
+        "tennis": 0,
+        "white": 3,
+        "yellow": 0,
+        "purple": 0
+      },
+      "predicted": "blue",
+      "confidence": 1.0,
+      "win_reason": "chromatic 'blue' conf=1.0000 >= 0.1 (hits=20953/20954)",
+      "red/blue": {
+        "red_hits": 20781,
+        "blue_hits": 20953,
+        "overlap_both": 20780,
+        "red_only": 1,
+        "blue_only": 173,
+        "red_blue_ratio": 0.9918
+      }
+    }
+  }
+]

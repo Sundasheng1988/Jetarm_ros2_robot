@@ -1,0 +1,171 @@
+{
+  "accuracy": 0.35,
+  "correct": 7,
+  "total": 20,
+  "per_color_accuracy": {
+    "blue": 0.5,
+    "red": 0.0
+  },
+  "wrong_high_confidence": 0,
+  "confusion": {
+    "blue": {
+      "blue": 7,
+      "white": 7
+    },
+    "red": {
+      "blue": 3,
+      "black": 2,
+      "white": 1
+    }
+  },
+  "detail": [
+    {
+      "filename": "blue_block_001.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 0.2075,
+      "correct": true
+    },
+    {
+      "filename": "blue_block_002.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 0.1605,
+      "correct": true
+    },
+    {
+      "filename": "blue_block_003.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 0.3333,
+      "correct": true
+    },
+    {
+      "filename": "blue_block_004.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 0.6667,
+      "correct": true
+    },
+    {
+      "filename": "blue_cube_001.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.0095,
+      "correct": false
+    },
+    {
+      "filename": "blue_cube_002.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.0097,
+      "correct": false
+    },
+    {
+      "filename": "blue_cube_003.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.0091,
+      "correct": false
+    },
+    {
+      "filename": "blue_cube_004.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.0088,
+      "correct": false
+    },
+    {
+      "filename": "blue_cup_001.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 0.1854,
+      "correct": true
+    },
+    {
+      "filename": "blue_cup_002.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "correct": true
+    },
+    {
+      "filename": "blue_cup_003.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.261,
+      "correct": false
+    },
+    {
+      "filename": "blue_cup_004.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.4233,
+      "correct": false
+    },
+    {
+      "filename": "blue_cup_005.jpg",
+      "expected": "blue",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "correct": true
+    },
+    {
+      "filename": "blue_cup_006.jpg",
+      "expected": "blue",
+      "predicted": "white",
+      "confidence": 0.4591,
+      "correct": false
+    },
+    {
+      "filename": "red_block_001.jpg",
+      "expected": "red",
+      "predicted": "blue",
+      "confidence": 0.2161,
+      "correct": false
+    },
+    {
+      "filename": "red_block_002.jpg",
+      "expected": "red",
+      "predicted": "blue",
+      "confidence": 0.2261,
+      "correct": false
+    },
+    {
+      "filename": "red_block_003.jpg",
+      "expected": "red",
+      "predicted": "black",
+      "confidence": 0.0,
+      "correct": false
+    },
+    {
+      "filename": "red_block_004.jpg",
+      "expected": "red",
+      "predicted": "blue",
+      "confidence": 0.2747,
+      "correct": false
+    },
+    {
+      "filename": "red_block_005.jpg",
+      "expected": "red",
+      "predicted": "black",
+      "confidence": 0.0,
+      "correct": false
+    },
+    {
+      "filename": "red_block_006.jpg",
+      "expected": "red",
+      "predicted": "white",
+      "confidence": 0.0625,
+      "correct": false
+    }
+  ],
+  "params": {
+    "erode_size": 5,
+    "erode_iterations": 1,
+    "min_confidence": 0.0,
+    "chromatic_min": 0.1,
+    "ignore_dark": 90,
+    "ignore_bright": null
+  }
+}

@@ -104,8 +104,8 @@ class FunASREngine:
 def _read_str_array_param(node: Node, name: str, default: list[str] | None = None) -> list[str]:
     """
     读取字符串数组参数：
-    - YAML: wake_words: ["jack", "杰克"]  ✅
-    - 字符串: wake_words: "jack,杰克"     ✅
+    - YAML: wake_words: ["rebecca", "瑞贝卡"]  ✅
+    - 字符串: wake_words: "rebecca,瑞贝卡"     ✅
     - 未提供：使用 default
     """
     if default is None:
@@ -191,9 +191,9 @@ class SpeechDialogFunASR(Node):
         # ===== 唤醒 & 跟随 =====
         # 兼容两种命名：enable_wakeup / use_wakeword（launch 里传的是 use_wakeword）
         _enable_default = True
-        self.enable_wakeup = bool(self.declare_parameter("enable_wakeup", _enable_default).get_parameter_value().bool_value)
-        use_wakeword_alias = bool(self.declare_parameter("use_wakeword", self.enable_wakeup).get_parameter_value().bool_value)
-        self.enable_wakeup = use_wakeword_alias
+        # self.enable_wakeup = bool(self.declare_parameter("enable_wakeup", _enable_default).get_parameter_value().bool_value)
+        # use_wakeword_alias = bool(self.declare_parameter("use_wakeword", self.enable_wakeup).get_parameter_value().bool_value)
+        # self.enable_wakeup = use_wakeword_alias
 
         # 兼容 wakeup_window_s / wake_window_s
         _default_wake = 30.0
@@ -205,7 +205,7 @@ class SpeechDialogFunASR(Node):
         self.active_extend_s   = float(self.declare_parameter("active_extend_s", 10.0).get_parameter_value().double_value)
 
         # 唤醒词（含常见识别变体）
-        self.wake_words = _read_str_array_param(self, "wake_words", default=["jack"])
+        self.wake_words = _read_str_array_param(self, "wake_words", default=["rebecca", "瑞贝卡"])
         
         # ===== 过滤阈值 =====
         self.min_avg_conf = float(self.declare_parameter("min_avg_conf", 0.70).get_parameter_value().double_value)
@@ -315,9 +315,9 @@ class SpeechDialogFunASR(Node):
             raise
 
         # ===== 状态 =====
-        self.active = not self.enable_wakeup
-        self.active_until = 0.0
-        self.last_wakeup = 0.0
+        # self.active = not self.enable_wakeup
+        # self.active_until = 0.0
+        # self.last_wakeup = 0.0
         
         # === 11/8 等待 LLM 回复的守护 ===
         self.llm_reply_timeout_s = float(self.declare_parameter("llm_reply_timeout_s", 25.0).get_parameter_value().double_value)
@@ -382,9 +382,9 @@ class SpeechDialogFunASR(Node):
         # ✅ 11/8关键：进入等待 LLM 回复状态，并拉长本地激活窗口
         self.awaiting_reply = True
         now = time.time()
-        if self.enable_wakeup:
-            self.active = True
-            self.active_until = max(self.active_until, now + self.llm_reply_timeout_s)
+        # if self.enable_wakeup:
+        #     self.active = True
+        #     self.active_until = max(self.active_until, now + self.llm_reply_timeout_s)
 
     def _on_tts_reply(self, msg: String):
         
@@ -411,9 +411,9 @@ class SpeechDialogFunASR(Node):
         self.get_logger().info(f"🔇 动态静音(估算) {est:.2f}s；硬门控靠 /tts_speaking（至 {self.mute_until:.2f}）")
 
         # ✅ 播报完后，自动开启续谈窗口
-        if self.enable_wakeup:
-            self.active = True
-            self.active_until = max(self.active_until, self.mute_until + self.followup_window_s)
+        # if self.enable_wakeup:
+        #     self.active = True
+        #     self.active_until = max(self.active_until, self.mute_until + self.followup_window_s)
 
     def _on_tts_speaking(self, msg: Bool):
         """TTS 正在说话门控：True 时立即清空端点缓冲；False 延时释放。"""
@@ -463,16 +463,16 @@ class SpeechDialogFunASR(Node):
             except queue.Empty:
                 # 空闲期也要检查是否需要从激活态降到休眠并播报提示
                 now = time.time()
-                if self.enable_wakeup and self.active and now > self.active_until:
-                    if self.awaiting_reply:
-                        # ✅ 仍在等待 LLM 回复：不给休眠，防抖续命 3s
-                        self.active_until = now + 3.0
-                    else:
-                        self.active = False
-                        self.get_logger().debug("🔕 激活窗口结束，回到静默等待唤醒")
-                        if self.sleep_notice:
-                            self.get_logger().info("💤 进入休眠提示")
-                            self.pub_reply.publish(String(data=self.sleep_prompt))
+                # if self.enable_wakeup and self.active and now > self.active_until:
+                #     if self.awaiting_reply:
+                #         # ✅ 仍在等待 LLM 回复：不给休眠，防抖续命 3s
+                #         self.active_until = now + 3.0
+                #     else:
+                #         self.active = False
+                #         self.get_logger().debug("🔕 激活窗口结束，回到静默等待唤醒")
+                #         if self.sleep_notice:
+                #             self.get_logger().info("💤 进入休眠提示")
+                #             self.pub_reply.publish(String(data=self.sleep_prompt))
                 continue
 
             now = time.time()
@@ -487,19 +487,19 @@ class SpeechDialogFunASR(Node):
                     continue
 
             # 唤醒/激活窗口管理（仅在正常模式下影响发布；打断模式不影响）
-            if self.enable_wakeup and not self._interrupt_listen_only:
-                if self.active and now > self.active_until:
-                    if self.awaiting_reply:
-                        # ✅ 等待 LLM：延长一点点，避免误休眠
-                        self.active_until = now + 3.0
-                    else:
-                        self.active = False
-                        self.get_logger().debug("🔕 激活窗口结束，回到静默等待唤醒")
-                        if self.sleep_notice:
-                            self.get_logger().info("💤 进入休眠提示")
-                            self.pub_reply.publish(String(data=self.sleep_prompt))
-            elif not self.enable_wakeup:
-                self.active = True
+            # if self.enable_wakeup and not self._interrupt_listen_only:
+            #     if self.active and now > self.active_until:
+            #         if self.awaiting_reply:
+            #             # ✅ 等待 LLM：延长一点点，避免误休眠
+            #             self.active_until = now + 3.0
+            #         else:
+            #             self.active = False
+            #             self.get_logger().debug("🔕 激活窗口结束，回到静默等待唤醒")
+            #             if self.sleep_notice:
+            #                 self.get_logger().info("💤 进入休眠提示")
+            #                 self.pub_reply.publish(String(data=self.sleep_prompt))
+            # elif not self.enable_wakeup:
+            #     self.active = True
 
             # VAD
             try:
@@ -518,8 +518,8 @@ class SpeechDialogFunASR(Node):
                 self.ms_in_cur_utt += frame_ms
 
                 # 说话中续杯（仅正常模式）
-                if not self._interrupt_listen_only and self.enable_wakeup and self.active:
-                    self.active_until = now + self.active_extend_s
+                # if not self._interrupt_listen_only and self.enable_wakeup and self.active:
+                #     self.active_until = now + self.active_extend_s
 
                 # 语句上限（打断模式更短）
                 max_utt = 900 if self._interrupt_listen_only else self.max_utt_ms
@@ -590,16 +590,18 @@ class SpeechDialogFunASR(Node):
         ).lower()
         hit_wake = any(w in norm for w in self._wake_words_lc)
 
-        if self.enable_wakeup:
-            if hit_wake:
-                now = time.time()
-                self.active = True
-                self.last_wakeup = now
-                self.active_until = now + self.wakeup_window_s
-                self.get_logger().info(f"🔔 唤醒成功（本地激活 {self.wakeup_window_s}s），并直通给 Agent")
-                # 继续往下：直通
-            elif not self.active:
-                return  # 未命中唤醒且静默状态：不发布
+        # if self.enable_wakeup:
+        #     if hit_wake:
+        #         now = time.time()
+        #         self.active = True
+        #         self.last_wakeup = now
+        #         self.active_until = now + self.wakeup_window_s
+        #         self.get_logger().info(f"🔔 唤醒成功（本地激活 {self.wakeup_window_s}s），并直通给 Agent")
+        #         # 继续往下：直通
+        #     elif not self.active:
+        #         return  # 未命中唤醒且静默状态：不发布
+        if hit_wake:
+            self.get_logger().info("🔔 检测到唤醒词（仅标注，不控制）")
 
         # 自语抑制（仅在最近播报窗口才检查）
         recent = (time.time() - self.last_tts_time) <= self.self_speech_window_s
@@ -617,9 +619,9 @@ class SpeechDialogFunASR(Node):
             if hit_wake:
                 # 唤醒句太短也直通“原句”
                 self._publish(text)
-                if self.enable_wakeup:
-                    self.active = True
-                    self.active_until = max(self.active_until, time.time() + self.active_extend_s)
+                # if self.enable_wakeup:
+                #     self.active = True
+                #     self.active_until = max(self.active_until, time.time() + self.active_extend_s)
                 return
             self.get_logger().info(f"🪶 过滤短句/口头语：{cleaned}")
             return
@@ -630,9 +632,9 @@ class SpeechDialogFunASR(Node):
 
         self._publish(cleaned)
 
-        if self.enable_wakeup:
-            self.active = True
-            self.active_until = max(self.active_until, time.time() + self.active_extend_s)
+        # if self.enable_wakeup:
+        #     self.active = True
+        #     self.active_until = max(self.active_until, time.time() + self.active_extend_s)
 
     @staticmethod
     def _post_clean_cn(text: str) -> str:

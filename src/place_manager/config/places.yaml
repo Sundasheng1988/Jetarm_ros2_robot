@@ -1,0 +1,15 @@
+# places.yaml — Place Manager 地点数据文件模板
+#
+# 此文件是包内模板。运行时默认读写文件为：
+#   ~/ros2_ws/config/places.yaml
+# 可通过 launch 参数 places_file 覆盖。
+#
+# 格式说明：
+#   places:
+#     <地点名>:
+#       x:   <float>   # 地图坐标系 x（米）
+#       y:   <float>   # 地图坐标系 y（米）
+#       yaw: <float>   # 朝向角（弧度）
+#
+
+places: {}

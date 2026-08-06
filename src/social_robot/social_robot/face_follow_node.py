@@ -85,6 +85,8 @@ class FaceFollowNode(Node):
         self.last_send_ts = 0.0
         self.send_interval = 0.08   # 80ms ≈ 12.5Hz（非常合适）
 
+        self.freeze_reason = ""   # "" | "pause" | "action"
+
     # ------------------------------------------------
     # 原厂 goback 姿态（完全照抄 object_tracking.goback）
     # ------------------------------------------------
@@ -132,7 +134,9 @@ class FaceFollowNode(Node):
     # 添加控制回调
     # ------------------------------------------------    
     def control_callback(self, msg: String):
-        cmd = msg.data.strip()
+        cmd = (msg.data or "").strip()
+        if not cmd:
+            return
 
         # ========== A) 语音节点启动完毕（voice_ready） ==========
         #if cmd == "voice_ready":
@@ -146,6 +150,7 @@ class FaceFollowNode(Node):
 
         # ========== A) 休眠：goback + 冻结 ==========
         if cmd == "pause":
+            self.freeze_reason = "pause"
             self.get_logger().info("⏸ 面部跟随暂停")
             self.paused = True
             
@@ -164,6 +169,7 @@ class FaceFollowNode(Node):
 
         # ========== B) 唤醒：抬头 → 跟随 ==========
         if cmd == "resume":
+            self.freeze_reason = ""
             # 12/14取消逻辑
             # 如果语音节点还没准备好，就拒绝开始跟随
             #if not self.voice_ready:
@@ -199,6 +205,7 @@ class FaceFollowNode(Node):
             
         # ========== C：原地冻结 ==========
         if cmd == "pause_for_action":
+            self.freeze_reason = "action"
             self.get_logger().info("⏸ face_follow: 收到 pause_for_action（仅暂停，不回到 goback）")
             self.paused = True
 
@@ -206,6 +213,28 @@ class FaceFollowNode(Node):
             self.tracker.pid_pitch.clear()
             self.tracker.pid_yaw.clear()
 
+            return
+        
+        # ========== B2) 从原地冻结恢复：不回默认姿态，直接继续跟随 ==========
+        if cmd == "resume_from_action":
+            self.freeze_reason = ""
+            self.get_logger().info("▶ face_follow: resume_from_action（原地恢复跟随，不回 head_default_pose）")
+
+            # 1) 先保持冻结，做状态同步
+            self.paused = True
+
+            # 2) 同步 tracker 状态，清 PID，避免跳变
+            self.tracker.pitch = self.last_pitch
+            self.tracker.yaw   = self.last_yaw
+            self.tracker.pid_pitch.clear()
+            self.tracker.pid_yaw.clear()
+
+            # 3) 开始跟随
+            self.paused = False
+
+            self.get_logger().info(
+                f"🔄 resume_from_action 完成：tracker 同步到 last_pitch={self.last_pitch}, last_yaw={self.last_yaw}"
+            )
             return
 
 

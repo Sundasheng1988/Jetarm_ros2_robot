@@ -1,0 +1,24 @@
+home:
+  x: -1.06
+  y: -0.10
+  yaw: 0.0
+
+living_room:
+  x: -1.46
+  y: -0.17
+  yaw: 0.0
+
+kitchen:
+  x: -2.60
+  y: 0.05
+  yaw: 1.57
+
+charging_station:
+  x: 0.0
+  y: 0.0
+  yaw: 3.14
+
+arm_workstation:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0

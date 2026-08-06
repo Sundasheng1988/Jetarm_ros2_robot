@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>toy_block_perception</name>
+  <version>0.1.0</version>
+  <description>ROS 2 live RGB-camera detection, segmentation and five-color classification for toy blocks.</description>
+
+  <maintainer email="sundasheng@example.com">sundasheng</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -25,13 +25,15 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'working_calibration_node = app.working_calibration_node:main',
             'working_calibration_pose_node = app.working_calibration_pose_node:main',
             'get_robot_pose_client = app.get_robot_pose_client:main',
             'calibration_node = app.calibration_node:main',
             'test_calculation = app.test_calculation: main',
             'object_detection = app.object_detection_node: main',
             'roi_color_detector_node = app.roi_color_detector_node:main',
+            'roi_detection_audit_node = app.roi_detection_audit_node:main',
+            'stable_object_tracker_node = app.stable_object_tracker_node:main',
+            'perception_fusion_node = app.perception_fusion_node:main',
         ]
     },
 )

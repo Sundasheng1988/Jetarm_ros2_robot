@@ -1,0 +1,224 @@
+{
+  "strategy": "Otsu + Chroma + adjusted LAB ranges",
+  "params": {
+    "use_otsu": true,
+    "use_chroma": true,
+    "chroma_threshold": 5.0,
+    "chromatic_min_confidence": 0.1,
+    "min_confidence": 0.2,
+    "lab_range_overrides": {
+      "blue": {
+        "B": [
+          59,
+          143
+        ]
+      },
+      "red": {
+        "A": [
+          124,
+          183
+        ],
+        "B": [
+          125,
+          189
+        ]
+      }
+    }
+  },
+  "total_images": 20,
+  "labeled_images": 3,
+  "labeled_correct": 1,
+  "labeled_accuracy": 0.3333,
+  "per_color_accuracy": {},
+  "confusion": {
+    "blue": {
+      "unknown": 1,
+      "blue": 1
+    },
+    "red": {
+      "unknown": 1
+    }
+  },
+  "per_image": [
+    {
+      "image": "blue_block_001.jpg",
+      "expected": "blue",
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0428,
+      "filtered_by_confidence": true,
+      "correct": false
+    },
+    {
+      "image": "blue_block_002.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0418,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_block_003.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0398,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_block_004.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0218,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_cube_001.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0999,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_cube_002.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.1066,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_cube_003.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.1036,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_cube_004.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.101,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "blue_cup_001.jpg",
+      "expected": "blue",
+      "raw_predicted": "blue",
+      "predicted": "blue",
+      "confidence": 0.5561,
+      "filtered_by_confidence": false,
+      "correct": true
+    },
+    {
+      "image": "blue_cup_002.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "blue",
+      "confidence": 0.6077,
+      "filtered_by_confidence": false,
+      "correct": null
+    },
+    {
+      "image": "blue_cup_003.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "blue",
+      "confidence": 0.582,
+      "filtered_by_confidence": false,
+      "correct": null
+    },
+    {
+      "image": "blue_cup_004.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "blue",
+      "confidence": 0.5887,
+      "filtered_by_confidence": false,
+      "correct": null
+    },
+    {
+      "image": "blue_cup_005.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "blue",
+      "confidence": 0.5941,
+      "filtered_by_confidence": false,
+      "correct": null
+    },
+    {
+      "image": "blue_cup_006.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "blue",
+      "confidence": 0.5272,
+      "filtered_by_confidence": false,
+      "correct": null
+    },
+    {
+      "image": "red_block_001.jpg",
+      "expected": "red",
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0788,
+      "filtered_by_confidence": true,
+      "correct": false
+    },
+    {
+      "image": "red_block_002.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0976,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "red_block_003.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0196,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "red_block_004.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0368,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "red_block_005.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0223,
+      "filtered_by_confidence": true,
+      "correct": null
+    },
+    {
+      "image": "red_block_006.jpg",
+      "expected": null,
+      "raw_predicted": "blue",
+      "predicted": "unknown",
+      "confidence": 0.0311,
+      "filtered_by_confidence": true,
+      "correct": null
+    }
+  ]
+}

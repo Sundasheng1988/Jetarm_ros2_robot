@@ -21,3 +21,21 @@ models/
 *.pth
 *.mdl
 *.zip
+microsoft.gpg
+src/voice_state_machine.md
+src/启发指令.md
+artifacts/
+pdf/*.pdf
+src/turn_on_dlrobot_robot/
+src/depend/
+
+# RobotOps database
+robotops.db
+robotops.db-shm
+robotops.db-wal
+
+
+# ROI tuner outputs
+tools/vision_roi_tuner/outputs/
+src/rplidar_ros/
+maps/

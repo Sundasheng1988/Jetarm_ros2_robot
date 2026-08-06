@@ -1,4 +1,3 @@
-# roi_color_detector_node.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -30,12 +29,24 @@ def rodrigues_rt_from_T(T: np.ndarray):
     return rvec, t
 
 def right_angle_count(poly: np.ndarray) -> int:
+    """Count near-right angles in an approximated contour polygon.
+
+    cv2.approxPolyDP() can return 3, 4, or more points. The previous
+    implementation assumed exactly 4 points and crashed on triangles.
+    """
     pts = poly.reshape(-1, 2)
+    n = len(pts)
+    if n < 4:
+        return 0
+
     right = 0
-    for i in range(4):
-        v1 = pts[(i+1) % 4] - pts[i]
-        v2 = pts[(i-1) % 4] - pts[i]
-        c = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
+    for i in range(n):
+        v1 = pts[(i + 1) % n] - pts[i]
+        v2 = pts[(i - 1) % n] - pts[i]
+        norm = np.linalg.norm(v1) * np.linalg.norm(v2)
+        if norm < 1e-9:
+            continue
+        c = np.dot(v1, v2) / norm
         ang = abs(np.degrees(np.arccos(np.clip(c, -1, 1))))
         if 70 <= ang <= 110:
             right += 1
@@ -59,6 +70,8 @@ class RoiColorDetectorNode(Node):
         self.declare_parameter('camera_info_topic', '/depth_cam/rgb/camera_info')
         self.declare_parameter('publish_interval', 0.30)
         self.declare_parameter('show_window', True)
+        self.declare_parameter('show_debug_window', True)
+        self.declare_parameter('debug_window_scale', 1.0)
         self.declare_parameter('image_result_topic', '/roi_color_detector/image_result')
         self.declare_parameter('world_frame', 'base')
 
@@ -90,6 +103,8 @@ class RoiColorDetectorNode(Node):
         self.camera_info_topic = g('camera_info_topic').value
         self.publish_interval  = float(g('publish_interval').value)
         self.show_window       = bool(g('show_window').value)
+        self.show_debug_window = bool(g('show_debug_window').value)
+        self.debug_window_scale = float(g('debug_window_scale').value)
         self.image_result_topic = g('image_result_topic').value
         self.world_frame       = g('world_frame').value
 
@@ -134,12 +149,15 @@ class RoiColorDetectorNode(Node):
         self._load_transform()
         self.lab_ranges = self._load_lab_ranges()
         self.last_ts = 0.0
+        self._headless_warned = False
 
-        if self.show_window:
+        if self.show_debug_window:
             try:
-                cv2.namedWindow("ROI Color Detector", cv2.WINDOW_NORMAL)
+                cv2.namedWindow("ROI Color Detection", cv2.WINDOW_NORMAL)
             except Exception:
-                pass
+                if not self._headless_warned:
+                    self.get_logger().warn("could not create OpenCV window — running headless")
+                    self._headless_warned = True
 
         self.get_logger().info('✅ roi_color_detector_node 已启动（仿 APP 检测）')
 
@@ -334,7 +352,13 @@ class RoiColorDetectorNode(Node):
                 circ = 4.0*np.pi*A/(P*P + 1e-9)
 
                 target_cls = None
-                if circ >= 0.60 and min(w, h) >= self.cup_min_size_px:
+                approx_poly = cv2.approxPolyDP(c, 0.02 * P, True)
+                ar = w / float(h)
+                right_cnt = right_angle_count(approx_poly)
+
+                if right_cnt >= 3 and 0.70 <= ar <= 1.35:
+                    target_cls = 'cube'
+                elif circ >= 0.60 and min(w, h) >= self.cup_min_size_px:
                     target_cls = 'cup'
                 else:
                     is_ball_by_color = (color in self.ball_colors and circ >= self.ball_circ)
@@ -348,14 +372,15 @@ class RoiColorDetectorNode(Node):
                     else:
                         if circ >= self.cyl_circ:
                             target_cls = 'cylinder'
-                if target_cls is None and color == 'red':
-                    ar = w/float(h)
-                    if 0.75 <= ar <= 1.25 and right_angle_count(cv2.approxPolyDP(c, 0.02*P, True)) >= 3:
-                        target_cls = 'cube'
                 if target_cls is None:
                     continue
 
                 true_color = self._dominant_color_key(lab, c)
+                self.get_logger().debug(
+                    f"detect: {target_cls} {true_color} "
+                    f"conf={float(min(0.99, max(0.50, circ))):.2f} "
+                    f"circ={circ:.3f} ar={ar:.2f} right_cnt={right_cnt}"
+                )
                 xyz = self._pix_to_world(u, v)
 
                 # 估计世界系 yaw
@@ -397,6 +422,16 @@ class RoiColorDetectorNode(Node):
                 cv2.polylines(vis, [box], True, (255,255,0), 2)
                 cv2.circle(vis, (u,v), 5, (0,0,0), -1)
 
+                if self.show_debug_window:
+                    conf_val = float(min(0.99, max(0.50, circ)))
+                    xyz_str = ""
+                    if xyz:
+                        xyz_str = f" xyz:[{xyz[0]:.3f},{xyz[1]:.3f},{xyz[2]:.3f}]"
+                    label = f"{target_cls} {true_color} {conf_val:.2f}{xyz_str}"
+                    cv2.putText(vis, label, (u + 8, v - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1,
+                                cv2.LINE_AA)
+
         self.pub_det.publish(det)
         if objects:
             self.pub_wm.publish(String(data=json.dumps({"objects": objects}, ensure_ascii=False)))
@@ -415,11 +450,24 @@ class RoiColorDetectorNode(Node):
             self.pub_best_pose.publish(ps)
 
         self.pub_img.publish(self.bridge.cv2_to_imgmsg(vis, 'bgr8'))
-        if self.show_window:
+
+        if self.show_debug_window:
             try:
-                cv2.imshow("ROI Color Detector", vis); cv2.waitKey(1)
+                display = vis
+                if self.debug_window_scale != 1.0:
+                    display = cv2.resize(
+                        vis, None,
+                        fx=self.debug_window_scale,
+                        fy=self.debug_window_scale,
+                    )
+                cv2.imshow("ROI Color Detection", display)
+                cv2.waitKey(1)
             except Exception:
-                pass
+                if not self._headless_warned:
+                    self.get_logger().warn(
+                        "cv2.imshow failed — running headless, no debug window"
+                    )
+                    self._headless_warned = True
 
         self.last_ts = now
 
@@ -438,4 +486,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json, time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 
 import rclpy
 from rclpy.node import Node
@@ -83,7 +83,10 @@ class GroundingNode(Node):
     def __init__(self):
         super().__init__("grounding_node")
         self.sub_cmd = self.create_subscription(String, "/parsed_command", self.on_cmd, 10)
-        self.sub_wm  = self.create_subscription(String, "/world_model/roi_objects", self.on_world_model, qos_profile_sensor_data)
+        self.declare_parameter("world_model_topic", "/world_model/stable_objects")
+        wm_topic = self.get_parameter("world_model_topic").get_parameter_value().string_value
+        self.sub_wm  = self.create_subscription(String, wm_topic, self.on_world_model, qos_profile_sensor_data)
+        self.get_logger().info(f"世界模型订阅: {wm_topic}")
         self.pub_goal = self.create_publisher(String, "/grounded_goal", 10)
         self.create_service(Trigger, "/grounding/clear_memory", self.on_reset)
 
@@ -92,11 +95,17 @@ class GroundingNode(Node):
         self.declare_parameter("allow_side_inference", True)        # 允许从原句推断左右
         self.declare_parameter("default_side_when_missing", "")      # 无法确定时的默认槽位（空=不默认）
         self.declare_parameter("raw_text_topic", "/keyboard_input/input")  # ⬅️ 新增：原句话题
+        self.declare_parameter("publish_runtime", False)              # 是否额外发布 runtime TaskContext
 
         self.reuse_last = bool(self.get_parameter("reuse_last_object").value)
         self.allow_side_infer = bool(self.get_parameter("allow_side_inference").value)
         self.default_side_when_missing = str(self.get_parameter("default_side_when_missing").value).strip()
         self.raw_text_topic = str(self.get_parameter("raw_text_topic").value).strip()
+        self.publish_runtime = bool(self.get_parameter("publish_runtime").value)
+
+        self.pub_runtime = None
+        if self.publish_runtime:
+            self.pub_runtime = self.create_publisher(String, "/grounded_task_context", 10)
 
         # 订阅原始输入文本（可选）
         self.last_raw_text: str = ""
@@ -113,8 +122,8 @@ class GroundingNode(Node):
         self._load_place_map_overrides()
 
         # 运行态内存
-        self.objects: Dict[int, Dict[str, Any]] = {}
-        self.last_object_id: Optional[int] = None
+        self.objects: Dict[Union[int, str], Dict[str, Any]] = {}
+        self.last_object_id: Optional[Union[int, str]] = None
 
         self.get_logger().info("🧭 Grounding Node started.")
 
@@ -139,17 +148,31 @@ class GroundingNode(Node):
         try:
             data = json.loads(msg.data)
             for o in data.get("objects", []):
-                oid = int(o.get("id"))
+                raw_id = o.get("id")
+
+                if raw_id is not None:
+                    oid = int(raw_id)
+
+                else:
+                    track_id = o.get("track_id")
+
+                    if track_id:
+                        oid = str(track_id)
+
+                    else:
+                        continue
+                        
                 self.objects[oid] = {
                     "id": oid,
                     "class_name": (o.get("class_name") or "").lower(),
                     "color": (o.get("color") or "").lower(),
                     "pose": o.get("pose") or {},
                     "confidence": float(o.get("confidence") or 0.0),
-                    "updated_at": float(o.get("updated_at") or now_ts()),
+                    "updated_at": float(o.get("updated_at") or o.get("last_seen") or now_ts()),
                 }
         except Exception as e:
-            self.get_logger().error(f"解析 /world_model/roi_objects 失败: {e}\n原文: {msg.data}")
+            wm_topic = self.get_parameter("world_model_topic").get_parameter_value().string_value
+            self.get_logger().error(f"解析 {wm_topic} 失败: {e}\n原文: {msg.data}")
 
     def on_cmd(self, msg: String):
         # 输入如：{"action":"pick","from":"red_cup","to":"right_side", ...}
@@ -217,6 +240,29 @@ class GroundingNode(Node):
 
         self.pub_goal.publish(String(data=json.dumps(out, ensure_ascii=False)))
         self.get_logger().info(f"🎯 grounded_goal: {out}")
+
+        if self.pub_runtime is not None:
+            rto = None
+            if obj:
+                rto = {
+                    "class_name": (obj.get("class_name") or "").lower(),
+                    "color": (obj.get("color") or "").lower(),
+                    "source": "grounding",
+                    "world_frame": (obj.get("pose") or {}).get("frame", "base"),
+                    "world_x": float((obj.get("pose") or {}).get("xyz", [0,0,0])[0]),
+                    "world_y": float((obj.get("pose") or {}).get("xyz", [0,0,0])[1]),
+                    "world_z": float((obj.get("pose") or {}).get("xyz", [0,0,0])[2]),
+                    "object_id": str(obj.get("id", "")),
+                }
+            rt = {
+                "intent": intent,
+                "parsed_command": data,
+                "target_object": rto,
+                "target_pose": target_pose,
+                "status": out.get("status", ""),
+                "detail": out.get("detail", ""),
+            }
+            self.pub_runtime.publish(String(data=json.dumps(rt, ensure_ascii=False)))
 
     def _select_object(self, cls: Optional[str], color: Optional[str]) -> Optional[Dict[str, Any]]:
         cand: List[Dict[str,Any]] = []

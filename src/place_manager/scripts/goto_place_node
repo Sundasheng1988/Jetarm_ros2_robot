@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""
+Entry point for goto_place_node — installed as a ``ros2 run`` executable.
+
+CMake's ``install(PROGRAMS ...)`` places this into ``lib/place_manager/``.
+"""
+import sys
+from place_manager.goto_place_node import main
+
+if __name__ == '__main__':
+    sys.exit(main())

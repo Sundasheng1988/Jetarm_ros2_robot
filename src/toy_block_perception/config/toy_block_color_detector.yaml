@@ -1,0 +1,17 @@
+toy_block_color_detector:
+  ros__parameters:
+    image_topic: /depth_cam/rgb/image_raw
+    detection_topic: /toy_block/detection
+    debug_image_topic: /toy_block/debug_image
+    mask_topic: /toy_block/mask
+
+    process_hz: 5.0
+    expected_width: 640
+    expected_height: 480
+    gate_margin_px: 8
+
+    stable_frames: 3
+    max_center_jump_px: 8.0
+    max_area_change_ratio: 0.20
+
+    publish_failed_frames: true

@@ -1,0 +1,74 @@
+{
+  "total_images": 3,
+  "correct": 2,
+  "accuracy": 0.6667,
+  "wrong_high_confidence": 1,
+  "per_color_accuracy": {
+    "blue": 1.0,
+    "red": 0.0
+  },
+  "per_class_accuracy": {
+    "block": 0.5,
+    "cup": 1.0
+  },
+  "per_mask_accuracy": {
+    "bad": 0.5,
+    "medium": 1.0
+  },
+  "confusion_matrix": {
+    "blue": {
+      "blue": 2
+    },
+    "red": {
+      "blue": 1
+    }
+  },
+  "bad_mask_images": [
+    {
+      "image": "blue_block_001.jpg",
+      "true_color": "blue",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "note": "轮廓主要包含背景，颜色结果不可信"
+    },
+    {
+      "image": "red_block_001.jpg",
+      "true_color": "red",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "note": "轮廓包含背景，颜色结果不可信"
+    }
+  ],
+  "per_image": [
+    {
+      "image": "blue_block_001.jpg",
+      "true_color": "blue",
+      "true_class": "block",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "correct": true,
+      "mask_quality": "bad",
+      "note": "轮廓主要包含背景，颜色结果不可信"
+    },
+    {
+      "image": "blue_cup_001.jpg",
+      "true_color": "blue",
+      "true_class": "cup",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "correct": true,
+      "mask_quality": "medium",
+      "note": "轮廓覆盖杯子，但包含明显阴影"
+    },
+    {
+      "image": "red_block_001.jpg",
+      "true_color": "red",
+      "true_class": "block",
+      "predicted": "blue",
+      "confidence": 1.0,
+      "correct": false,
+      "mask_quality": "bad",
+      "note": "轮廓包含背景，颜色结果不可信"
+    }
+  ]
+}
