@@ -1658,6 +1658,15 @@ ros2 launch nav2_bringup localization_launch.py \
   params_file:=/home/ubuntu/ros2_ws/config/nav2_amcl_params.yaml
 ```
 
+## 16.7 NAV2
+source /opt/ros/humble/setup.bash
+source /home/ubuntu/ros2_ws/install/setup.bash
+
+ros2 launch nav2_bringup navigation_launch.py \
+  use_sim_time:=false \
+  autostart:=true \
+  params_file:=/home/ubuntu/ros2_ws/config/nav2_params.yaml
+
 状态：
 
 ```text
