@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""
+Entry point for place_manager_node — installed as a ``ros2 run`` executable.
+
+This wrapper exists because ament_cmake_python hybrid packages do not
+auto-generate entry-point scripts from setup.py's ``console_scripts``.
+CMake's ``install(PROGRAMS ...)`` places this into ``lib/place_manager/``.
+"""
+import sys
+from place_manager.place_manager_node import main
+
+if __name__ == '__main__':
+    sys.exit(main())
