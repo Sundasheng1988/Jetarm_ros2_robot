@@ -14,6 +14,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/scripts', glob('scripts/*.py')),
     ],
     install_requires=['setuptools', 'requests'],
     zip_safe=True,
@@ -28,6 +29,7 @@ setup(
             'tts_speaker_node     = llm_voice_agent.tts_speaker_node:main',
             'executor_done_sayer  = llm_voice_agent.executor_done_sayer:main',
             'speech_dialog_funasr_node = llm_voice_agent.speech_dialog_funasr_node:main',
+            'rebecca_voice_start = llm_voice_agent.rebecca_start:main',
         ],
     },
 )

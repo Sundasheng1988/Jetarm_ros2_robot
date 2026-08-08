@@ -1,0 +1,8 @@
+# API credentials are stored outside the repository by rebecca_voice_start.
+secrets.env
+**/secrets.env
+
+# Local Python/test output.
+__pycache__/
+*.py[cod]
+.pytest_cache/

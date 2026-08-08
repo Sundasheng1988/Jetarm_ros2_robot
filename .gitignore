@@ -34,6 +34,11 @@ robotops.db
 robotops.db-shm
 robotops.db-wal
 
+# Secrets / API keys (live outside the repo; defensive rule in case)
+**/secrets.env
+secrets.env
+*.secret
+
 
 # ROI tuner outputs
 tools/vision_roi_tuner/outputs/

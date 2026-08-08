@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import wave
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -109,10 +110,31 @@ def glm_chat(
     thinking: bool = False,
     stream: bool = True,
     on_sentence: Optional[SentenceCallback] = None,
+    cancel_check: Optional[CancelCallback] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> str:
-    """Call the Zhipu GLM OpenAI-compatible chat-completions endpoint."""
+    """Call the Zhipu GLM OpenAI-compatible chat-completions endpoint.
+
+    ``cancel_check`` mirrors the CosyVoice path: when it returns True the SSE
+    stream is aborted with :class:`VoiceBackendCancelled` (a user cancel, not
+    an API error), so the caller must not fall back to another model.
+    ``cancel_event`` optionally lets the backend close a blocked HTTP response
+    immediately instead of waiting for the next SSE chunk/read timeout.
+    """
     if not api_key:
         raise VoiceBackendError("GLM API key is missing")
+
+    def raise_if_cancelled() -> None:
+        if cancel_check and cancel_check():
+            raise VoiceBackendCancelled("GLM request cancelled")
+
+    def guarded_on_sentence(sentence: str) -> None:
+        # This is deliberately the last operation before the user callback.
+        # Checking only before SentenceAccumulator.feed() leaves a race where
+        # an interrupt can arrive while the accumulator is splitting text.
+        raise_if_cancelled()
+        if on_sentence is not None:
+            on_sentence(sentence)
 
     http = _require_requests()
     url = f"{api_base.rstrip('/')}/chat/completions"
@@ -130,6 +152,8 @@ def glm_chat(
     }
 
     response = None
+    cancel_watcher = None
+    cancel_watcher_stop = threading.Event()
     try:
         response = http.post(
             url,
@@ -141,34 +165,73 @@ def glm_chat(
         if response.status_code >= 400:
             raise VoiceBackendError(_safe_error(response))
 
+        if stream and cancel_event is not None:
+            # cancel_check alone is only observed between SSE chunks.  Closing
+            # the owned HTTP response from this short-lived watcher also wakes
+            # a stream blocked waiting for the next network chunk.
+            def close_response_on_cancel():
+                while not cancel_watcher_stop.wait(0.05):
+                    if cancel_event.is_set():
+                        try:
+                            response.close()
+                        except Exception:
+                            # The main request path still performs its final
+                            # close and reports cancellation, never credentials.
+                            pass
+                        return
+
+            cancel_watcher = threading.Thread(
+                target=close_response_on_cancel,
+                name="glm-cancel-watcher",
+                daemon=True,
+            )
+            cancel_watcher.start()
+
         if not stream:
+            raise_if_cancelled()
             data = response.json()
             choices = data.get("choices") or []
             if not choices:
                 return ""
+            raise_if_cancelled()
             return ((choices[0].get("message") or {}).get("content") or "").strip()
 
         fragments: List[str] = []
-        sentences = SentenceAccumulator(on_sentence)
+        sentences = SentenceAccumulator(
+            guarded_on_sentence if on_sentence is not None else None
+        )
         try:
             for content in _iter_openai_sse_content(response):
+                raise_if_cancelled()
                 fragments.append(content)
                 sentences.feed(content)
+        except VoiceBackendCancelled:
+            # User interrupt: stop streaming immediately. This is not an API
+            # error, so the caller must not retry on another backend.
+            raise
         except Exception:
+            raise_if_cancelled()
             # Keep partial output. Falling back after speech has begun would
             # cause a second model to repeat the answer.
             if not fragments:
                 raise
-        finally:
-            sentences.flush()
+
+        # Both a complete stream and a partial network stream may have a
+        # trailing sentence.  Check immediately before flush; the accumulator's
+        # guarded callback checks again immediately before actual publication.
+        raise_if_cancelled()
+        sentences.flush()
         return "".join(fragments).strip()
     except VoiceBackendError:
         raise
     except Exception as exc:
         raise VoiceBackendError(f"GLM request failed: {type(exc).__name__}") from exc
     finally:
+        cancel_watcher_stop.set()
         if response is not None:
             response.close()
+        if cancel_watcher is not None:
+            cancel_watcher.join(timeout=0.2)
 
 
 def ollama_chat(

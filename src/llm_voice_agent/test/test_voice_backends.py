@@ -4,6 +4,7 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 import wave
 from unittest import mock
@@ -47,6 +48,22 @@ class PartialStreamResponse(FakeResponse):
     def iter_lines(self, decode_unicode=False):
         yield 'data: {"choices":[{"delta":{"content":"已经收到。"}}]}'.encode('utf-8')
         raise ConnectionError("stream interrupted")
+
+
+class BlockingStreamResponse(FakeResponse):
+    """Block after the first sentence until response.close() wakes the stream."""
+
+    def __init__(self):
+        super().__init__()
+        self._released = threading.Event()
+
+    def iter_lines(self, decode_unicode=False):
+        yield 'data: {"choices":[{"delta":{"content":"第一句。"}}]}'.encode('utf-8')
+        self._released.wait(timeout=1.0)
+
+    def close(self):
+        self.closed = True
+        self._released.set()
 
 
 class SentenceAccumulatorTests(unittest.TestCase):
@@ -148,6 +165,159 @@ class GlmTests(unittest.TestCase):
                 )
         self.assertIn("HTTP 401", str(caught.exception))
         self.assertNotIn("secret-key", str(caught.exception))
+
+    def test_cancel_aborts_stream_and_emits_no_more_sentences(self):
+        # 第一句正常流出，第二句到来前打断命中 → 抛 VoiceBackendCancelled，
+        # 且不再调用 on_sentence，response 被关闭。
+        events = [
+            {"choices": [{"delta": {"content": "第一句。"}}]},
+            {"choices": [{"delta": {"content": "第二句。"}}]},
+            {"choices": [{"delta": {"content": "第三句。"}}]},
+        ]
+        lines = [f"data: {json.dumps(e, ensure_ascii=False)}".encode() for e in events]
+        lines.append(b"data: [DONE]")
+        fake_http = FakeRequests(FakeResponse(lines=lines))
+        emitted = []
+        cancel_event = threading.Event()
+
+        def emit_then_cancel(sentence):
+            emitted.append(sentence)
+            cancel_event.set()
+
+        with mock.patch.object(voice_backends, "requests", fake_http):
+            with self.assertRaises(voice_backends.VoiceBackendCancelled):
+                voice_backends.glm_chat(
+                    api_base="https://example.test/v4",
+                    api_key="secret",
+                    model="glm-test",
+                    messages=[{"role": "user", "content": "测试"}],
+                    temperature=0.4,
+                    max_tokens=64,
+                    timeout=(1.0, 2.0),
+                    thinking=False,
+                    stream=True,
+                    on_sentence=emit_then_cancel,
+                    cancel_check=cancel_event.is_set,
+                )
+        # 只有取消前已流出的句子；后续句子不再发布。
+        self.assertEqual(emitted, ["第一句。"])
+        self.assertTrue(fake_http.response.closed)
+
+    def test_cancel_between_feed_check_and_callback_emits_nothing(self):
+        event = {"choices": [{"delta": {"content": "不能播出。"}}]}
+        response = FakeResponse(lines=[
+            f"data: {json.dumps(event, ensure_ascii=False)}".encode(),
+            b"data: [DONE]",
+        ])
+        fake_http = FakeRequests(response)
+        emitted = []
+        checks = {"count": 0}
+
+        def cancel_at_guarded_callback():
+            checks["count"] += 1
+            # First check is immediately before feed; the second is the
+            # guarded callback immediately before actual publication.
+            return checks["count"] >= 2
+
+        with mock.patch.object(voice_backends, "requests", fake_http):
+            with self.assertRaises(voice_backends.VoiceBackendCancelled):
+                voice_backends.glm_chat(
+                    api_base="https://example.test/v4",
+                    api_key="secret",
+                    model="glm-test",
+                    messages=[{"role": "user", "content": "测试"}],
+                    temperature=0.4,
+                    max_tokens=64,
+                    timeout=(1.0, 2.0),
+                    stream=True,
+                    on_sentence=emitted.append,
+                    cancel_check=cancel_at_guarded_callback,
+                )
+
+        self.assertEqual(emitted, [])
+        self.assertTrue(response.closed)
+
+    def test_cancel_between_flush_check_and_callback_emits_no_tail(self):
+        event = {"choices": [{"delta": {"content": "未完成尾句"}}]}
+        response = FakeResponse(lines=[
+            f"data: {json.dumps(event, ensure_ascii=False)}".encode(),
+            b"data: [DONE]",
+        ])
+        fake_http = FakeRequests(response)
+        emitted = []
+        checks = {"count": 0}
+
+        def cancel_at_flush_callback():
+            checks["count"] += 1
+            # stream loop check, pre-flush check, guarded flush callback
+            return checks["count"] >= 3
+
+        with mock.patch.object(voice_backends, "requests", fake_http):
+            with self.assertRaises(voice_backends.VoiceBackendCancelled):
+                voice_backends.glm_chat(
+                    api_base="https://example.test/v4",
+                    api_key="secret",
+                    model="glm-test",
+                    messages=[{"role": "user", "content": "测试"}],
+                    temperature=0.4,
+                    max_tokens=64,
+                    timeout=(1.0, 2.0),
+                    stream=True,
+                    on_sentence=emitted.append,
+                    cancel_check=cancel_at_flush_callback,
+                )
+
+        self.assertEqual(emitted, [])
+        self.assertTrue(response.closed)
+
+    def test_cancel_closes_response_to_wake_blocked_sse_read(self):
+        response = BlockingStreamResponse()
+        fake_http = FakeRequests(response)
+        cancel_event = threading.Event()
+        emitted = []
+
+        def emit_then_interrupt(sentence):
+            emitted.append(sentence)
+            cancel_event.set()
+
+        with mock.patch.object(voice_backends, "requests", fake_http):
+            with self.assertRaises(voice_backends.VoiceBackendCancelled):
+                voice_backends.glm_chat(
+                    api_base="https://example.test/v4",
+                    api_key="secret",
+                    model="glm-test",
+                    messages=[{"role": "user", "content": "测试"}],
+                    temperature=0.4,
+                    max_tokens=64,
+                    timeout=(1.0, 2.0),
+                    stream=True,
+                    on_sentence=emit_then_interrupt,
+                    cancel_check=cancel_event.is_set,
+                    cancel_event=cancel_event,
+                )
+
+        self.assertEqual(emitted, ["第一句。"])
+        self.assertTrue(response.closed)
+
+    def test_cancel_is_raised_not_returned_as_partial(self):
+        # 取消必须以异常形式向上传播（用户取消），不能被当作普通错误/部分输出吞掉。
+        events = [{"choices": [{"delta": {"content": "好。"}}]}]
+        lines = [f"data: {json.dumps(e, ensure_ascii=False)}".encode() for e in events]
+        lines.append(b"data: [DONE]")
+        fake_http = FakeRequests(FakeResponse(lines=lines))
+        with mock.patch.object(voice_backends, "requests", fake_http):
+            with self.assertRaises(voice_backends.VoiceBackendCancelled):
+                voice_backends.glm_chat(
+                    api_base="https://example.test/v4",
+                    api_key="secret",
+                    model="glm-test",
+                    messages=[{"role": "user", "content": "测试"}],
+                    temperature=0.4,
+                    max_tokens=64,
+                    timeout=(1.0, 2.0),
+                    stream=True,
+                    cancel_check=lambda: True,
+                )
 
 
 class CosyVoiceTests(unittest.TestCase):

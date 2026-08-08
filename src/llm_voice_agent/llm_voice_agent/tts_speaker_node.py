@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, signal
+import os
 import re
 import shlex
 import shutil
@@ -21,6 +21,11 @@ from llm_voice_agent.voice_backends import (
     VoiceBackendCancelled,
     VoiceBackendError,
     cosyvoice_to_wav,
+)
+from llm_voice_agent.runtime_control import (
+    GenerationQueue,
+    ProcessStopError,
+    stop_owned_process_group,
 )
 
 # ========= Markdown → 语音清洗 =========
@@ -239,13 +244,12 @@ class TTSSpeakerNode(Node):
             1,
             int(self.declare_parameter('queue_max', 16).get_parameter_value().integer_value),
         )
-        drop_default = bool(
-            self.declare_parameter('drop_queue_on_interrupt', True)
-                .get_parameter_value().bool_value
-        )
-        self._interrupt_clears_queue = bool(
-            self.declare_parameter('interrupt_clear_queue', drop_default)
-                .get_parameter_value().bool_value
+        # Retained for launch/config compatibility.  Old-generation items are
+        # always invalidated and removed on interrupt for safety.
+        self.declare_parameter('drop_queue_on_interrupt', True)
+        self.process_stop_timeout_s = float(
+            self.declare_parameter('process_stop_timeout_s', 0.5)
+                .get_parameter_value().double_value
         )
 
         # 日志
@@ -257,14 +261,14 @@ class TTSSpeakerNode(Node):
             f'piper_silence={self.sentence_silence_s:.3f}s'
         )
 
-        self._q = queue.Queue(maxsize=self.queue_max)
+        self._q = GenerationQueue[str](maxsize=self.queue_max)
         self._speaking = False
         self._last_enqueued_text = ''
         self._last_enqueued_ts = 0.0
         self._worker_alive = True
         self._worker = None
-        self._interrupt_generation = 0
         self._state_lock = threading.Lock()
+        self._command_lock = threading.Lock()
 
         self.tts_speaking_pub = self.create_publisher(Bool, '/tts_speaking', 1)
         self.tts_done_pub = self.create_publisher(Bool, '/tts/done', 1)  # ✅ 新增：播报结束/打断等价完成事件
@@ -273,12 +277,17 @@ class TTSSpeakerNode(Node):
         # 11/2  —— 播放/合成子进程句柄 —
         self._player_proc = None     # aplay/ffplay 等播放器
         self._piper_proc  = None     # piper 合成进程（PIPE 模式用）
+        self._player_generation = None
+        self._piper_generation = None
         self._stop_streaming = False # 未来若你做流式合成可用
 
-        # 11/2新增：打断订阅, 11/8修改
-        self._interrupt_flag = False           # 收到打断信号后置 True
+        # 用户打断会同时停止 TTS 与取消 Agent LLM；Agent 自己的唤醒消息只停止
+        # 旧播放。两者在 TTS 内走完全相同的安全停止处理。
         self.sub_interrupt = self.create_subscription(
             Bool, '/tts/interrupt', self._on_interrupt, 10
+        )
+        self.sub_playback_interrupt = self.create_subscription(
+            Bool, '/tts/interrupt_playback_only', self._on_interrupt, 10
         )
         self.create_subscription(String, self.reply_topic, self._on_reply, 10)
 
@@ -286,98 +295,78 @@ class TTSSpeakerNode(Node):
         self._worker = threading.Thread(target=self._speech_worker, daemon=True)
         self._worker.start()
     
-    # 11/2 V1.1 新增：统一的“停止当前播放”
+    def _stop_one_process(self, proc, name: str):
+        if proc is None:
+            return
+        try:
+            result = stop_owned_process_group(
+                proc,
+                term_timeout=self.process_stop_timeout_s,
+                kill_timeout=self.process_stop_timeout_s,
+            )
+        except ProcessStopError as exc:
+            self.get_logger().warning(f'{name} 停止失败：{exc}')
+            return
+        for warning in result.warnings:
+            self.get_logger().warning(f'{name} 停止降级：{warning}')
+        if result.forced:
+            self.get_logger().warning(f'{name} 未及时退出，已强制结束')
+
+    def _detach_playback_locked(self):
+        """Detach registered processes while ``_state_lock`` is held."""
+        piper = self._piper_proc
+        player = self._player_proc
+        self._piper_proc = None
+        self._player_proc = None
+        self._piper_generation = None
+        self._player_generation = None
+        return piper, player
+
+    def _stop_detached_playback(self, piper, player):
+        self._stop_one_process(piper, 'Piper')
+        self._stop_one_process(player, '播放器')
+
+    # 统一停止当前登记的进程。成员句柄先原子摘除，新进程不会被旧清理误杀。
     def _stop_playback(self):
-        # 标记：当前有中断
-        self._interrupt_flag = True
-        # 停止未来的流式（如果你实现的话）
         self._stop_streaming = True
-
-        # 结束 piper（PIPE 模式合成进程）
-        try:
-            if self._piper_proc and self._piper_proc.poll() is None:
-                try:
-                    os.killpg(os.getpgid(self._piper_proc.pid), signal.SIGINT)
-                except Exception:
-                    try:
-                        self._piper_proc.terminate()
-                    except Exception:
-                        pass
-                try:
-                    self._piper_proc.kill()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        finally:
-            self._piper_proc = None
-
-        # 结束播放器进程（aplay/ffplay）
-        try:
-            if self._player_proc and self._player_proc.poll() is None:
-                try:
-                    os.killpg(os.getpgid(self._player_proc.pid), signal.SIGINT)
-                except Exception:
-                    try:
-                        self._player_proc.terminate()
-                    except Exception:
-                        pass
-                try:
-                    self._player_proc.kill()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        finally:
-            self._player_proc = None
-        
-        # ✅ 兜底：只要发生强制停止，也发一次 done
-        try:
-            if self._speaking:
-                self._speaking = False
-                self.tts_speaking_pub.publish(Bool(data=False))
-            self.tts_done_pub.publish(Bool(data=True))
-            self.get_logger().info('✅ /tts/done 已发布（打断触发）')
-        except Exception:
-            pass
+        with self._state_lock:
+            piper, player = self._detach_playback_locked()
+        self._stop_detached_playback(piper, player)
     
     # 11/2  V1.1 新增：打断回调
     def _on_interrupt(self, msg: Bool):
         if not msg or not msg.data:
             return
-        self.get_logger().info('⛔ 收到 /tts/interrupt，停止当前播报')
-        with self._state_lock:
-            self._interrupt_generation += 1
-        self._stop_playback()
-        
-        # ✅ 11/8 新增：关键：立刻复位，避免“下一句也被当成要丢弃”
-       # self._interrupt_flag = False
-
-        # 是否清空队列（推荐清空，避免刚被打断后又继续把旧回答播完）
-        if self._interrupt_clears_queue:
-            try:
-                while True:
-                    self._q.get_nowait()
-                    self._q.task_done()
-            except queue.Empty:
-                pass
-
-        # 发布不在说话
-        if self._speaking:
-            self._speaking = False
-            self.tts_speaking_pub.publish(Bool(data=False))
-        
-        self._interrupt_flag = False  # ✅ 关键：防止下一句也被误丢
-        # ✅ 新增：等价“播报结束”事件（打断也算结束）
-        # self.tts_done_pub.publish(Bool(data=True))
+        self.get_logger().info('⛔ 收到 TTS 打断，停止当前播报')
+        # Block a new reply until old processes are confirmed stopped.  This
+        # prevents an older interrupt from overwriting the new reply's
+        # /tts_speaking=True state or stopping its newly registered player.
+        with self._command_lock:
+            with self._state_lock:
+                generation, dropped = self._q.interrupt()
+                piper, player = self._detach_playback_locked()
+                self._stop_streaming = True
+                was_speaking = self._speaking
+                self._speaking = False
+            self._stop_detached_playback(piper, player)
+            self.get_logger().debug(
+                f'打断 generation={generation}，清除旧队列 {dropped} 条'
+            )
+            if was_speaking:
+                self.tts_speaking_pub.publish(Bool(data=False))
+            self.tts_done_pub.publish(Bool(data=True))
+            self.get_logger().info('✅ /tts/done 已发布（打断触发）')
 
     # ---- 接收文本并分句
     def _on_reply(self, msg: String):
         raw = (msg.data or '').strip()
         if not raw:
             return
-        
-        
+
+        with self._command_lock:
+            self._enqueue_reply(raw)
+
+    def _enqueue_reply(self, raw: str):
         clean = strip_markdown_to_speech(raw)
 
         now = time.time()
@@ -399,14 +388,19 @@ class TTSSpeakerNode(Node):
                 return
             self._last_sleep_hint_ts = time.time()
 
+        reply_generation = self._q.generation
+        enqueued = False
         for seg in split_sentences(clean, self.max_sentence_len):
             try:
-                self._q.put_nowait(seg)
+                if not self._q.put_nowait_if_current(reply_generation, seg):
+                    self.get_logger().info('⏭️ 回复在排队期间被打断，停止入队')
+                    break
+                enqueued = True
                 self.get_logger().info(f'📥 播放排队: {seg}')
             except queue.Full:
                 self.get_logger().warning('⚠️ 队列已满，丢弃一条播报。')
 
-        if not self._speaking:
+        if enqueued and not self._speaking:
             self._speaking = True
             self.tts_speaking_pub.publish(Bool(data=True))
 
@@ -414,25 +408,22 @@ class TTSSpeakerNode(Node):
     def _speech_worker(self):
         while self._worker_alive:
             try:
-                seg = self._q.get(timeout=0.2)
-                if self._interrupt_flag:
-                    self._interrupt_flag = False  # 只丢弃本次，恢复等待
-                    self.get_logger().info('⏭️ 已丢弃被打断的当前句子')
+                generation, seg = self._q.get(timeout=0.2)
+                if not self._generation_is_current(generation):
+                    self.get_logger().info('⏭️ 已丢弃旧 generation 句子')
                     self._q.task_done()
                     continue
             except queue.Empty:
                 if self._speaking:
                     time.sleep(0.3)
-                    if self._q.empty():
-                        self._speaking = False
-                        self.tts_speaking_pub.publish(Bool(data=False))
-                        # ✅ 新增：自然播报结束 → 发 done
-                        self.tts_done_pub.publish(Bool(data=True))
-                        self.get_logger().info('✅ /tts/done 已发布（自然结束）')
+                    with self._command_lock:
+                        if self._speaking and self._q.empty():
+                            self._speaking = False
+                            self.tts_speaking_pub.publish(Bool(data=False))
+                            # ✅ 新增：自然播报结束 → 发 done
+                            self.tts_done_pub.publish(Bool(data=True))
+                            self.get_logger().info('✅ /tts/done 已发布（自然结束）')
                 continue
-
-            with self._state_lock:
-                generation = self._interrupt_generation
 
             try:
                 self._speak_segment(seg, generation)
@@ -442,8 +433,7 @@ class TTSSpeakerNode(Node):
                 self._q.task_done()
 
     def _generation_is_current(self, generation: int) -> bool:
-        with self._state_lock:
-            return generation == self._interrupt_generation
+        return self._q.is_current(generation)
 
     def _tts_backend_order(self):
         primary = self.tts_backend if self.tts_backend in {'cosyvoice', 'piper'} else 'cosyvoice'
@@ -461,7 +451,7 @@ class TTSSpeakerNode(Node):
             and self.play_audio
         ):
             if self._generation_is_current(generation):
-                self._play_by_pipe(text)
+                self._play_by_pipe(text, generation)
             return
 
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tf_wav:
@@ -519,7 +509,7 @@ class TTSSpeakerNode(Node):
             )
             self._persist_wav_if_requested(wav_path)
             if self.play_audio and self._generation_is_current(generation):
-                self._play_wav_file(wav_path)
+                self._play_wav_file(wav_path, generation)
         finally:
             try:
                 if os.path.isfile(wav_path):
@@ -580,103 +570,124 @@ class TTSSpeakerNode(Node):
         shutil.copy2(wav_path, target)
         self.get_logger().info(f'💾 WAV 已保存: {target}')
 
-    def _play_wav_file(self, wav_path: str):
+    def _play_wav_file(self, wav_path: str, generation: int):
         player_argv = normalize_player_for_file(self.player)
-        self._player_proc = subprocess.Popen(
-            player_argv + [wav_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid,
-            close_fds=True,
-        )
-        player = self._player_proc
+        with self._state_lock:
+            if not self._generation_is_current(generation):
+                return
+            player = subprocess.Popen(
+                player_argv + [wav_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            self._player_proc = player
+            self._player_generation = generation
         try:
             player.wait(timeout=60.0)
         except subprocess.TimeoutExpired:
             self.get_logger().warning('播放器超时，强制结束')
-            self._stop_playback()
+            self._stop_one_process(player, '播放器')
         finally:
-            if self._player_proc is player:
-                self._player_proc = None
+            with self._state_lock:
+                if self._player_proc is player:
+                    self._player_proc = None
+                    self._player_generation = None
 
     # ---- PIPE 模式
-    def _play_by_pipe(self, text: str):
-        # ⛔ 开始播放前：若被打断标记已置位，命中即清，直接放弃本句
-        if self._interrupt_flag:
-            self.get_logger().info('⏭️ 被打断标记已置位，放弃当前句子（PIPE-前置）')
-            self._interrupt_flag = False
-            return
-
-        # 启动 piper（合成）
-        self._piper_proc = subprocess.Popen(
-            [self.piper_bin, '-m', self.model_path,
-             '--length_scale', str(self.length_scale),
-             '--noise-scale', str(self.noise_scale),
-             '--noise-w', str(self.noise_w),
-             '--sentence-silence', str(self.sentence_silence_s)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            preexec_fn=os.setsid,
-            close_fds=True
-        )
-
-        # 启动播放器（aplay/ffplay），接收 piper 的 stdout
-        # --- 构造播放器命令，确保 ffplay 从 stdin 读取音频 ---
+    def _play_by_pipe(self, text: str, generation: int):
         player_argv = shlex.split(self.player)
         if player_argv and os.path.basename(player_argv[0]) == 'ffplay':
-            # ffplay 默认不会从 stdin 读，必须显式 -i -
             if '-i' not in player_argv:
                 player_argv += ['-i', '-']
 
-        self._player_proc = subprocess.Popen(
-            player_argv,
-            stdin=self._piper_proc.stdout,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid,
-            close_fds=True
-        )
-        self._piper_proc.stdout.close()  # 重要：父进程关闭写端，避免管道保持为“有人持有”
+        piper = None
+        player = None
+        spawn_error = None
+        with self._state_lock:
+            if not self._generation_is_current(generation):
+                return
+            piper = subprocess.Popen(
+                [self.piper_bin, '-m', self.model_path,
+                 '--length_scale', str(self.length_scale),
+                 '--noise-scale', str(self.noise_scale),
+                 '--noise-w', str(self.noise_w),
+                '--sentence-silence', str(self.sentence_silence_s)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            self._piper_proc = piper
+            self._piper_generation = generation
+            try:
+                player = subprocess.Popen(
+                    player_argv,
+                    stdin=piper.stdout,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            except Exception as exc:
+                spawn_error = exc
+                self._piper_proc = None
+                self._piper_generation = None
+            else:
+                self._player_proc = player
+                self._player_generation = generation
 
-        # 用局部强引用，避免并发将成员置 None 导致 NoneType.wait
-        piper = self._piper_proc
-        player = self._player_proc
+        if spawn_error is not None:
+            self._stop_one_process(piper, 'Piper')
+            raise spawn_error
+
+        # Parent must close its duplicate of piper stdout so the player sees
+        # EOF when Piper exits.  Feed stdin explicitly instead of communicate(),
+        # which would try to read the already-forwarded stdout pipe.
+        if piper.stdout is not None:
+            piper.stdout.close()
 
         try:
-            # 合成
             try:
-                piper.communicate(input=(text.strip() + '\n').encode('utf-8'), timeout=30.0)
+                if piper.stdin is not None:
+                    piper.stdin.write((text.strip() + '\n').encode('utf-8'))
+                    piper.stdin.close()
+                piper.wait(timeout=30.0)
+            except BrokenPipeError:
+                if self._generation_is_current(generation):
+                    self.get_logger().warning('Piper 管道提前关闭')
+                return
             except subprocess.TimeoutExpired:
                 self.get_logger().warning('piper 合成超时，强制打断')
-                self._stop_playback()
+                self._stop_one_process(piper, 'Piper')
+                self._stop_one_process(player, '播放器')
                 return
 
-            # 合成结束后检查是否被打断：命中即清，不再等待播放器
-            if self._interrupt_flag:
-                self.get_logger().info('⏭️ 被打断（PIPE 合成后），跳过播放器等待')
-                self._interrupt_flag = False
+            if not self._generation_is_current(generation):
                 return
 
-            # 等待播放器：判空+超时保护
             if player is not None:
                 try:
                     player.wait(timeout=30.0)
                 except subprocess.TimeoutExpired:
                     self.get_logger().warning('播放器超时，强制打断')
-                    self._stop_playback()
-            else:
-                self.get_logger().debug('播放器已被并发清理，跳过 wait()')
+                    self._stop_one_process(player, '播放器')
 
         finally:
-            # 只在对象未被并发替换时清空成员引用
-            if self._piper_proc is piper:
-                self._piper_proc = None
-            if self._player_proc is player:
-                self._player_proc = None
+            with self._state_lock:
+                if self._piper_proc is piper:
+                    self._piper_proc = None
+                    self._piper_generation = None
+                if self._player_proc is player:
+                    self._player_proc = None
+                    self._player_generation = None
 
 
     def destroy_node(self):
         self._worker_alive = False
-        with self._state_lock:
-            self._interrupt_generation += 1
+        self._q.interrupt()
         self._stop_playback()
         if self._worker is not None and self._worker.is_alive():
             self._worker.join(timeout=1.0)

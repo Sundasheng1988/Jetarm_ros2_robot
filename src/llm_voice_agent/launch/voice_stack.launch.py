@@ -37,6 +37,9 @@ def generate_launch_description():
     enable_robot_side_effects = DeclareLaunchArgument(
         'enable_robot_side_effects', default_value='false'
     )
+    start_system_active = DeclareLaunchArgument(
+        'start_system_active', default_value='true'
+    )
     
     use_wakeword_arg    = DeclareLaunchArgument('use_wakeword',    default_value='true')
     wake_window_s_arg   = DeclareLaunchArgument('wake_window_s',   default_value='20.0')
@@ -66,6 +69,12 @@ def generate_launch_description():
     min_utt_ms    = DeclareLaunchArgument('min_utt_ms',    default_value='900')
     max_sil_ms    = DeclareLaunchArgument('max_sil_ms',    default_value='500')
     max_utt_ms    = DeclareLaunchArgument('max_utt_ms',    default_value='6000')
+    interrupt_max_utt_ms = DeclareLaunchArgument(
+        'interrupt_max_utt_ms', default_value='1800'
+    )
+    interrupt_max_sil_ms = DeclareLaunchArgument(
+        'interrupt_max_sil_ms', default_value='100'
+    )
     min_text_len  = DeclareLaunchArgument('min_text_len',  default_value='5')
     min_avg_conf  = DeclareLaunchArgument('min_avg_conf',  default_value='0.75')
     disable_update= DeclareLaunchArgument('disable_update',default_value='true')
@@ -153,6 +162,8 @@ def generate_launch_description():
                 'min_utt_ms': LaunchConfiguration('min_utt_ms'),
                 'max_sil_ms': LaunchConfiguration('max_sil_ms'),
                 'max_utt_ms': LaunchConfiguration('max_utt_ms'),
+                'interrupt_max_utt_ms': LaunchConfiguration('interrupt_max_utt_ms'),
+                'interrupt_max_sil_ms': LaunchConfiguration('interrupt_max_sil_ms'),
 
                 'min_text_len': LaunchConfiguration('min_text_len'),
                 'min_avg_conf': LaunchConfiguration('min_avg_conf'),
@@ -179,8 +190,7 @@ def generate_launch_description():
         name='llm_voice_agent',
         output='screen',
         condition=IfCondition(PythonExpression(['"', LaunchConfiguration('which_model'), '" == "fast"'])),
-        # ✅ 只加这一行：把 LLM 发往 /tts/interrupt 的“自动打断”改道
-        remappings=[('/tts/interrupt', '/tts/interrupt_from_llm')],
+        # /tts/interrupt 不再 remap：唤醒打断需直达 TTS，且 Agent 自身也订阅它以取消 GLM 流式。
         parameters=[
             wake_yaml,   # ★ 新增：把唤醒词 YAML 文件注入
             {
@@ -213,13 +223,16 @@ def generate_launch_description():
                 'enable_robot_side_effects': ParameterValue(
                     LaunchConfiguration('enable_robot_side_effects'), value_type=bool
                 ),
+                'start_system_active': ParameterValue(
+                    LaunchConfiguration('start_system_active'), value_type=bool
+                ),
 
                 'strict_intent': LaunchConfiguration('strict_intent'),
                 'llm_hint_enabled': LaunchConfiguration('llm_hint_enabled'),
                 'min_reply_interval_s': LaunchConfiguration('min_reply_interval_s'),
                 'reply_dedup_window_s': LaunchConfiguration('reply_dedup_window_s'),
                 'dedup_window_s': LaunchConfiguration('dedup_window_s'),
-            
+
                 'use_wakeword': LaunchConfiguration('use_wakeword'),
                 'wake_window_s': LaunchConfiguration('wake_window_s'),
                 'wake_cooldown_s': LaunchConfiguration('wake_cooldown_s'),
@@ -240,8 +253,7 @@ def generate_launch_description():
         name='llm_voice_agent',
         output='screen',
         condition=IfCondition(PythonExpression(['"', LaunchConfiguration('which_model'), '" == "deep"'])),
-        # ✅ 只加这一行：把 LLM 发往 /tts/interrupt 的“自动打断”改道
-        remappings=[('/tts/interrupt', '/tts/interrupt_from_llm')],
+        # /tts/interrupt 不再 remap：唤醒打断需直达 TTS，且 Agent 自身也订阅它以取消 GLM 流式。
         parameters=[
             wake_yaml,
             {
@@ -273,6 +285,9 @@ def generate_launch_description():
             'publish_topics': ['/voice_input/input'],
             'enable_robot_side_effects': ParameterValue(
                 LaunchConfiguration('enable_robot_side_effects'), value_type=bool
+            ),
+            'start_system_active': ParameterValue(
+                LaunchConfiguration('start_system_active'), value_type=bool
             ),
 
             'strict_intent': LaunchConfiguration('strict_intent'),
@@ -353,14 +368,16 @@ def generate_launch_description():
         which_model, use_llm, llm_base, llm_timeout, llm_connect_timeout,
         llm_backend, llm_fallback_backend,
         glm_api_base, glm_api_key_env, glm_model, glm_thinking,
-        llm_stream, stream_to_tts, enable_robot_side_effects,
+        llm_stream, stream_to_tts, enable_robot_side_effects, start_system_active,
         use_wakeword_arg, wake_window_s_arg, wake_cooldown_s_arg, wake_fallback_ms_arg,
         query_topic, reply_topic,
 
         # ASR
         base_dir, model_path, vad_path, punc_path,
         device, device_index, sample_rate, frame_ms, vad_lv,
-        min_utt_ms, max_sil_ms, max_utt_ms, min_text_len, min_avg_conf, disable_update,
+        min_utt_ms, max_sil_ms, max_utt_ms,
+        interrupt_max_utt_ms, interrupt_max_sil_ms,
+        min_text_len, min_avg_conf, disable_update,
 
         # Agent
         strict_intent, llm_hint_enabled,

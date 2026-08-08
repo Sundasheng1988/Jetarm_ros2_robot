@@ -4,6 +4,8 @@
 import json, time, re, os, unicodedata
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 from std_msgs.msg import String
 from std_msgs.msg import Bool
 from collections import deque
@@ -12,9 +14,11 @@ from robot_interfaces.msg import EnvObjectArray  # 若你定义的 msg 名字不
 from llm_voice_agent.utils.class_name_translator import translate_class_name
 from llm_voice_agent.voice_backends import (
     VoiceBackendError,
+    VoiceBackendCancelled,
     glm_chat,
     ollama_chat,
 )
+from llm_voice_agent.runtime_control import CancellationTokenSlot
 
 
 PUNC_PATTERN = re.compile(r"[^\w\u4e00-\u9fff]+", re.UNICODE)
@@ -401,7 +405,7 @@ class LlmVoiceAgent(Node):
 
         # ===== 系统状态 25/12/21 =====
         self.system_active = bool(
-            self.declare_parameter('start_system_active', False)
+            self.declare_parameter('start_system_active', True)
                 .get_parameter_value().bool_value
         )
         # self.sleeping = False   # 💤 25/12/14 新增：语音节点休眠态
@@ -450,7 +454,11 @@ class LlmVoiceAgent(Node):
         # self.get_logger().info("📢 已通知 face_follow：voice_ready")
         
         #11/2 新增 ====== 命中唤醒词 ======
-        self.tts_interrupt_pub = self.create_publisher(Bool, '/tts/interrupt', 1)
+        # Agent 发出的唤醒消息只负责停止旧播放。真实用户打断继续使用
+        # /tts/interrupt，并由下面的订阅取消当前 LLM。
+        self.tts_playback_interrupt_pub = self.create_publisher(
+            Bool, '/tts/interrupt_playback_only', 1
+        )
         
         #11/8 —— 监听 TTS 播放状态（用于“播报结束再开计时”）——
         #self.sub_tts_speaking = self.create_subscription(
@@ -461,6 +469,19 @@ class LlmVoiceAgent(Node):
         # 11/9 新增：监听 TTS 结束/打断等价完成信号，立刻开窗
         self.sub_tts_done = self.create_subscription(
            Bool, '/tts/done', self._on_tts_done, 10
+        )
+
+        # ===== 语音打断：取消当前正在进行的 GLM 流式请求 =====
+        # GLM 在 _on_query 回调线程里阻塞流式；普通订阅回调无法在该期间执行。
+        # 因此打断订阅挂在独立的 ReentrantCallbackGroup 上，并由 main() 里的
+        # MultiThreadedExecutor 驱动，使其能与 _on_query 并发。
+        # 每轮 LLM 请求使用独立 Event；旧 Event 永不 clear，且只允许当前请求
+        # 在 finally 中释放自己，避免旧请求误清理较新的取消令牌。
+        self._llm_cancel_tokens = CancellationTokenSlot()
+        self._interrupt_cb_group = ReentrantCallbackGroup()
+        self.sub_tts_interrupt = self.create_subscription(
+            Bool, '/tts/interrupt', self._on_tts_interrupt, 10,
+            callback_group=self._interrupt_cb_group,
         )
         # self.pending_wake_activation = False   # 命中唤醒后，等待播报结束再真正开启窗口
         # self._ignore_tts_false_until = 0.0     # 避免“打断导致的短促 False”误触发
@@ -717,10 +738,9 @@ class LlmVoiceAgent(Node):
                         "🤖 L3_WAKE: skip face_follow resume (mode!=chat or not needed)"
                     )
 
-                # 可选：打断当前 TTS
-                
-                self.tts_interrupt_pub.publish(Bool(data=True))
-                self.get_logger().debug("🔕 TTS interrupt issued")
+                # 只停止旧播放，不回环到 Agent 的 /tts/interrupt 取消订阅。
+                self.tts_playback_interrupt_pub.publish(Bool(data=True))
+                self.get_logger().debug("🔕 TTS playback-only interrupt issued")
 
                 # 去除唤醒词本体
                 # system 未激活时，禁止 strip + LLM
@@ -1044,15 +1064,22 @@ class LlmVoiceAgent(Node):
                 self._say(cleaned, concise=not use_long)
 
         if self.use_llm:
-            reply = self._llm_chat(
-                user_for_memory,
-                long_form=use_long,
-                on_sentence=(
-                    _speak_streamed_sentence
-                    if self.llm_stream and self.stream_to_tts
-                    else None
-                ),
-            ) or '暂时无法连接语言模型，请稍后再试。'
+            try:
+                reply = self._llm_chat(
+                    user_for_memory,
+                    long_form=use_long,
+                    on_sentence=(
+                        _speak_streamed_sentence
+                        if self.llm_stream and self.stream_to_tts
+                        else None
+                    ),
+                )
+            except VoiceBackendCancelled:
+                # 被语音打断：已流式输出的句子保留，不再追加任何 /speech_reply，
+                # 也不触发补充播报/手势/记忆。
+                self.get_logger().info('⏭️ 对话被语音打断，停止后续播报')
+                return
+            reply = reply or '暂时无法连接语言模型，请稍后再试。'
             reply = strip_think(reply)
             reply = strip_meta(reply)
             if not use_long:
@@ -1202,57 +1229,92 @@ class LlmVoiceAgent(Node):
             order.append(fallback)
         return order
 
+    def _begin_llm_cancel_token(self):
+        """每轮 LLM 请求的取消令牌。
+
+        每次调用新建一个 Event；新请求会永久取消仍存活的旧 Event，但绝不会
+        clear 或复用它，因此旧请求不能恢复输出。
+        """
+        return self._llm_cancel_tokens.begin()
+
+    def _on_tts_interrupt(self, msg: Bool):
+        """语音打断：取消进行中的 GLM 流式请求。
+
+        本回调挂在独立 ReentrantCallbackGroup 上，由 main() 的
+        MultiThreadedExecutor 驱动，因此能在 _on_query 阻塞于 glm_chat 期间并发
+        触发。Agent 自身只发布 /tts/interrupt_playback_only，不会进入这里。
+        """
+        if not msg or not msg.data:
+            return
+        if self._llm_cancel_tokens.cancel_current():
+            self.get_logger().info('⛔ 收到 /tts/interrupt，取消当前 LLM 流式')
+
     def _request_llm(self, messages, max_tokens: int, on_sentence=None) -> str:
         timeout = (self.llm_connect_timeout_s, self.llm_timeout_s)
-        for backend in self._llm_backend_order():
-            started = time.monotonic()
-            try:
-                if backend == 'glm':
-                    api_key = os.environ.get(self.glm_api_key_env, '').strip()
-                    if not api_key:
-                        raise VoiceBackendError(
-                            f'environment variable {self.glm_api_key_env} is not set'
+        cancel_event = self._begin_llm_cancel_token()
+        cancel_check = cancel_event.is_set
+        try:
+            for backend in self._llm_backend_order():
+                started = time.monotonic()
+                try:
+                    if backend == 'glm':
+                        api_key = os.environ.get(self.glm_api_key_env, '').strip()
+                        if not api_key:
+                            raise VoiceBackendError(
+                                f'environment variable {self.glm_api_key_env} is not set'
+                            )
+                        reply = glm_chat(
+                            api_base=self.glm_api_base,
+                            api_key=api_key,
+                            model=self.glm_model,
+                            messages=messages,
+                            temperature=self.temperature,
+                            max_tokens=max_tokens,
+                            timeout=timeout,
+                            thinking=self.glm_thinking,
+                            stream=self.llm_stream,
+                            on_sentence=on_sentence,
+                            cancel_check=cancel_check,
+                            cancel_event=cancel_event,
                         )
-                    reply = glm_chat(
-                        api_base=self.glm_api_base,
-                        api_key=api_key,
-                        model=self.glm_model,
-                        messages=messages,
-                        temperature=self.temperature,
-                        max_tokens=max_tokens,
-                        timeout=timeout,
-                        thinking=self.glm_thinking,
-                        stream=self.llm_stream,
-                        on_sentence=on_sentence,
-                    )
-                    model_name = self.glm_model
-                else:
-                    reply = ollama_chat(
-                        base_url=self.ollama_base,
-                        model=self.model,
-                        messages=messages,
-                        temperature=self.temperature,
-                        max_tokens=max_tokens,
-                        num_ctx=self.num_ctx,
-                        timeout=timeout,
-                    )
-                    model_name = self.model
+                        model_name = self.glm_model
+                    else:
+                        reply = ollama_chat(
+                            base_url=self.ollama_base,
+                            model=self.model,
+                            messages=messages,
+                            temperature=self.temperature,
+                            max_tokens=max_tokens,
+                            num_ctx=self.num_ctx,
+                            timeout=timeout,
+                        )
+                        model_name = self.model
 
-                elapsed = time.monotonic() - started
-                self.get_logger().info(
-                    f'LLM 完成 | backend={backend} | model={model_name} | '
-                    f'elapsed={elapsed:.2f}s | chars={len(reply)}'
-                )
-                if reply:
-                    return reply
-                raise VoiceBackendError('empty model response')
-            except VoiceBackendError as exc:
-                self.get_logger().warning(f'LLM backend={backend} 不可用：{exc}')
-            except Exception as exc:
-                self.get_logger().warning(
-                    f'LLM backend={backend} 异常：{type(exc).__name__}'
-                )
-        return ''
+                    elapsed = time.monotonic() - started
+                    self.get_logger().info(
+                        f'LLM 完成 | backend={backend} | model={model_name} | '
+                        f'elapsed={elapsed:.2f}s | chars={len(reply)}'
+                    )
+                    if reply:
+                        return reply
+                    raise VoiceBackendError('empty model response')
+                except VoiceBackendCancelled:
+                    # 用户语音取消：不得回退其它后端，也不得触发任何补充播报。
+                    self.get_logger().info(
+                        f'⏭️ LLM 流式被语音打断（backend={backend}），不回退其它后端'
+                    )
+                    raise
+                except VoiceBackendError as exc:
+                    self.get_logger().warning(f'LLM backend={backend} 不可用：{exc}')
+                except Exception as exc:
+                    self.get_logger().warning(
+                        f'LLM backend={backend} 异常：{type(exc).__name__}'
+                    )
+            return ''
+        finally:
+            # Identity-checked release: an older request can never clear a
+            # newer request's token if callbacks ever become more concurrent.
+            self._llm_cancel_tokens.release(cancel_event)
 
     # ===== LLM（聊天，带历史）=====
     def _llm_chat(self, user_text: str, long_form: bool = False, on_sentence=None) -> str:
@@ -1276,10 +1338,14 @@ class LlmVoiceAgent(Node):
             },
             {'role': 'user', 'content': text},
         ]
-        return self._request_llm(
-            messages,
-            max_tokens=min(int(self.max_tokens), 96),
-        )
+        try:
+            return self._request_llm(
+                messages,
+                max_tokens=min(int(self.max_tokens), 96),
+            )
+        except VoiceBackendCancelled:
+            self.get_logger().info('⏭️ 任务追问被语音打断')
+            return ''
 
     # ======== 会话记忆：构造 messages ========
     def _build_messages(self, user_text: str, long_form: bool = False):
@@ -1371,12 +1437,20 @@ class LlmVoiceAgent(Node):
 def main():
     rclpy.init()
     node = LlmVoiceAgent()
+    # MultiThreadedExecutor：让挂在 ReentrantCallbackGroup 上的 /tts/interrupt
+    # 回调能在 GLM 流式阻塞 _on_query 期间被并发处理；其余回调仍在默认互斥组内
+    # 串行，行为与原单线程执行器一致。
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        executor.shutdown()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

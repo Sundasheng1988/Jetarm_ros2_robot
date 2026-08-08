@@ -1,6 +1,6 @@
 # JetArm Voice v1.1：GLM + CosyVoice 升级与无声验证指南
 
-基线：`llm_voice_agent_current_260807.tar.gz`
+基线：`llm_voice_agent_20260808.tar.gz`
 升级包版本：v1.1（ROS package version `0.0.3`）
 
 ## 1. 本版改动
@@ -17,7 +17,17 @@
 - 任务文本只发布到 `/voice_input/input`，不再同时发送键盘入口。
 - `task` 模式、任务补槽、确认和取消统一受唤醒窗口约束。
 - `enable_robot_side_effects` 默认 `false`；默认不创建手势、face-follow 和舵机发布器。
-- 新增 12 项标准库无声测试，无需启动 ROS、麦克风、播放器、GLM 或 CosyVoice。
+- `/tts/interrupt` 只表示真实用户打断，同时停止 TTS 并取消当前 GLM；Agent
+  自己只发布 `/tts/interrupt_playback_only` 停止旧播放，不会误取消新请求。
+- 每轮 GLM 使用独立取消令牌；取消不触发 Ollama fallback，句子回调和尾句
+  flush 在真正发布前都会再次检查取消状态。
+- ASR 打断模式最大录音时长由 `interrupt_max_utt_ms` 控制，默认 `1800ms`；
+  `100ms` 静音 endpoint 仍可提前识别。
+- TTS 队列按 generation 隔离；打断会清除旧回答，并按
+  `SIGTERM → wait → SIGKILL → wait` 停止本节点拥有的播放器/合成进程组。
+- 新增 `rebecca_voice_start`：首次隐藏输入 API Key，之后自动加载，并安全托管
+  CosyVoice(FP16) 与完整 voice stack。
+- 自动测试无需启动 ROS、麦克风、播放器、GLM 或 CosyVoice。
 
 ## 2. 替换前备份
 
@@ -49,18 +59,18 @@ tar -xzf \
 ```bash
 cd ~/ros2_ws/src/llm_voice_agent
 
-python3 -m unittest discover \
-  -v \
-  -s test \
-  -p 'test_voice_*.py'
+python3 -m unittest -v \
+  test.test_voice_backends \
+  test.test_runtime_control \
+  test.test_agent_cancellation \
+  test.test_voice_safety_static \
+  test.test_rebecca_start
 ```
 
 期望结果：
 
-```text
-Ran 12 tests
-OK
-```
+末尾必须出现 `OK`；允许因当前机器没有默认 CosyVoice conda 解释器而跳过一项
+默认路径断言。
 
 这些测试不会联网，也不会启动 ROS 或硬件。
 
@@ -92,25 +102,23 @@ llm_voice_agent.launch.py
 voice_stack.launch.py
 ```
 
-## 5. 设置 GLM API Key
+## 5. 首次保存 GLM API Key
 
-只在当前终端临时设置：
-
-```bash
-read -rsp 'Zhipu API key: ' ZHIPUAI_API_KEY
-echo
-export ZHIPUAI_API_KEY
-```
-
-确认“变量存在”而不显示密钥：
+推荐直接运行一键入口：
 
 ```bash
-test -n "$ZHIPUAI_API_KEY" \
-  && echo 'ZHIPUAI_API_KEY is set' \
-  || echo 'ZHIPUAI_API_KEY is missing'
+ros2 run llm_voice_agent rebecca_voice_start
 ```
 
-不要把密钥写入 launch、YAML、源码、Git 或终端截图。
+首次运行且环境中没有 `ZHIPUAI_API_KEY` 时，入口会用隐藏输入读取一次，并保存到：
+
+```text
+~/.config/jetarm_voice/secrets.env
+```
+
+目录权限为 `700`，文件权限为 `600`。以后自动加载，不显示值，也不把 Key 放入
+ROS 参数、命令行或日志。如果当前环境已经设置 `ZHIPUAI_API_KEY`，入口直接使用，
+不会创建文件。`secrets.env` 已加入防御性 `.gitignore`。
 
 ## 6. 部署 CosyVoice 3 常驻服务
 
@@ -148,18 +156,17 @@ snapshot_download(
 PY
 ```
 
-启动常驻 FastAPI 服务：
+不再直接运行官方 `server.py`。完成依赖与模型安装后回到 ROS 工作区，使用本包的
+一键入口；它会以 FP16 配置启动服务并强制绑定本机回环地址：
 
 ```bash
-conda activate cosyvoice
-cd ~/tools/CosyVoice/runtime/python/fastapi
-
-python server.py \
-  --port 50000 \
-  --model_dir ~/tools/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run llm_voice_agent rebecca_voice_start
 ```
 
-该终端应保持运行。默认零样本参考文件使用：
+默认零样本参考文件使用：
 
 ```text
 /home/sundasheng/tools/CosyVoice/asset/zero_shot_prompt.wav
@@ -223,23 +230,24 @@ ros2 launch llm_voice_agent glm_cosyvoice.launch.py \
 
 ## 8. 完整语音栈
 
-先保持直接机器人副作用关闭：
+推荐的一键启动命令：
 
 ```bash
-ros2 launch llm_voice_agent voice_stack.launch.py \
-  glm_model:=glm-4.5-air \
+ros2 run llm_voice_agent rebecca_voice_start
+```
+
+需要覆盖 launch 参数时直接追加，例如无声输出 WAV：
+
+```bash
+ros2 run llm_voice_agent rebecca_voice_start \
   play_audio:=false \
-  enable_robot_side_effects:=false
+  wav_output_dir:=/tmp/jetarm_tts_qa
 ```
 
-以后可以出声时再改为：
-
-```bash
-ros2 launch llm_voice_agent voice_stack.launch.py \
-  glm_model:=glm-4.5-air \
-  play_audio:=true \
-  enable_robot_side_effects:=false
-```
+入口只探测并绑定 `127.0.0.1:50000`。如果已有有效 CosyVoice 服务则复用且不
+拥有它；端口是其他服务时明确退出；没有服务时才启动 FP16 CosyVoice，健康后再
+启动 `voice_stack`。Ctrl+C 先停止入口自己启动的 voice stack，再停止入口自己
+启动的 CosyVoice；复用的 CosyVoice 永远不会由入口停止。
 
 只有在手势和 face-follow 已单独验证后，才显式设置：
 
@@ -247,7 +255,15 @@ ros2 launch llm_voice_agent voice_stack.launch.py \
 enable_robot_side_effects:=true
 ```
 
-注意：`enable_robot_side_effects` 只控制 Agent 直发的手势、face-follow 和舵机话题。任务文本仍可在用户确认后发布到 `/voice_input/input`；如果 Parser/Runtime/机械臂执行链同时运行，任务可能进入真实执行。因此无声开发时优先使用 `glm_cosyvoice.launch.py`。
+注意：`enable_robot_side_effects` 只控制 Agent 直发的手势、face-follow 和舵机话题，
+**不能阻止 `/voice_input/input` 的任务文本发布**。实机语音测试期间必须确保
+Parser、Executor、Servo 等任务执行链没有运行；如果这些链路同时运行，确认后的
+任务仍可能进入真实执行。本轮没有扩大范围实现新的机器人安全架构。
+
+打断话题语义：
+
+- `/tts/interrupt`：ASR 检测到真实打断；TTS 停止播放，Agent 取消 GLM。
+- `/tts/interrupt_playback_only`：Agent 唤醒时只停止旧播放；Agent 不订阅该话题。
 
 ## 9. 回退行为
 
@@ -293,7 +309,7 @@ colcon build \
 - 全部 Python 文件语法编译。
 - `package.xml` 可解析。
 - launch 参数均已声明，无未解析 `LaunchConfiguration`。
-- 12/12 无声测试通过。
+- 全部无声行为/静态测试通过。
 - 压缩包不包含 API Key、`__pycache__` 或 `.pyc`。
 
 当前交付环境没有 ROS2 Humble，因此仍需在你的 PC 上验证：

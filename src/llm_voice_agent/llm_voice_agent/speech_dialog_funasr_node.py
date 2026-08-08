@@ -187,6 +187,16 @@ class SpeechDialogFunASR(Node):
         self.max_utt_ms = int(self.declare_parameter("max_utt_ms", 6000).get_parameter_value().integer_value)
         # ✅ 11/8 新增：打断模式的“最短语音时长”阈值（默认 120ms）
         self.interrupt_min_utt_ms = int(self.declare_parameter("interrupt_min_utt_ms", 120).get_parameter_value().integer_value)
+        # 打断监听不能再硬截 900ms，否则“瑞贝卡，停止说话”可能只识别到前半句。
+        # 静音 endpoint 仍可用较短阈值提前完成识别，无需等满 1800ms。
+        self.interrupt_max_utt_ms = int(
+            self.declare_parameter("interrupt_max_utt_ms", 1800)
+                .get_parameter_value().integer_value
+        )
+        self.interrupt_max_sil_ms = int(
+            self.declare_parameter("interrupt_max_sil_ms", 100)
+                .get_parameter_value().integer_value
+        )
 
         # ===== 唤醒 & 跟随 =====
         # 兼容两种命名：enable_wakeup / use_wakeword（launch 里传的是 use_wakeword）
@@ -521,15 +531,23 @@ class SpeechDialogFunASR(Node):
                 # if not self._interrupt_listen_only and self.enable_wakeup and self.active:
                 #     self.active_until = now + self.active_extend_s
 
-                # 语句上限（打断模式更短）
-                max_utt = 900 if self._interrupt_listen_only else self.max_utt_ms
+                # 打断模式给完整口令留足时间；检测到静音仍会提前 endpoint。
+                max_utt = (
+                    self.interrupt_max_utt_ms
+                    if self._interrupt_listen_only
+                    else self.max_utt_ms
+                )
                 if self.ms_in_cur_utt >= max_utt:
                     self._finalize_utterance(reason="max_utt")
             else:
                 if self.speeching:
                     self.ms_sil += frame_ms
-                    # 端点阈值（打断模式更敏感）
-                    needed = 100 if self._interrupt_listen_only else self.max_sil_ms
+                    # 端点阈值（打断模式更敏感，可在最大时长前完成）
+                    needed = (
+                        self.interrupt_max_sil_ms
+                        if self._interrupt_listen_only
+                        else self.max_sil_ms
+                    )
                     if self.ms_sil >= needed:
                         self._finalize_utterance(reason="endpoint")
 
@@ -683,5 +701,4 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-
 
