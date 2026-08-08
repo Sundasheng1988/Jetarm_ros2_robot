@@ -1,0 +1,22 @@
+tts_speaker_node:
+  ros__parameters:
+    tts_backend: "cosyvoice"
+    tts_fallback_backend: "piper"
+    cosyvoice_base_url: "http://127.0.0.1:50000"
+    cosyvoice_mode: "zero_shot"
+    cosyvoice_sample_rate: 24000
+    cosyvoice_prompt_wav: "/home/sundasheng/tools/CosyVoice/asset/zero_shot_prompt.wav"
+    cosyvoice_prompt_text: "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。"
+    play_audio: true
+    wav_output_dir: ""
+    emit_mode: "wav"
+    player: "ffplay -autoexit -nodisp -loglevel quiet"
+    sentence_silence_ms: 140
+    sentence_silence_s: 0.14
+    max_sentence_len: 220
+    dedup_window_s: 1.5
+    queue_max: 16
+    drop_queue_on_interrupt: true
+    length_scale: 1.04
+    noise_scale: 0.65
+    noise_w: 0.90

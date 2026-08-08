@@ -9,6 +9,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     
@@ -22,6 +23,20 @@ def generate_launch_description():
     use_llm     = DeclareLaunchArgument('use_llm',     default_value='true')
     llm_base    = DeclareLaunchArgument('llm_base',    default_value='http://127.0.0.1:11434')
     llm_timeout = DeclareLaunchArgument('llm_timeout_s', default_value='60.0')
+    llm_connect_timeout = DeclareLaunchArgument('llm_connect_timeout_s', default_value='8.0')
+    llm_backend = DeclareLaunchArgument('llm_backend', default_value='glm')
+    llm_fallback_backend = DeclareLaunchArgument('llm_fallback_backend', default_value='ollama')
+    glm_api_base = DeclareLaunchArgument(
+        'glm_api_base', default_value='https://open.bigmodel.cn/api/paas/v4'
+    )
+    glm_api_key_env = DeclareLaunchArgument('glm_api_key_env', default_value='ZHIPUAI_API_KEY')
+    glm_model = DeclareLaunchArgument('glm_model', default_value='glm-4.5-air')
+    glm_thinking = DeclareLaunchArgument('glm_thinking', default_value='false')
+    llm_stream = DeclareLaunchArgument('llm_stream', default_value='true')
+    stream_to_tts = DeclareLaunchArgument('stream_to_tts', default_value='true')
+    enable_robot_side_effects = DeclareLaunchArgument(
+        'enable_robot_side_effects', default_value='false'
+    )
     
     use_wakeword_arg    = DeclareLaunchArgument('use_wakeword',    default_value='true')
     wake_window_s_arg   = DeclareLaunchArgument('wake_window_s',   default_value='20.0')
@@ -62,9 +77,8 @@ def generate_launch_description():
     reply_dedup_window_s = DeclareLaunchArgument('reply_dedup_window_s', default_value='2.0')
     input_dedup_window_s = DeclareLaunchArgument('dedup_window_s',       default_value='3.0')
     num_ctx              = DeclareLaunchArgument('num_ctx',              default_value='2048')
-    temperature_arg      = DeclareLaunchArgument('temperature',          default_value='0.2')
-    # ↓ 将默认 max_tokens 改为 80（更短句，避免一次吐太多）
-    max_tokens_arg       = DeclareLaunchArgument('max_tokens',           default_value='80')
+    temperature_arg      = DeclareLaunchArgument('temperature',          default_value='0.45')
+    max_tokens_arg       = DeclareLaunchArgument('max_tokens',           default_value='256')
 
     # ===== TTS 参数（更稳 & 支持打断清队列）=====
     piper_bin   = DeclareLaunchArgument('piper_bin',   default_value='/home/sundasheng/.local/bin/piper')
@@ -76,12 +90,43 @@ def generate_launch_description():
     noise_scale = DeclareLaunchArgument('noise_scale', default_value='0.65')
     noise_w     = DeclareLaunchArgument('noise_w',     default_value='0.90')
     # ↓ 句间静音从 80ms → 60ms（打断体感更利落）
-    sent_sil_ms = DeclareLaunchArgument('sentence_silence_ms', default_value='60')
+    sent_sil_ms = DeclareLaunchArgument('sentence_silence_ms', default_value='140')
     max_sent_len= DeclareLaunchArgument('max_sentence_len', default_value='220')
     tts_dedup_s = DeclareLaunchArgument('tts_dedup_window_s', default_value='1.5')
     # ↓ 新增两个参数：打断即清队列 & 限制队列长度
     tts_drop_on_interrupt = DeclareLaunchArgument('tts_drop_queue_on_interrupt', default_value='true')
-    tts_queue_max_arg     = DeclareLaunchArgument('tts_queue_max', default_value='1')
+    tts_queue_max_arg     = DeclareLaunchArgument('tts_queue_max', default_value='16')
+
+    # ===== CosyVoice / silent QA =====
+    tts_backend = DeclareLaunchArgument('tts_backend', default_value='cosyvoice')
+    tts_fallback_backend = DeclareLaunchArgument('tts_fallback_backend', default_value='piper')
+    cosyvoice_base_url = DeclareLaunchArgument(
+        'cosyvoice_base_url', default_value='http://127.0.0.1:50000'
+    )
+    cosyvoice_mode = DeclareLaunchArgument('cosyvoice_mode', default_value='zero_shot')
+    cosyvoice_sample_rate = DeclareLaunchArgument(
+        'cosyvoice_sample_rate', default_value='24000'
+    )
+    cosyvoice_speaker_id = DeclareLaunchArgument('cosyvoice_speaker_id', default_value='')
+    cosyvoice_prompt_wav = DeclareLaunchArgument(
+        'cosyvoice_prompt_wav',
+        default_value='/home/sundasheng/tools/CosyVoice/asset/zero_shot_prompt.wav'
+    )
+    cosyvoice_prompt_text = DeclareLaunchArgument(
+        'cosyvoice_prompt_text',
+        default_value='You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。'
+    )
+    cosyvoice_instruct_text = DeclareLaunchArgument(
+        'cosyvoice_instruct_text',
+        default_value='You are a helpful assistant. 请用自然、清晰、亲切的普通话播报。<|endofprompt|>'
+    )
+    cosyvoice_connect_timeout = DeclareLaunchArgument(
+        'cosyvoice_connect_timeout_s', default_value='5.0'
+    )
+    cosyvoice_timeout = DeclareLaunchArgument('cosyvoice_timeout_s', default_value='90.0')
+    play_audio = DeclareLaunchArgument('play_audio', default_value='true')
+    wav_output_dir = DeclareLaunchArgument('wav_output_dir', default_value='')
+    sentence_silence_s = DeclareLaunchArgument('sentence_silence_s', default_value='0.14')
 
     # ----- 节点定义 -----
 
@@ -140,15 +185,34 @@ def generate_launch_description():
             wake_yaml,   # ★ 新增：把唤醒词 YAML 文件注入
             {
                 'use_llm': LaunchConfiguration('use_llm'),
+                'llm_backend': LaunchConfiguration('llm_backend'),
+                'llm_fallback_backend': LaunchConfiguration('llm_fallback_backend'),
+                'glm_api_base': LaunchConfiguration('glm_api_base'),
+                'glm_api_key_env': LaunchConfiguration('glm_api_key_env'),
+                'glm_model': LaunchConfiguration('glm_model'),
+                'glm_thinking': ParameterValue(
+                    LaunchConfiguration('glm_thinking'), value_type=bool
+                ),
+                'llm_stream': ParameterValue(
+                    LaunchConfiguration('llm_stream'), value_type=bool
+                ),
+                'stream_to_tts': ParameterValue(
+                    LaunchConfiguration('stream_to_tts'), value_type=bool
+                ),
                 'ollama_base': LaunchConfiguration('llm_base'),
                 'model': 'qwen2.5:7b-instruct',
                 'temperature': LaunchConfiguration('temperature'),
                 'max_tokens': LaunchConfiguration('max_tokens'),
+                'llm_connect_timeout_s': LaunchConfiguration('llm_connect_timeout_s'),
                 'llm_timeout_s': LaunchConfiguration('llm_timeout_s'),
                 'num_ctx': LaunchConfiguration('num_ctx'),
 
                 'query_topic': LaunchConfiguration('query_topic'),
                 'reply_topic': LaunchConfiguration('reply_topic'),
+                'publish_topics': ['/voice_input/input'],
+                'enable_robot_side_effects': ParameterValue(
+                    LaunchConfiguration('enable_robot_side_effects'), value_type=bool
+                ),
 
                 'strict_intent': LaunchConfiguration('strict_intent'),
                 'llm_hint_enabled': LaunchConfiguration('llm_hint_enabled'),
@@ -161,7 +225,11 @@ def generate_launch_description():
                 'wake_cooldown_s': LaunchConfiguration('wake_cooldown_s'),
                 'wake_fallback_ms': LaunchConfiguration('wake_fallback_ms'),
                
-                'chat_system_prompt': '你是中文语音助手，回答简洁自然，不超过两句。'
+                'chat_system_prompt': (
+                    '你叫 Rebecca，是自然、可靠的中文机器人助手。直接回答用户，'
+                    '默认一到三句口语化中文，约40到120字；简单问题更短。'
+                    '不要输出内部思考、元叙述或Markdown表格。'
+                )
             }]
     )
 
@@ -174,17 +242,38 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(['"', LaunchConfiguration('which_model'), '" == "deep"'])),
         # ✅ 只加这一行：把 LLM 发往 /tts/interrupt 的“自动打断”改道
         remappings=[('/tts/interrupt', '/tts/interrupt_from_llm')],
-        parameters=[{
+        parameters=[
+            wake_yaml,
+            {
             'use_llm': LaunchConfiguration('use_llm'),
+            'llm_backend': LaunchConfiguration('llm_backend'),
+            'llm_fallback_backend': LaunchConfiguration('llm_fallback_backend'),
+            'glm_api_base': LaunchConfiguration('glm_api_base'),
+            'glm_api_key_env': LaunchConfiguration('glm_api_key_env'),
+            'glm_model': LaunchConfiguration('glm_model'),
+            'glm_thinking': ParameterValue(
+                LaunchConfiguration('glm_thinking'), value_type=bool
+            ),
+            'llm_stream': ParameterValue(
+                LaunchConfiguration('llm_stream'), value_type=bool
+            ),
+            'stream_to_tts': ParameterValue(
+                LaunchConfiguration('stream_to_tts'), value_type=bool
+            ),
             'ollama_base': LaunchConfiguration('llm_base'),
             'model': 'qwen3:8b',
             'temperature': LaunchConfiguration('temperature'),
             'max_tokens': LaunchConfiguration('max_tokens'),
+            'llm_connect_timeout_s': LaunchConfiguration('llm_connect_timeout_s'),
             'llm_timeout_s': LaunchConfiguration('llm_timeout_s'),
             'num_ctx': LaunchConfiguration('num_ctx'),
 
             'query_topic': LaunchConfiguration('query_topic'),
             'reply_topic': LaunchConfiguration('reply_topic'),
+            'publish_topics': ['/voice_input/input'],
+            'enable_robot_side_effects': ParameterValue(
+                LaunchConfiguration('enable_robot_side_effects'), value_type=bool
+            ),
 
             'strict_intent': LaunchConfiguration('strict_intent'),
             'llm_hint_enabled': LaunchConfiguration('llm_hint_enabled'),
@@ -196,7 +285,11 @@ def generate_launch_description():
             'wake_window_s': wake_window_s,
             'wake_cooldown_s': wake_cooldown_s,
 
-            'chat_system_prompt': '你是中文语音助手。可内部思考，但对用户只说结论，最多两句。'
+            'chat_system_prompt': (
+                '你叫 Rebecca，是自然、可靠的中文机器人助手。直接回答用户，'
+                '默认一到三句口语化中文，约40到120字；简单问题更短。'
+                '不要输出内部思考、元叙述或Markdown表格。'
+            )
         }]
     )
 
@@ -209,12 +302,29 @@ def generate_launch_description():
         parameters=[{
             'reply_topic': LaunchConfiguration('reply_topic'),
 
+            'tts_backend': LaunchConfiguration('tts_backend'),
+            'tts_fallback_backend': LaunchConfiguration('tts_fallback_backend'),
+            'cosyvoice_base_url': LaunchConfiguration('cosyvoice_base_url'),
+            'cosyvoice_mode': LaunchConfiguration('cosyvoice_mode'),
+            'cosyvoice_sample_rate': LaunchConfiguration('cosyvoice_sample_rate'),
+            'cosyvoice_speaker_id': LaunchConfiguration('cosyvoice_speaker_id'),
+            'cosyvoice_prompt_wav': LaunchConfiguration('cosyvoice_prompt_wav'),
+            'cosyvoice_prompt_text': LaunchConfiguration('cosyvoice_prompt_text'),
+            'cosyvoice_instruct_text': LaunchConfiguration('cosyvoice_instruct_text'),
+            'cosyvoice_connect_timeout_s': LaunchConfiguration('cosyvoice_connect_timeout_s'),
+            'cosyvoice_timeout_s': LaunchConfiguration('cosyvoice_timeout_s'),
+            'play_audio': ParameterValue(
+                LaunchConfiguration('play_audio'), value_type=bool
+            ),
+            'wav_output_dir': LaunchConfiguration('wav_output_dir'),
+
             'piper_bin':  LaunchConfiguration('piper_bin'),
             'model_path': LaunchConfiguration('piper_model'),
             'length_scale': LaunchConfiguration('length_scale'),
             'noise_scale':  LaunchConfiguration('noise_scale'),
             'noise_w':      LaunchConfiguration('noise_w'),
             'sentence_silence_ms': LaunchConfiguration('sentence_silence_ms'),
+            'sentence_silence_s': LaunchConfiguration('sentence_silence_s'),
             'player': LaunchConfiguration('tts_player'),
             'emit_mode': LaunchConfiguration('tts_emit_mode'),
             'max_sentence_len': LaunchConfiguration('max_sentence_len'),
@@ -240,7 +350,10 @@ def generate_launch_description():
 
     return LaunchDescription([
         # 通用
-        which_model, use_llm, llm_base, llm_timeout,
+        which_model, use_llm, llm_base, llm_timeout, llm_connect_timeout,
+        llm_backend, llm_fallback_backend,
+        glm_api_base, glm_api_key_env, glm_model, glm_thinking,
+        llm_stream, stream_to_tts, enable_robot_side_effects,
         use_wakeword_arg, wake_window_s_arg, wake_cooldown_s_arg, wake_fallback_ms_arg,
         query_topic, reply_topic,
 
@@ -256,9 +369,13 @@ def generate_launch_description():
 
         # TTS
         piper_bin, piper_model, tts_player, tts_emit_mode, length_scale, noise_scale, noise_w,
-        sent_sil_ms, max_sent_len, tts_dedup_s, tts_drop_on_interrupt, tts_queue_max_arg,
+        sent_sil_ms, sentence_silence_s, max_sent_len, tts_dedup_s,
+        tts_drop_on_interrupt, tts_queue_max_arg,
+        tts_backend, tts_fallback_backend, cosyvoice_base_url, cosyvoice_mode,
+        cosyvoice_sample_rate, cosyvoice_speaker_id,
+        cosyvoice_prompt_wav, cosyvoice_prompt_text, cosyvoice_instruct_text,
+        cosyvoice_connect_timeout, cosyvoice_timeout, play_audio, wav_output_dir,
 
         # 节点
         asr_node, node_fast, node_deep, tts_node, done_sayer
     ])
-

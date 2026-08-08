@@ -10,6 +10,11 @@ from collections import deque
 from pathlib import Path
 from robot_interfaces.msg import EnvObjectArray  # 若你定义的 msg 名字不同请替换
 from llm_voice_agent.utils.class_name_translator import translate_class_name
+from llm_voice_agent.voice_backends import (
+    VoiceBackendError,
+    glm_chat,
+    ollama_chat,
+)
 
 
 PUNC_PATTERN = re.compile(r"[^\w\u4e00-\u9fff]+", re.UNICODE)
@@ -125,12 +130,6 @@ def keep_user_facing(text: str, max_sents: int = 2) -> str:
     out_sents = clean if clean else sents
     out = '。'.join(out_sents[:max_sents])
     return out[:120].strip()
-
-# 可选 LLM 依赖（默认不用）
-try:
-    import requests
-except Exception:
-    requests = None
 
 def clamp(s: str, n=1200) -> str:
     return s if len(s) <= n else s[:n]
@@ -269,14 +268,47 @@ class LlmVoiceAgent(Node):
         # ===== 参数 =====
         self.query_topic = self.declare_parameter('query_topic', '/speech_query').get_parameter_value().string_value
         self.reply_topic = self.declare_parameter('reply_topic', '/speech_reply').get_parameter_value().string_value
-        default_publish_topics = ['/voice_input/input','/keyboard_input/input']
+        # A task command must have one canonical ingress. Publishing the same
+        # command to two parser inputs creates duplicate execution risk.
+        default_publish_topics = ['/voice_input/input']
         self.publish_topics = list(
             self.declare_parameter('publish_topics', default_publish_topics)
                 .get_parameter_value().string_array_value or default_publish_topics
         )
 
-        # LLM（可选）
+        # Direct gesture, face-follow and servo publishers are disabled by
+        # default. Task text output remains a separate, confirmation-gated path.
+        self.enable_robot_side_effects = bool(
+            self.declare_parameter('enable_robot_side_effects', False)
+                .get_parameter_value().bool_value
+        )
+
+        # LLM: GLM cloud is primary, local Ollama is an optional fallback.
         self.use_llm     = bool(self.declare_parameter('use_llm', False).get_parameter_value().bool_value)
+        self.llm_backend = self.declare_parameter(
+            'llm_backend', 'glm'
+        ).get_parameter_value().string_value.strip().lower()
+        self.llm_fallback_backend = self.declare_parameter(
+            'llm_fallback_backend', 'ollama'
+        ).get_parameter_value().string_value.strip().lower()
+        self.glm_api_base = self.declare_parameter(
+            'glm_api_base', 'https://open.bigmodel.cn/api/paas/v4'
+        ).get_parameter_value().string_value
+        self.glm_api_key_env = self.declare_parameter(
+            'glm_api_key_env', 'ZHIPUAI_API_KEY'
+        ).get_parameter_value().string_value
+        self.glm_model = self.declare_parameter(
+            'glm_model', 'glm-4.5-air'
+        ).get_parameter_value().string_value
+        self.glm_thinking = bool(
+            self.declare_parameter('glm_thinking', False).get_parameter_value().bool_value
+        )
+        self.llm_stream = bool(
+            self.declare_parameter('llm_stream', True).get_parameter_value().bool_value
+        )
+        self.stream_to_tts = bool(
+            self.declare_parameter('stream_to_tts', True).get_parameter_value().bool_value
+        )
         self.ollama_base = self.declare_parameter('ollama_base', 'http://127.0.0.1:11434').get_parameter_value().string_value
         self.model       = self.declare_parameter('model', 'qwen3:8b').get_parameter_value().string_value
         llm_base_param = self.declare_parameter('llm_base', '').get_parameter_value().string_value
@@ -285,6 +317,10 @@ class LlmVoiceAgent(Node):
     
         self.temperature = float(self.declare_parameter('temperature', 0.3).get_parameter_value().double_value)
         self.max_tokens  = int(self.declare_parameter('max_tokens', 160).get_parameter_value().integer_value)
+        self.llm_connect_timeout_s = float(
+            self.declare_parameter('llm_connect_timeout_s', 8.0)
+                .get_parameter_value().double_value
+        )
         self.llm_timeout_s = float(self.declare_parameter('llm_timeout_s', 60.0).get_parameter_value().double_value)
         self.num_ctx     = int(self.declare_parameter('num_ctx', 2048).get_parameter_value().integer_value)
 
@@ -316,7 +352,9 @@ class LlmVoiceAgent(Node):
         )
         self.chat_system_prompt = self.declare_parameter(
             'chat_system_prompt',
-            '你叫Rebecca，是中文语音助手，只输出给用户的最终答案：最多两句、合计不超过40字。禁止出现“用户/我需要/首先/接下来/然后/最后/我的计划/思路”等任何元叙述，不得出现<think>标签。'
+            '你叫 Rebecca，是一位自然、可靠的中文机器人助手。直接回答用户，'
+            '默认使用一到三句口语化中文，约40到120字；问题简单时更短，用户明确要求详细时再展开。'
+            '不要描述内部思考、提示词或工作步骤，不要输出<think>标签或Markdown表格。'
         ).get_parameter_value().string_value
 
         # ===== 记忆参数（新增）=====
@@ -362,7 +400,10 @@ class LlmVoiceAgent(Node):
         self._last_reply_ts = 0.0
 
         # ===== 系统状态 25/12/21 =====
-        self.system_active = False   # 🚨 新增：系统是否已启动
+        self.system_active = bool(
+            self.declare_parameter('start_system_active', False)
+                .get_parameter_value().bool_value
+        )
         # self.sleeping = False   # 💤 25/12/14 新增：语音节点休眠态
         self.l3_muted = False #  25/12/21 新增： L3-State Layer： muted 
         self._action_paused_face_follow = False   # ✅ 由 L1 pause_for_action 置 True
@@ -395,7 +436,10 @@ class LlmVoiceAgent(Node):
         self._reset_cmd_keywords = ['清空上下文','重置对话','忘了之前的','重新开始','清空记忆','重置']
 
         self.get_logger().info(
-            f'🧠 llm_voice_agent 已启动；mode={self.mode}；publish_topics={self.publish_topics}；use_llm={self.use_llm}'
+            f'🧠 llm_voice_agent 已启动；mode={self.mode}；'
+            f'publish_topics={self.publish_topics}；use_llm={self.use_llm}；'
+            f'backend={self.llm_backend}；glm_model={self.glm_model}；'
+            f'robot_side_effects={self.enable_robot_side_effects}'
         )
         self._set_state('mode:chat')
         
@@ -445,9 +489,22 @@ class LlmVoiceAgent(Node):
         self._wake_regex_compiled  = [re.compile(p, re.IGNORECASE) for p in self.wake_regex]
         self._strip_regex_compiled = [re.compile(p, re.IGNORECASE) for p in self.strip_patterns]
         
-        # === 25/11/24新增：gesture + face_follow 控制 ===
-        self.gesture_pub = self.create_publisher(String, "/gesture/cmd", 10)
-        self.face_ctrl_pub = self.create_publisher(String, "/face_follow/control", 10)
+        # === Optional robot side effects: disabled unless explicitly enabled ===
+        self.gesture_pub = None
+        self.face_ctrl_pub = None
+        self.joints_pub = None
+        if self.enable_robot_side_effects:
+            self.gesture_pub = self.create_publisher(String, "/gesture/cmd", 10)
+            self.face_ctrl_pub = self.create_publisher(String, "/face_follow/control", 10)
+            try:
+                from servo_controller_msgs.msg import ServosPosition
+                self.joints_pub = self.create_publisher(
+                    ServosPosition, "/servo_controller", 10
+                )
+            except Exception as exc:
+                self.get_logger().warning(
+                    f'无法创建 /servo_controller 发布器：{type(exc).__name__}'
+                )
         
         # === 26/1/3 新增：gesture + face_follow 控制 ===
         self._task_paused_face_follow = False
@@ -458,14 +515,28 @@ class LlmVoiceAgent(Node):
         #self.face_ctrl_pub.publish(msg)
         #self.get_logger().info("📢 已通知 face_follow：voice_ready")
 
-        # === 25/11/24新增 舵机控制（用于唤醒时回到初始姿态）
-        from servo_controller_msgs.msg import ServosPosition
-        self.joints_pub = self.create_publisher(ServosPosition, "/servo_controller", 10)
-        
         self.gesture_delay_s = float(
             self.declare_parameter('gesture_delay_s', 0.6)
                 .get_parameter_value().double_value
-        )        
+        )
+
+    def _publish_face_control(self, command: str) -> bool:
+        if not self.enable_robot_side_effects or self.face_ctrl_pub is None:
+            self.get_logger().debug(
+                f'robot side effects disabled; skip face_follow={command}'
+            )
+            return False
+        self.face_ctrl_pub.publish(String(data=command))
+        return True
+
+    def _publish_gesture(self, command: str) -> bool:
+        if not self.enable_robot_side_effects or self.gesture_pub is None:
+            self.get_logger().debug(
+                f'robot side effects disabled; skip gesture={command}'
+            )
+            return False
+        self.gesture_pub.publish(String(data=command))
+        return True
 
     # ===== 主入口 =====
     def _on_query(self, msg: String):
@@ -502,7 +573,7 @@ class LlmVoiceAgent(Node):
             self.system_active = False
             # self.sleeping = True
 
-            self.face_ctrl_pub.publish(String(data="pause"))
+            self._publish_face_control("pause")
             self._say("好的，我先休息了。")
             self._set_state("system_sleeping")
 
@@ -530,10 +601,10 @@ class LlmVoiceAgent(Node):
                 # 解除静音 ≠ 必然恢复 face_follow
                 if self.mode == 'chat' and not self._task_paused_face_follow:
                     if self._action_paused_face_follow:
-                        self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                        self._publish_face_control("resume_from_action")
                         self._action_paused_face_follow = False
                     else:
-                        self.face_ctrl_pub.publish(String(data="resume"))
+                        self._publish_face_control("resume")
                 self._say("好的，我可以说话了。")
                 self._set_state("chat_active")
                 return
@@ -548,9 +619,7 @@ class LlmVoiceAgent(Node):
             self.l3_muted = True
 
             # 👉 静音时：暂停 face_follow（但系统仍在线）
-            msg_ctrl = String()
-            msg_ctrl.data = "pause_for_action"
-            self.face_ctrl_pub.publish(msg_ctrl)
+            self._publish_face_control("pause_for_action")
             self._action_paused_face_follow = True   # ✅ 
 
             self._say("好的，我先不说话。")
@@ -565,9 +634,7 @@ class LlmVoiceAgent(Node):
         
         # ---- 语义触发 pause ----
         if any(k in norm_raw for k in PAUSE_KEYWORDS):
-            msg_ctrl = String()
-            msg_ctrl.data = "pause_for_action"
-            self.face_ctrl_pub.publish(msg_ctrl)
+            self._publish_face_control("pause_for_action")
             self._action_paused_face_follow = True     # ✅ 记住是 action freeze
             self._say("好的，我先不动。")
             self.get_logger().info("🎯 L1：语义 pause")
@@ -577,10 +644,10 @@ class LlmVoiceAgent(Node):
         if any(k in norm_raw for k in RESUME_KEYWORDS):
             if self.mode == 'chat':
                 if self._action_paused_face_follow:
-                    self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                    self._publish_face_control("resume_from_action")
                     self._action_paused_face_follow = False
                 else:
-                    self.face_ctrl_pub.publish(String(data="resume"))
+                    self._publish_face_control("resume")
                 self._task_paused_face_follow = False
                 self._say("好的，我看着你。")
             else:
@@ -590,15 +657,10 @@ class LlmVoiceAgent(Node):
             return
         
         # =====================================================
-        # 先允许“模式切换口令”绕过 L3 唤醒窗（否则会被 window closed 直接 return）
+        # L3：统一唤醒词注意力窗口。聊天、模式切换、任务补槽、
+        # 确认和取消都必须经过同一个窗口，避免 task 模式绕过门控。
         # =====================================================
-        if self._maybe_switch_mode(norm):
-            return
-
-        # =====================================================
-        # L3：唤醒词注意力窗口（只控制“是否处理输入”）
-        # =====================================================
-        if (self.mode == 'chat') and self.use_wakeword and self.system_active and not self.l3_muted:
+        if self.use_wakeword and self.system_active and not self.l3_muted:
             
             hit = self._is_wake_hit(raw_text)
 
@@ -640,11 +702,11 @@ class LlmVoiceAgent(Node):
                 if self.mode == 'chat' and (first_wake or self._action_paused_face_follow or self._task_paused_face_follow):
 
                     if self._action_paused_face_follow:
-                        self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                        self._publish_face_control("resume_from_action")
                         self._action_paused_face_follow = False
                         self.get_logger().info("🤖 L3_WAKE → resume_from_action (action_paused)")
                     else:
-                        self.face_ctrl_pub.publish(String(data="resume"))
+                        self._publish_face_control("resume")
                         self.get_logger().info("🤖 L3_WAKE → resume")
 
                     # ✅ 如果是 task 模式导致的暂停，也一并清掉
@@ -681,6 +743,10 @@ class LlmVoiceAgent(Node):
             elif now > self._wake_until:
                 self.get_logger().info(f"⏱️ L3 window closed | now={now:.2f}")
                 return
+
+        # 模式切换也必须通过上面的注意力门控。
+        if self._maybe_switch_mode(norm):
+            return
         
         if self.mode == 'chat':
             self._handle_chat(norm_text=norm, raw_text=raw_text)
@@ -700,9 +766,7 @@ class LlmVoiceAgent(Node):
         if any(w in reply_text for w in positive_words):
             self.get_logger().info(f"🤖 检测到肯定回答 → 自动点头 nod")
     
-            msg = String()
-            msg.data = "nod"
-            self.gesture_pub.publish(msg)
+            self._publish_gesture("nod")
     
     def _maybe_shake(self, reply_text: str):
         """
@@ -716,9 +780,7 @@ class LlmVoiceAgent(Node):
         if any(w in reply_text for w in negative_words):
             self.get_logger().info(f"🤖 检测到否定回答 → 自动摇头 shake")
 
-            msg = String()
-            msg.data = "shake"
-            self.gesture_pub.publish(msg)
+            self._publish_gesture("shake")
     
     # ===== 11/8新增：监听tts_speaking话题，用于判断是否可以进入休息 =====        
     #def _on_tts_speaking(self, msg: Bool):
@@ -887,7 +949,7 @@ class LlmVoiceAgent(Node):
                 self.slots = {'color': None, 'klass': None, 'side': None}
 
                 # ✅ 进入任务模式：暂停 face_follow，避免“看着我”干扰抓取
-                self.face_ctrl_pub.publish(String(data="pause"))
+                self._publish_face_control("pause")
                 self._task_paused_face_follow = True
                 self.get_logger().info("🤖 mode->task: face_follow pause issued")
 
@@ -907,10 +969,10 @@ class LlmVoiceAgent(Node):
                 # ✅ 退出任务模式：如果是任务模式暂停的，就恢复 face_follow
                 if self._task_paused_face_follow:
                     if self._action_paused_face_follow:
-                        self.face_ctrl_pub.publish(String(data="resume_from_action"))
+                        self._publish_face_control("resume_from_action")
                         self._action_paused_face_follow = False
                     else:
-                        self.face_ctrl_pub.publish(String(data="resume"))
+                        self._publish_face_control("resume")
                     self._task_paused_face_follow = False
                     self.get_logger().info("🤖 mode->chat: face_follow resume issued")
 
@@ -966,11 +1028,31 @@ class LlmVoiceAgent(Node):
         user_for_memory = raw_text or norm_text
         use_long = self._should_long_form_this_turn(user_for_memory)
 
-        if self.use_llm and requests is not None:
+        streamed_sentences = []
+
+        def _speak_streamed_sentence(sentence: str):
+            stream_sentence_limit = 12 if use_long else 3
+            if len(streamed_sentences) >= stream_sentence_limit:
+                return
+            cleaned = strip_think(sentence)
+            cleaned = strip_meta(cleaned)
+            if not use_long:
+                cleaned = keep_user_facing(cleaned, max_sents=1)
+            cleaned = clamp(cleaned, 600)
+            if cleaned:
+                streamed_sentences.append(cleaned)
+                self._say(cleaned, concise=not use_long)
+
+        if self.use_llm:
             reply = self._llm_chat(
                 user_for_memory,
-                long_form=use_long
-            ) or ('我在呢～' if not use_long else '已为你整理。')
+                long_form=use_long,
+                on_sentence=(
+                    _speak_streamed_sentence
+                    if self.llm_stream and self.stream_to_tts
+                    else None
+                ),
+            ) or '暂时无法连接语言模型，请稍后再试。'
             reply = strip_think(reply)
             reply = strip_meta(reply)
             if not use_long:
@@ -979,7 +1061,9 @@ class LlmVoiceAgent(Node):
             reply = '我在呢～（当前未启用LLM）。'
 
         self.get_logger().info(f"[debug] chat_after_clean={reply}")
-        self._say(clamp(reply, 2000 if use_long else 600), concise=not use_long)
+        # Streaming output was already published sentence by sentence.
+        if not streamed_sentences:
+            self._say(clamp(reply, 2000 if use_long else 600), concise=not use_long)
         
         # ======= 互斥判断：否定优先、再判断肯定 =======
         reply_clean = reply.strip().lower()
@@ -1007,9 +1091,7 @@ class LlmVoiceAgent(Node):
             
             def _do_once():
                 nonlocal timer
-                msg = String()
-                msg.data = gesture
-                self.gesture_pub.publish(msg)
+                self._publish_gesture(gesture)
                 self.get_logger().info(f"🤖 手势已触发 (delay={delay}s): {gesture}")
                 
                 # 重要：停止 timer，避免无限循环
@@ -1052,7 +1134,7 @@ class LlmVoiceAgent(Node):
             looks_intent = any(v in norm_text for v in INTENT_VERBS) or (self.slots['klass'] or self.slots['color'])
 
         if not looks_intent:
-            if self.llm_hint_enabled and self.use_llm and requests is not None:
+            if self.llm_hint_enabled and self.use_llm:
                 reply = self._llm_hint(norm_text) or '请描述要“拿/放/移动”的对象（颜色+类别），例如“拿红色方块放到右侧”。'
             else:
                 reply = '请描述要“拿/放/移动”的对象（颜色+类别），例如“拿红色方块放到右侧”。'
@@ -1111,66 +1193,93 @@ class LlmVoiceAgent(Node):
         return out.strip()
 
 
-    # ===== LLM（聊天，带历史）=====
-    def _llm_chat(self, user_text: str, long_form: bool = False) -> str:
-        try:
-            url = f'{self.ollama_base}/api/chat'
-            msgs = self._build_messages(user_text, long_form=long_form)
-            payload = {
-                "model": self.model,
-                "messages": msgs,
-                "options": {
-                    "temperature": self.temperature,
-                    "num_predict": int(self.detail_max_tokens if long_form else self.max_tokens),
-                    "num_ctx": int(self.num_ctx),
-                },
-                "stream": False
-            }
-            r = requests.post(url, json=payload, timeout=self.llm_timeout_s)
-            self.get_logger().info(f"[debug] http_status={r.status_code}")
-            self.get_logger().info(f"[debug] raw_body={r.text[:400]}")
-            r.raise_for_status()
-            data = r.json()
-            if isinstance(data, dict):
-                if "message" in data and isinstance(data["message"], dict):
-                    return (data["message"].get("content") or "").strip()
-                if "choices" in data and data["choices"]:
-                    return (data["choices"][0]["message"]["content"] or "").strip()
-                if "response" in data:
-                    return (data["response"] or "").strip()
-            return ''
-        except Exception as e:
-            self.get_logger().warning(f'LLM 聊天失败：{e}')
-            return ''
+    # ===== LLM backend selection =====
+    def _llm_backend_order(self):
+        primary = self.llm_backend if self.llm_backend in {'glm', 'ollama'} else 'glm'
+        order = [primary]
+        fallback = self.llm_fallback_backend
+        if fallback in {'glm', 'ollama'} and fallback not in order:
+            order.append(fallback)
+        return order
 
-    # ===== LLM（任务引导）=====
+    def _request_llm(self, messages, max_tokens: int, on_sentence=None) -> str:
+        timeout = (self.llm_connect_timeout_s, self.llm_timeout_s)
+        for backend in self._llm_backend_order():
+            started = time.monotonic()
+            try:
+                if backend == 'glm':
+                    api_key = os.environ.get(self.glm_api_key_env, '').strip()
+                    if not api_key:
+                        raise VoiceBackendError(
+                            f'environment variable {self.glm_api_key_env} is not set'
+                        )
+                    reply = glm_chat(
+                        api_base=self.glm_api_base,
+                        api_key=api_key,
+                        model=self.glm_model,
+                        messages=messages,
+                        temperature=self.temperature,
+                        max_tokens=max_tokens,
+                        timeout=timeout,
+                        thinking=self.glm_thinking,
+                        stream=self.llm_stream,
+                        on_sentence=on_sentence,
+                    )
+                    model_name = self.glm_model
+                else:
+                    reply = ollama_chat(
+                        base_url=self.ollama_base,
+                        model=self.model,
+                        messages=messages,
+                        temperature=self.temperature,
+                        max_tokens=max_tokens,
+                        num_ctx=self.num_ctx,
+                        timeout=timeout,
+                    )
+                    model_name = self.model
+
+                elapsed = time.monotonic() - started
+                self.get_logger().info(
+                    f'LLM 完成 | backend={backend} | model={model_name} | '
+                    f'elapsed={elapsed:.2f}s | chars={len(reply)}'
+                )
+                if reply:
+                    return reply
+                raise VoiceBackendError('empty model response')
+            except VoiceBackendError as exc:
+                self.get_logger().warning(f'LLM backend={backend} 不可用：{exc}')
+            except Exception as exc:
+                self.get_logger().warning(
+                    f'LLM backend={backend} 异常：{type(exc).__name__}'
+                )
+        return ''
+
+    # ===== LLM（聊天，带历史）=====
+    def _llm_chat(self, user_text: str, long_form: bool = False, on_sentence=None) -> str:
+        messages = self._build_messages(user_text, long_form=long_form)
+        max_tokens = int(self.detail_max_tokens if long_form else self.max_tokens)
+        return self._request_llm(
+            messages,
+            max_tokens=max_tokens,
+            on_sentence=on_sentence,
+        )
+
+    # ===== LLM（任务引导；只追问，不生成执行命令）=====
     def _llm_hint(self, text: str) -> str:
-        try:
-            url = f'{self.ollama_base}/api/generate'
-            prompt = (
-                "你是一个中文对话助手。用户刚说："
-                f"「{text}」。请用中文一行话，友好地引导他给出要操作的对象（颜色+类别），"
-                "不要输出 JSON，不要客套，直接提一个关键问题。"
-            )
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "options": {
-                    "temperature": self.temperature,
-                    "num_predict": int(self.max_tokens),
-                    "num_ctx": int(self.num_ctx),
-                },
-                "stream": False
-            }
-            r = requests.post(url, json=payload, timeout=self.llm_timeout_s)
-            self.get_logger().info(f"[debug] http_status={r.status_code}")
-            self.get_logger().info(f"[debug] raw_body={r.text[:400]}")
-            r.raise_for_status()
-            data = r.json()
-            return (data.get('response') or '').strip()
-        except Exception as e:
-            self.get_logger().warning(f'LLM 引导失败：{e}')
-            return ''
+        messages = [
+            {
+                'role': 'system',
+                'content': (
+                    '你是机器人任务信息收集助手。只用一句中文追问缺失的目标信息，'
+                    '例如颜色、类别或放置位置；不要输出JSON，不要声称已经执行。'
+                ),
+            },
+            {'role': 'user', 'content': text},
+        ]
+        return self._request_llm(
+            messages,
+            max_tokens=min(int(self.max_tokens), 96),
+        )
 
     # ======== 会话记忆：构造 messages ========
     def _build_messages(self, user_text: str, long_form: bool = False):
@@ -1271,4 +1380,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
