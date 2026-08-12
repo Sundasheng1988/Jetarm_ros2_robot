@@ -57,6 +57,14 @@ class NavClient:
         self._number_of_recoveries = 0
         self._last_feedback_log = 0.0
 
+        # Active-goal tracking so an external caller (/cancel_navigation) can
+        # cancel the in-flight Nav2 goal without owning the goal handle. The
+        # goal handle is cleared via the result future's done-callback, so it
+        # is released no matter how ``goto`` returns.
+        self._active_lock = threading.Lock()
+        self._active_goal_handle = None
+        self._active_result_future = None
+
     @staticmethod
     def _wait_future(future, timeout: float) -> bool:
         """等待 Future 完成，但不调用 rclpy.spin*。"""
@@ -148,6 +156,56 @@ class NavClient:
         except Exception as exc:
             self._log.error(f'处理迟到导航目标响应失败: {exc}')
 
+    # ── 外部取消支持（/cancel_navigation）─────────────────────────────────
+
+    def _set_active_goal(self, goal_handle, result_future) -> None:
+        with self._active_lock:
+            self._active_goal_handle = goal_handle
+            self._active_result_future = result_future
+
+    def _clear_active_goal(self) -> None:
+        with self._active_lock:
+            self._active_goal_handle = None
+            self._active_result_future = None
+
+    def has_active_goal(self) -> bool:
+        with self._active_lock:
+            return self._active_goal_handle is not None
+
+    def cancel_active_goal(self) -> Tuple[bool, str]:
+        """请求取消当前目标，并等待 Nav2 明确接受或拒绝。
+
+        返回 True 只表示 Nav2 已接受取消请求，不代表机器人已经完成停车。
+        最终是否进入取消终态仍由 ``goto`` 的结果 Future 决定。
+        """
+        with self._active_lock:
+            goal_handle = self._active_goal_handle
+
+        if goal_handle is None:
+            return False, '没有正在进行的导航目标'
+
+        try:
+            cancel_future = goal_handle.cancel_goal_async()
+        except Exception as exc:
+            return False, f'取消请求发送失败: {exc}'
+
+        if not self._wait_future(cancel_future, self._cancel_timeout):
+            return False, '等待 Nav2 确认取消请求超时'
+
+        try:
+            cancel_response = cancel_future.result()
+        except Exception as exc:
+            return False, f'读取 Nav2 取消响应失败: {exc}'
+
+        if cancel_response is None:
+            return False, 'Nav2 返回了空的取消响应'
+
+        goals_canceling = getattr(cancel_response, 'goals_canceling', [])
+        if not goals_canceling:
+            return False, 'Nav2 拒绝取消当前导航目标'
+
+        return True, 'Nav2 已接受取消请求，正在等待导航终止'
+
     def goto(self, x: float, y: float, yaw: float) -> Tuple[bool, str]:
         """导航到 map 坐标；返回 ``(success, message)``。"""
         if not self._action_client.wait_for_server(
@@ -200,6 +258,10 @@ class NavClient:
 
         self._log.info('导航目标已被 Nav2 接受')
         result_future = goal_handle.get_result_async()
+        self._set_active_goal(goal_handle, result_future)
+        # 无论 goto 如何返回（成功/失败/取消/异常），结果 Future 完成后都
+        # 释放 active goal，确保 /cancel_navigation 不会作用到已结束的目标。
+        result_future.add_done_callback(lambda _f: self._clear_active_goal())
 
         if not self._wait_future(result_future, self._action_timeout):
             cancel_message = self._cancel_goal(goal_handle, result_future)

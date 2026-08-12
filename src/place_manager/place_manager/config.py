@@ -19,6 +19,8 @@ DELETE_PLACE_SERVICE = '/delete_place'
 LIST_PLACES_SERVICE = '/list_places'
 GET_PLACE_SERVICE = '/get_place'
 GOTO_PLACE_SERVICE = '/goto_place'
+# 取消当前 Nav2 导航目标（由 /cancel_navigation 服务暴露，标准 Trigger）。
+CANCEL_NAVIGATION_SERVICE = '/cancel_navigation'
 
 # Nav2 Action
 NAV2_NAVIGATE_TO_POSE_ACTION = '/navigate_to_pose'

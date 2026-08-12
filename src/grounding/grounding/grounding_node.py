@@ -184,6 +184,16 @@ class GroundingNode(Node):
 
         # 1) 基本字段
         intent   = (data.get("action") or "").lower()
+
+        # 导航类动作不走机械臂 Grounding：由 navigation_executor 独立处理。
+        # 这里直接返回，避免污染 /grounded_goal 并防止进入需要 target_object
+        # 的机械臂流程。
+        if intent in ("navigate_to_place", "cancel_navigation"):
+            self.get_logger().info(
+                f"skip — navigation action '{intent}' handled by navigation_executor"
+            )
+            return
+
         from_tok = (data.get("from") or "").lower()
 
         # 2) 原始语句：优先 parsed JSON 的 raw/text/utterance；否则回退到最近一次键盘输入

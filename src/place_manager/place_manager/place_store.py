@@ -15,6 +15,8 @@ class PlaceStore:
     def __init__(self, file_path: str = DEFAULT_PLACES_FILE):
         self._file_path = os.path.abspath(os.path.expanduser(file_path))
         self._places: Dict[str, Dict[str, float]] = {}
+        self._aliases_by_name: Dict[str, List[str]] = {}
+        self._alias_to_name: Dict[str, str] = {}
         self._signature: Optional[Tuple[int, int]] = None
         self._lock = threading.RLock()
         self._load()
@@ -52,6 +54,26 @@ class PlaceStore:
             return None
         return place
 
+    @staticmethod
+    def _validated_aliases(name: str, data: object) -> List[str]:
+        if not isinstance(data, dict) or 'aliases' not in data:
+            return []
+        raw_aliases = data['aliases']
+        if not isinstance(raw_aliases, list):
+            raise RuntimeError(f'地点 {name!r} 的 aliases 必须是列表')
+
+        aliases: List[str] = []
+        seen = set()
+        for raw_alias in raw_aliases:
+            if not isinstance(raw_alias, str) or not raw_alias.strip():
+                raise RuntimeError(f'地点 {name!r} 包含无效别名')
+            alias = raw_alias.strip()
+            if alias in seen:
+                raise RuntimeError(f'地点 {name!r} 重复声明别名 {alias!r}')
+            seen.add(alias)
+            aliases.append(alias)
+        return aliases
+
     def _load(self) -> None:
         with self._lock:
             raw = load_yaml(self._file_path)
@@ -60,13 +82,35 @@ class PlaceStore:
                 raw_places = {}
 
             loaded: Dict[str, Dict[str, float]] = {}
+            aliases_by_name: Dict[str, List[str]] = {}
             for raw_name, raw_data in raw_places.items():
                 name = str(raw_name).strip()
                 place = self._validated_place(raw_data)
                 if name and place is not None:
                     loaded[name] = place
+                    aliases_by_name[name] = self._validated_aliases(
+                        name, raw_data
+                    )
+
+            alias_to_name: Dict[str, str] = {}
+            standard_names = set(loaded)
+            for name, aliases in aliases_by_name.items():
+                for alias in aliases:
+                    if alias in standard_names:
+                        raise RuntimeError(
+                            f'地点别名 {alias!r} 与标准地点名冲突'
+                        )
+                    previous = alias_to_name.get(alias)
+                    if previous is not None:
+                        raise RuntimeError(
+                            f'地点别名 {alias!r} 同时指向 '
+                            f'{previous!r} 和 {name!r}'
+                        )
+                    alias_to_name[alias] = name
 
             self._places = loaded
+            self._aliases_by_name = aliases_by_name
+            self._alias_to_name = alias_to_name
             self._signature = self._file_signature()
 
     def _reload_if_changed(self) -> None:
@@ -74,9 +118,22 @@ class PlaceStore:
             if self._file_signature() != self._signature:
                 self._load()
 
+    def _serialized_places(self) -> Dict[str, Dict[str, object]]:
+        serialized: Dict[str, Dict[str, object]] = {}
+        for name, coordinates in self._places.items():
+            entry: Dict[str, object] = dict(coordinates)
+            aliases = self._aliases_by_name.get(name, [])
+            if aliases:
+                entry['aliases'] = list(aliases)
+            serialized[name] = entry
+        return serialized
+
     def _save(self) -> None:
         with self._lock:
-            dump_yaml(self._file_path, {'places': self._places})
+            dump_yaml(
+                self._file_path,
+                {'places': self._serialized_places()},
+            )
             self._signature = self._file_signature()
 
     def load(self) -> None:
@@ -94,11 +151,14 @@ class PlaceStore:
         with self._lock:
             # 保留其他进程刚写入的地点。
             self._reload_if_changed()
+            if name in self._alias_to_name:
+                raise ValueError(f'地点名称 {name!r} 已被用作别名')
             self._places[name] = {
                 'x': values[0],
                 'y': values[1],
                 'yaw': values[2],
             }
+            self._aliases_by_name.setdefault(name, [])
             self._save()
 
     def delete(self, name: str) -> bool:
@@ -108,6 +168,8 @@ class PlaceStore:
             if name not in self._places:
                 return False
             del self._places[name]
+            for alias in self._aliases_by_name.pop(name, []):
+                self._alias_to_name.pop(alias, None)
             self._save()
             return True
 
@@ -117,7 +179,11 @@ class PlaceStore:
     def get(self, name: str) -> Optional[Dict[str, float]]:
         with self._lock:
             self._reload_if_changed()
-            data = self._places.get(name.strip())
+            lookup_name = name.strip()
+            canonical_name = self._alias_to_name.get(
+                lookup_name, lookup_name
+            )
+            data = self._places.get(canonical_name)
             return None if data is None else dict(data)
 
     def list_names(self) -> List[str]:

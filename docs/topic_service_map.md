@@ -272,6 +272,13 @@ verification_result_node
 }
 ```
 
+> 导航动作也走 `/parsed_command`，但用专用 `action` 值，详见 [2.6 命名地点导航链路](#26-命名地点导航链路place_manager与机械臂链路并行)：
+>
+> ```json
+> {"action": "navigate_to_place", "place_name": "客厅点1", "source": "voice", "raw_text": "去客厅点1"}
+> {"action": "cancel_navigation",  "source": "voice", "raw_text": "停止移动"}
+> ```
+
 ---
 
 ## 2.3 `grounding_node`
@@ -285,6 +292,10 @@ verification_result_node
 | `/keyboard_input/input` | `std_msgs/msg/String` | Raw text fallback |
 
 > `/keyboard_input/input` 同时可能进入 Parser 和 Grounding fallback。当前主线人工测试优先使用 `/voice_input/input`，避免双路径。
+
+> Grounding 收到 `action` 为 `navigate_to_place` / `cancel_navigation` 时**显式跳过**
+> （不产出 `/grounded_task_context`）；这两类导航动作由
+> [2.6 的 `navigation_executor_node`](#26-命名地点导航链路place_manager与机械臂链路并行) 独立处理，避免进入需要 `target_object` 的机械臂 Grounding 流程。
 
 ### Publishes
 
@@ -413,6 +424,75 @@ grounded
 - 在 `enable_real_servo=false` 时曾出现假阳性；
 - 单次 Tracker 丢失可能被判定为物体离开；
 - 需要后续增加连续多帧确认与执行模式门控。
+
+---
+
+## 2.6 命名地点导航链路（place_manager，与机械臂链路并行）
+
+语音导航与机械臂抓取共享 `/voice_input/input` → `llm_command_parser_node` →
+`/parsed_command` 的前半段，但在 `/parsed_command` 之后分流：导航动作
+（`navigate_to_place` / `cancel_navigation`）由 `navigation_executor_node`
+消费。`grounding_node` 虽同样订阅 `/parsed_command`，但会在收到这两个动作时
+**显式跳过**（不产出 `/grounded_task_context`），因此导航不进入机械臂
+Grounding / Runtime 链路。
+
+```text
+/voice_input/input（自然语言 String）
+    ↓
+llm_command_parser_node
+    │  识别“去/前往/导航到 <地点>” → navigate_to_place
+    │  识别“停止移动/取消导航”   → cancel_navigation
+    ↓
+/parsed_command（String JSON，含 "action" 字段）
+    ├─→ grounding_node           （导航动作在此被显式跳过）
+    └─→ navigation_executor_node （只消费 navigate_to_place / cancel_navigation）
+             ├─→ /goto_place           （GotoPlace 服务，查 places.yaml + 调 Nav2）
+             ├─→ /cancel_navigation    （Trigger 服务，取消当前 Nav2 目标）
+             └─→ /runtime/execution_result（导航结果，复用 ExecutionResult envelope）
+                     ↓
+             executor_done_sayer        （把导航结果翻译成 /speech_reply 语音）
+```
+
+### `navigation_executor_node`（place_manager）
+
+- 同一时刻只允许一个导航任务；进行中收到第二个导航以 `BUSY` 拒绝，**不抢占**。
+- 异步调用 `/goto_place`（`call_async`），用低频定时器轮询 Future，不在订阅
+  回调里阻塞。
+- 取消通过 `/cancel_navigation` 完成；无活动导航时取消幂等返回 `CANCELLED`。
+
+| 方向 | Topic / Service | 类型 | 用途 |
+|---|---|---|---|
+| Sub | `/parsed_command` | `std_msgs/msg/String` JSON | 消费导航动作 |
+| Pub | `/runtime/execution_result` | `std_msgs/msg/String` JSON | 发布导航结果 |
+| Client | `/goto_place` | `place_manager/srv/GotoPlace` | 发起命名地点导航 |
+| Client | `/cancel_navigation` | `std_srvs/srv/Trigger` | 取消当前导航 |
+
+### `goto_place_node`（place_manager）
+
+- `MultiThreadedExecutor(num_threads=4)`；`/cancel_navigation` 在独立 Reentrant
+  回调组中运行，保证 `/goto_place` 阻塞回调期间仍可并发取消。
+- Nav2 成功后用 `/amcl_pose` 与里程计独立做到达验证（位置/朝向/速度/稳定时长）。
+
+| 方向 | Topic / Service | 类型 | 用途 |
+|---|---|---|---|
+| Service | `/goto_place` | `place_manager/srv/GotoPlace` | 地点名 → Nav2 → 到达验证 |
+| Service | `/cancel_navigation` | `std_srvs/srv/Trigger` | 取消当前 Nav2 目标（幂等） |
+| Sub | `/amcl_pose`、`/odom_combined` | — | 到达验证用位姿与速度（`odom_topic` 可参数化，实机默认 `/odom_combined`） |
+| Action Client | `navigate_to_pose` | `nav2_msgs/action/NavigateToPose` | Nav2 导航 |
+
+### 边界与安全约束
+
+- Rebecca / Parser / LLM **绝不**发布 `/cmd_vel`、不生成导航坐标、不绕过
+  `place_manager`、不直接控制 Nav2、不接受任意语音坐标。
+- 第一阶段只导航到 `places.yaml` 中已保存的命名地点；地点是否存在由
+  `place_manager` 判断。
+- “停止说话 / 安静”（只中止 LLM/TTS）与“停止移动 / 取消导航”（取消 Nav2
+  目标）严格分离，二者关键词互不交叉。
+- 导航结果复用 `/runtime/execution_result` 协议（与
+  `sketch_runtime.ExecutionResult.to_dict()` 同形），并扩展
+  `action / place_name / status / error_code` 字段。
+- `executor_done_sayer` 只对**导航**结果播报；机械臂结果仍由 `/executor/done`
+  通道播报，二者不会对同一任务重复播报。
 
 ---
 

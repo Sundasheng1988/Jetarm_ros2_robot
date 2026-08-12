@@ -1,0 +1,26 @@
+places:
+  bedroom_sunnysun:
+    x: -7.048010689911828
+    y: 1.574608935395184
+    yaw: 0.16699404353861064
+    aliases: [卧室, 房间, bedroom]
+  dining_room_1:
+    x: -3.484027416738046
+    y: -0.4355094448549986
+    yaw: -1.5815013516434773
+    aliases: [餐厅, 饭厅, 餐厅1, 饭厅1, 一号餐厅, 一号饭厅, dining room, dining room 1, dining room one]
+  living_room:
+    x: -5.770135235056744
+    y: -2.9008934648099616
+    yaw: 3.0839909806532773
+    aliases: [客厅, living room]
+  dinning_room_2:
+    x: 0.8313365384755317
+    y: -1.0485270494646766
+    yaw: 0.012432379004788758
+    aliases: [餐厅2, 饭厅2, 二号餐厅, 二号饭厅, dining room 2, dining room two]
+  kitchen:
+    x: 3.5534695554703726
+    y: 1.5476220264597516
+    yaw: 0.044116477969486395
+    aliases: [厨房]

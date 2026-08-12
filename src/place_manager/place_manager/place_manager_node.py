@@ -6,6 +6,12 @@ from typing import Optional
 import rclpy
 from geometry_msgs.msg import Pose2D, PoseWithCovarianceStamped
 from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
 
 from place_manager.config import (
     AMCL_POSE_MAX_AGE,
@@ -37,11 +43,18 @@ class PlaceManagerNode(Node):
         self._latest_pose: Optional[PoseWithCovarianceStamped] = None
         self._latest_pose_received_at: Optional[float] = None
 
+        amcl_pose_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+
         self._pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
             AMCL_POSE_TOPIC,
             self._pose_callback,
-            10,
+            amcl_pose_qos,
         )
         self._srv_save = self.create_service(
             SavePlace, SAVE_PLACE_SERVICE, self._handle_save_place,

@@ -54,6 +54,7 @@ install(DIRECTORY place_manager/
 install(PROGRAMS
   scripts/place_manager_node
   scripts/goto_place_node
+  scripts/navigation_executor_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -74,5 +75,22 @@ install(DIRECTORY config/
 install(FILES resource/place_manager
   DESTINATION share/${PROJECT_NAME}
 )
+
+# ── Tests ─────────────────────────────────────────────────────────────────
+# 本包是 ament_cmake（混合：手写 Python 模块 + rosidl 生成的 srv），没有
+# setup.py 入口，因此用 ament_cmake_pytest 正式注册 pytest，使
+# `colcon test --packages-select place_manager` 能发现并运行它们。
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+
+  ament_add_pytest_test(test_navigation_executor_logic
+    test/test_navigation_executor_logic.py)
+  ament_add_pytest_test(test_nav_client_cancel
+    test/test_nav_client_cancel.py)
+  ament_add_pytest_test(test_cancel_semantics
+    test/test_cancel_semantics.py)
+  ament_add_pytest_test(test_place_store_aliases
+    test/test_place_store_aliases.py)
+endif()
 
 ament_package()

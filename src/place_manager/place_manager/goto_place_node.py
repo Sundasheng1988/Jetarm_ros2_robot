@@ -19,6 +19,7 @@ from rclpy.callback_groups import (
 )
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 
 from place_manager.config import (
     AMCL_POSE_TOPIC,
@@ -29,6 +30,7 @@ from place_manager.config import (
     ARRIVAL_STATE_MAX_AGE,
     ARRIVAL_VERIFY_TIMEOUT,
     ARRIVAL_YAW_TOLERANCE,
+    CANCEL_NAVIGATION_SERVICE,
     DEFAULT_PLACES_FILE,
     GOTO_PLACE_NODE_NAME,
     GOTO_PLACE_SERVICE,
@@ -93,6 +95,9 @@ class GotoPlaceNode(Node):
         self._service_group = MutuallyExclusiveCallbackGroup()
         self._action_group = ReentrantCallbackGroup()
         self._state_group = ReentrantCallbackGroup()
+        # 取消服务必须能在 /goto_place 阻塞回调执行期间并发响应，因此使用
+        # 独立的 Reentrant 组，并由 main() 的 MultiThreadedExecutor 驱动。
+        self._cancel_group = ReentrantCallbackGroup()
 
         self._nav_client = NavClient(
             self,
@@ -115,6 +120,10 @@ class GotoPlaceNode(Node):
         self._latest_pose: Optional[Tuple[float, float, float, float, str]] = None
         self._latest_velocity: Optional[Tuple[float, float, float]] = None
 
+        # 从进入 NavClient.goto() 到其返回期间保持置位。
+        # 用于处理“取消指令早于 Nav2 goal handle 创建”的短暂竞态。
+        self._navigation_in_progress = threading.Event()
+
         self._pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
             AMCL_POSE_TOPIC,
@@ -136,10 +145,17 @@ class GotoPlaceNode(Node):
             self._handle_goto_place,
             callback_group=self._service_group,
         )
+        self._srv_cancel = self.create_service(
+            Trigger,
+            CANCEL_NAVIGATION_SERVICE,
+            self._handle_cancel_navigation,
+            callback_group=self._cancel_group,
+        )
 
         self.get_logger().info(
             f'GotoPlaceNode 启动: places={self._store.file_path}, '
-            f'odom={odom_topic}, service={GOTO_PLACE_SERVICE}'
+            f'odom={odom_topic}, service={GOTO_PLACE_SERVICE}, '
+            f'cancel={CANCEL_NAVIGATION_SERVICE}'
         )
 
     def _pose_callback(self, msg: PoseWithCovarianceStamped) -> None:
@@ -257,6 +273,82 @@ class GotoPlaceNode(Node):
 
         return False, last_detail
 
+    def _handle_cancel_navigation(
+        self,
+        request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        """请求取消当前导航。
+
+        success=True 只表示：
+        1. 当前确实没有活动导航；或者
+        2. Nav2 已明确接受取消请求。
+
+        它不表示机器人已经完成停车，最终终态由 /goto_place 响应确定。
+        """
+        _ = request
+
+        # 当前完全没有导航，幂等成功。
+        if (
+            not self._navigation_in_progress.is_set()
+            and not self._nav_client.has_active_goal()
+        ):
+            response.success = True
+            response.message = '当前没有正在进行的导航'
+            self.get_logger().info(
+                f'/cancel_navigation: {response.message}'
+            )
+            return response
+
+        # goto() 可能已经开始，但 Nav2 goal handle 尚未返回。
+        # 在 cancel timeout 内短暂等待 goal handle 出现。
+        timeout = float(
+            self.get_parameter('nav2_cancel_timeout').value
+        )
+        deadline = time.monotonic() + timeout
+        last_message = '尚未取得活动导航目标'
+
+        while rclpy.ok() and time.monotonic() < deadline:
+            accepted, message = self._nav_client.cancel_active_goal()
+            last_message = message
+
+            if accepted:
+                response.success = True
+                response.message = message
+                self.get_logger().info(
+                    f'/cancel_navigation: {message}'
+                )
+                return response
+
+            # 如果导航在等待期间自然结束，现在已经无需取消。
+            if (
+                not self._navigation_in_progress.is_set()
+                and not self._nav_client.has_active_goal()
+            ):
+                response.success = True
+                response.message = '导航已经结束，无需取消'
+                self.get_logger().info(
+                    f'/cancel_navigation: {response.message}'
+                )
+                return response
+
+            # 这些是明确失败，不需要继续重试。
+            if any(
+                marker in message
+                for marker in ('发送失败', '读取', '拒绝', '超时', '空的取消响应')
+            ):
+                break
+
+            # 最常见的可重试情况：goto 已开始，但 goal handle 尚未创建。
+            time.sleep(0.05)
+
+        response.success = False
+        response.message = f'未能取消当前导航：{last_message}'
+        self.get_logger().error(
+            f'/cancel_navigation: {response.message}'
+        )
+        return response
+
     def _handle_goto_place(
         self,
         request: GotoPlace.Request,
@@ -288,7 +380,14 @@ class GotoPlaceNode(Node):
             f'开始导航到 "{name}": ({x:.3f}, {y:.3f}, {yaw:.3f})'
         )
 
-        nav_success, nav_message = self._nav_client.goto(x, y, yaw)
+        # 标记整个 NavClient.goto() 执行区间。
+        # 取消服务依靠此状态处理 goal handle 尚未创建的短暂竞态。
+        self._navigation_in_progress.set()
+        try:
+            nav_success, nav_message = self._nav_client.goto(x, y, yaw)
+        finally:
+            self._navigation_in_progress.clear()
+
         if not nav_success:
             response.success = False
             response.message = f'地点 "{name}" 导航失败：{nav_message}'

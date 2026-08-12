@@ -7,6 +7,11 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from typing import List
 
+from llm_parser.navigation_intent import (
+    parse_navigation,
+    parse_cancel_navigation,
+)
+
 COLOR_MAP = {
     "红":"red","红色":"red",
     "蓝":"blue","蓝色":"blue",
@@ -34,6 +39,17 @@ SIDE_MAP = {
 
 def parse(text: str):
     t = text.strip()
+
+    # ── 导航意图优先：取消导航 > 命名地点导航 > 原有机械臂命令 ──
+    # 这两类意图不走机械臂 Grounding，由 navigation_executor 独立处理。
+    cancel_cmd = parse_cancel_navigation(t)
+    if cancel_cmd is not None:
+        return cancel_cmd
+
+    nav_cmd = parse_navigation(t)
+    if nav_cmd is not None:
+        return nav_cmd
+
     act = "pick"
     to_side = None
     color = None

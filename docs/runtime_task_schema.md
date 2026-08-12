@@ -342,7 +342,7 @@ def on_goal(self, msg):
 
 ## 8. Mobile Task Extensions (Planned)
 
-> **Status**: PLANNED — NOT IMPLEMENTED
+> **Status**: PLANNED — NOT IMPLEMENTED (full TaskContext-based path)
 >
 > The following extensions are designed for the Mobile Robot Foundation (Phase B)
 > and Mobile Manipulation Platform (Phase C) phases.
@@ -350,6 +350,13 @@ def on_goal(self, msg):
 > Existing PickSkill and Runtime execution continue to use current fields.
 > All mobile fields below are optional and planned.
 > Do NOT require mobile fields for existing pick/place tasks.
+>
+> **Phase-1 例外（已实现）**：语音控制的**命名地点导航**已通过一条与机械臂
+> Runtime 平行的轻量路径落地，见 [8.6](#86-phase-1-语音命名地点导航已实现)。
+> 它**不**经过 Grounding / TaskContext / MoveSkill，而是由
+> `place_manager/navigation_executor_node` 直接把 `/parsed_command` 中的
+> `navigate_to_place` / `cancel_navigation` 路由到 `/goto_place`。本节其余
+> `move` / `navigate`（带 `goal_pose`）/ `search` 任务仍属 Planned。
 
 ### 8.1 Task Categories
 
@@ -455,3 +462,49 @@ RobotOps
 - AMCL is **still in validation**.
 - Existing PickSkill continues to work with the current schema.
 - No mobile fields are required for existing pick/place tasks.
+
+### 8.6 Phase-1 语音命名地点导航（已实现）
+
+> **Status**: IMPLEMENTED（phase 1）— 详见 `docs/topic_service_map.md` 2.6 节。
+
+phase 1 只导航到 `places.yaml` 中已保存的命名地点，**不接受**任意坐标。
+导航动作复用 `/parsed_command` 的 `action` 字段，但不进入机械臂 Runtime：
+
+| `action` | 触发语 | 下游 |
+|---|---|---|
+| `navigate_to_place` | “去/前往/导航到/移动到/到达/到 \<地点\>” | `/goto_place`（需二次确认） |
+| `cancel_navigation` | “停止移动/取消导航/别走了” | `/cancel_navigation`（无需确认） |
+
+`/parsed_command` 示例：
+
+```json
+{"action": "navigate_to_place", "place_name": "客厅点1", "source": "voice", "raw_text": "去客厅点1"}
+{"action": "cancel_navigation",  "source": "voice", "raw_text": "停止移动"}
+```
+
+`/runtime/execution_result`（导航）在 ExecutionResult envelope 基础上扩展：
+
+```json
+{
+  "task_id": "nav_<ts>_<seq>",
+  "success": true,
+  "reason": "已到达地点 \"客厅点1\"；...",
+  "confidence": 1.0,
+  "evidence": {"domain": "navigation", "place_name": "客厅点1", "raw_text": "去客厅点1"},
+  "error_detail": null,
+  "timestamp": 1786000000.0,
+  "action": "navigate_to_place",
+  "place_name": "客厅点1",
+  "status": "SUCCEEDED",
+  "error_code": ""
+}
+```
+
+`status` ∈ {`SUCCEEDED`, `FAILED`, `CANCELLED`, `REJECTED`}；
+`error_code` ∈ {`PLACE_NOT_FOUND`, `NAV2_FAILED`, `CANCELLED`, `BUSY`,
+`SERVICE_UNAVAILABLE`}。播报映射：SUCCEEDED→“已经到达{place}。”、
+PLACE_NOT_FOUND→“没有找到名为{place}的地点。”、NAV2_FAILED→“导航失败，请检查道路。”、
+CANCELLED→“已停止移动。”、BUSY→“当前正在移动，请先停止当前导航。”。
+
+> 安全约束：Rebecca / Parser / LLM 不发布 `/cmd_vel`、不生成坐标、不绕过
+> `place_manager`、不直接控 Nav2；“停止说话/安静”与“停止移动/取消导航”严格分离。

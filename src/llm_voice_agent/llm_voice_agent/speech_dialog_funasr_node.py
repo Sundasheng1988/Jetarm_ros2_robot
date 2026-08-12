@@ -631,28 +631,84 @@ class SpeechDialogFunASR(Node):
                 self.get_logger().info(f"🛡️ 自语过滤：{text} (sim={sim:.2f})")
                 return
 
-        # 口头语清理 + 短句过滤
+        # ============================================================
+        # 控制回复白名单：必须优先于“口头语清理 / 短句过滤”
+        #
+        # 原因：
+        #   “确认。”、“取消。”等控制词虽然很短，但属于机器人状态机
+        #   的有效控制输入，不能被 min_text_len=4 过滤。
+        #
+        # 注意：
+        #  这里只处理正常 ASR 模式。
+        #   TTS 播放期间仍保持 interrupt-only，不允许“确认”穿透，
+        #   避免机器人自己的 TTS 回声误触发导航。
+        # ============================================================
+
+        control_reply = re.sub(
+            r'[，。！!？?、；;：:\s]+',
+            '',
+            text
+        ).lower()
+
+        CONTROL_REPLIES = {
+            # 明确确认
+            '确认',
+            '确定',
+            '执行',
+            '好的',
+            '好',
+            '行',
+            'ok',
+            '可以',
+            '是的',
+            '没问题',
+
+            # 明确取消 / 否定
+            '取消',
+            '不去',
+            '不要',
+            '别去',
+            '先不要',
+            '算了',
+            '不用',
+            '停止',
+        }
+
+        if control_reply in CONTROL_REPLIES:
+            if low_conf:
+                self.get_logger().info(
+                    f"🎛️ 控制短语低置信度({conf:.2f})，丢弃：{text}"
+                )
+                return
+
+            self.get_logger().info(
+                f"🎛️ 控制短语直通：{text} -> {control_reply}"
+            )
+            self._publish(text)
+            return
+
+
+        # ===== 普通文本：口头语清理 + 短句过滤 =====
         cleaned = self._post_clean_cn(text)
+
         if not cleaned or len(cleaned) < self.min_text_len:
             if hit_wake:
-                # 唤醒句太短也直通“原句”
+                # 唤醒句太短也直通原句
                 self._publish(text)
-                # if self.enable_wakeup:
-                #     self.active = True
-                #     self.active_until = max(self.active_until, time.time() + self.active_extend_s)
                 return
-            self.get_logger().info(f"🪶 过滤短句/口头语：{cleaned}")
+
+            self.get_logger().info(
+                f"🪶 过滤短句/口头语：{cleaned}"
+            )
             return
 
         if low_conf and not hit_wake:
-            self.get_logger().info(f"低置信度({conf:.2f})，丢弃文本：{cleaned}")
+            self.get_logger().info(
+                f"低置信度({conf:.2f})，丢弃文本：{cleaned}"
+            )
             return
 
         self._publish(cleaned)
-
-        # if self.enable_wakeup:
-        #     self.active = True
-        #     self.active_until = max(self.active_until, time.time() + self.active_extend_s)
 
     @staticmethod
     def _post_clean_cn(text: str) -> str:

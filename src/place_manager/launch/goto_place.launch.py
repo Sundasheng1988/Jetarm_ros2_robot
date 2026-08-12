@@ -30,6 +30,11 @@ def generate_launch_description() -> LaunchDescription:
             default_value=default_places_file,
             description='路径：places YAML 数据文件（默认 ~/ros2_ws/config/places.yaml）',
         ),
+        DeclareLaunchArgument(
+            'odom_topic',
+            default_value='/odom_combined',
+            description='到达验证用里程计话题（当前 JetArm 实机为 /odom_combined）',
+        ),
         Node(
             package='place_manager',
             executable='goto_place_node',
@@ -37,6 +42,7 @@ def generate_launch_description() -> LaunchDescription:
             output='screen',
             parameters=[{
                 'places_file': LaunchConfiguration('places_file'),
+                'odom_topic': LaunchConfiguration('odom_topic'),
             }],
         ),
     ])

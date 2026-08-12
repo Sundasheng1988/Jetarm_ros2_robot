@@ -265,6 +265,102 @@ def build_cmd_text(color, klass, side):
         cmd += f'，放到{cn_side}'
     return cmd
 
+
+# ===== 导航：命名地点导航 / 停止移动（与“停止说话”严格分离）=====
+# 与 llm_parser.navigation_intent 保持一致，保证 Rebecca 下发的文本一定能被
+# Parser 重新识别为同一种导航意图。地点是否存在由 place_manager 判断，这里
+# 不硬编码地点名单。
+NAV_STOP_PHRASES = [
+    '停止移动', '停止导航', '取消导航', '取消移动',
+    '别走了', '别走啦', '别走', '不要走了', '不要走',
+    '停下移动', '停下导航',
+]
+_NAV_VERB_RE = re.compile(r'^(导航到|移动到|到达|前往|去|到)(.+)$')
+_NAV_TAIL_NOISE = re.compile(r'[吧呢啊呀。！!？?，,]+$')
+_NAV_REPLY_NOISE = re.compile(r'[，。！!？?、；;：:\s]+')
+
+_NAV_PLACE_FILLER = {
+    '那边', '这边', '那里', '这里', '哪儿', '哪里',
+    '地方', '一下', '一下儿',
+    # 这些通常是机械臂放置方向，不作为命名地点导航。
+    '右边', '左边', '右侧', '左侧', '中间', '中心',
+}
+
+# 导航确认必须整句匹配，不能再用 “好 in 不好” 这样的包含判断。
+_NAV_CONFIRM_REPLIES = {
+    '确认', '确定', '执行', '好的', '好',
+    '行', 'ok', '可以', '是的', '没问题',
+}
+
+# 导航取消采用保守策略：出现明确否定时不启动机器人。
+_NAV_CANCEL_MARKERS = (
+    '取消',
+    '不去',
+    '不要',
+    '别去',
+    '先不要',
+    '算了',
+    '不用',
+    '停止',
+    '没想好',
+)
+
+
+def _norm_nav_text(t):
+    t = unicodedata.normalize('NFKC', t or '')
+    t = re.sub(r'(?<=[一-鿿])\s+(?=[一-鿿])', '', t)
+    return t.strip()
+
+def _norm_nav_reply(text):
+    """归一化导航确认阶段的简短回复。"""
+    return _NAV_REPLY_NOISE.sub('', _norm_nav_text(text)).lower()
+
+
+def is_nav_cancel_reply(text):
+    """确认阶段是否表达了取消或否定。"""
+    reply = _norm_nav_reply(text)
+    if not reply:
+        return False
+
+    # 确认阶段里，以“不/别”开头时按取消处理，采取安全侧策略。
+    if reply.startswith(('不', '别')):
+        return True
+
+    return any(marker in reply for marker in _NAV_CANCEL_MARKERS)
+
+
+def is_nav_confirm_reply(text):
+    """只接受明确、完整的确认回复。"""
+    return _norm_nav_reply(text) in _NAV_CONFIRM_REPLIES
+
+
+def is_stop_movement(text):
+    """是否为“停止移动 / 取消导航”意图（不需要二次确认）。"""
+    n = _NAV_TAIL_NOISE.sub('', _norm_nav_text(text)).strip()
+    return n in NAV_STOP_PHRASES
+
+
+def extract_navigation_place(text):
+    """识别命名地点导航，返回地点名；空地点或占位词返回 None。"""
+    n = _norm_nav_text(text)
+
+    # 避免“去年的天气”“到底怎么回事”被句首单字“去/到”误识别。
+    if n.startswith(('去年', '到底')):
+        return None
+
+    m = _NAV_VERB_RE.match(n)
+    if not m:
+        return None
+
+    place = _NAV_TAIL_NOISE.sub('', m.group(2)).strip()
+    place = re.sub(r'[。！！.]+$', '', place).strip()
+
+    if not place or place in _NAV_PLACE_FILLER:
+        return None
+
+    return place
+
+
 class LlmVoiceAgent(Node):
     def __init__(self):
         super().__init__('llm_voice_agent')
@@ -318,7 +414,7 @@ class LlmVoiceAgent(Node):
         llm_base_param = self.declare_parameter('llm_base', '').get_parameter_value().string_value
         if llm_base_param:
             self.ollama_base = llm_base_param
-    
+
         self.temperature = float(self.declare_parameter('temperature', 0.3).get_parameter_value().double_value)
         self.max_tokens  = int(self.declare_parameter('max_tokens', 160).get_parameter_value().integer_value)
         self.llm_connect_timeout_s = float(
@@ -339,7 +435,7 @@ class LlmVoiceAgent(Node):
         #self._wake_fallback_timer = None
         #self.after_interrupt_open_window_s = float(
         #    self.declare_parameter('after_interrupt_open_window_s', 30.0).get_parameter_value().double_value
-        #)   
+        #)
 
         # 模式控制关键词
         self.start_keywords = list(
@@ -367,7 +463,7 @@ class LlmVoiceAgent(Node):
         self.session_dir = os.path.expanduser(self.declare_parameter('session_dir', '~/.config/llm_voice_agent/sessions').get_parameter_value().string_value)
         self.clear_on_wakeup = bool(self.declare_parameter('clear_on_wakeup', False).get_parameter_value().bool_value)
         self.max_ctx_chars = int(self.declare_parameter('max_ctx_chars', 8000).get_parameter_value().integer_value)
-        
+
         self.detail_mode = bool(self.declare_parameter('detail_mode', False).get_parameter_value().bool_value)
         self.detail_keywords = list(self.declare_parameter(
             'detail_keywords',
@@ -382,18 +478,18 @@ class LlmVoiceAgent(Node):
 
         # ===== ROS IO =====
         self.sub_query = self.create_subscription(String, self.query_topic, self._on_query, 10)
-        
+
         # ===== 12/14 更新 监听环境扫描结果（env_scan_node 输出）=====
         self.sub_env_objects = self.create_subscription(
-            EnvObjectArray, 
-            "/env_objects", 
-            self._on_env_objects, 
+            EnvObjectArray,
+            "/env_objects",
+            self._on_env_objects,
             10
         )
         # ===== 环境播报控制 (一次性闸门)=====
         self.env_report_pending = False   # 是否在等待一次环境播报
         self.env_report_done = False      # 本次请求是否已经播报过
-                
+
         self.pub_reply = self.create_publisher(String, self.reply_topic, 10)
         self.pub_texts = [self.create_publisher(String, t, 10) for t in self.publish_topics]
         self.state_pub = self.create_publisher(String, '/voice_agent/state', 10)
@@ -409,7 +505,7 @@ class LlmVoiceAgent(Node):
                 .get_parameter_value().bool_value
         )
         # self.sleeping = False   # 💤 25/12/14 新增：语音节点休眠态
-        self.l3_muted = False #  25/12/21 新增： L3-State Layer： muted 
+        self.l3_muted = False #  25/12/21 新增： L3-State Layer： muted
         self._action_paused_face_follow = False   # ✅ 由 L1 pause_for_action 置 True
 
         # —— 稳定参数：输入/输出去重+时间节流 ——
@@ -423,6 +519,8 @@ class LlmVoiceAgent(Node):
         self.waiting_confirm = False
         self.pending_cmd_text = ''
         self.slots = {'color':None, 'klass':None, 'side':None}
+        # waiting_confirm 当前等待的是否为导航命令（与机械臂任务确认复用同一状态机）
+        self._pending_nav = False
 
         # —— 严格意图与 LLM 引导开关 ——
         self.strict_intent = bool(self.declare_parameter('strict_intent', True).get_parameter_value().bool_value)
@@ -446,26 +544,26 @@ class LlmVoiceAgent(Node):
             f'robot_side_effects={self.enable_robot_side_effects}'
         )
         self._set_state('mode:chat')
-        
+
          # === 语音节点启动完毕 → 通知 face_follow 进入“准备状态” ===
         # msg = String()
         # msg.data = "voice_ready"
         # self.face_ctrl_pub.publish(msg)
         # self.get_logger().info("📢 已通知 face_follow：voice_ready")
-        
+
         #11/2 新增 ====== 命中唤醒词 ======
         # Agent 发出的唤醒消息只负责停止旧播放。真实用户打断继续使用
         # /tts/interrupt，并由下面的订阅取消当前 LLM。
         self.tts_playback_interrupt_pub = self.create_publisher(
             Bool, '/tts/interrupt_playback_only', 1
         )
-        
+
         #11/8 —— 监听 TTS 播放状态（用于“播报结束再开计时”）——
         #self.sub_tts_speaking = self.create_subscription(
         #    Bool, '/tts_speaking', self._on_tts_speaking, 10
         #)
         #self.tts_is_speaking = False
-        
+
         # 11/9 新增：监听 TTS 结束/打断等价完成信号，立刻开窗
         self.sub_tts_done = self.create_subscription(
            Bool, '/tts/done', self._on_tts_done, 10
@@ -485,7 +583,7 @@ class LlmVoiceAgent(Node):
         )
         # self.pending_wake_activation = False   # 命中唤醒后，等待播报结束再真正开启窗口
         # self._ignore_tts_false_until = 0.0     # 避免“打断导致的短促 False”误触发
-        
+
         # === 唤醒词：由参数/YAML加载 ===
         self.wake_words = list(
             self.declare_parameter('wake_words', ['rebecca', '瑞贝卡'])
@@ -509,7 +607,7 @@ class LlmVoiceAgent(Node):
         self._wake_words_norm = { _norm_text_for_wake(w) for w in self.wake_words if w }
         self._wake_regex_compiled  = [re.compile(p, re.IGNORECASE) for p in self.wake_regex]
         self._strip_regex_compiled = [re.compile(p, re.IGNORECASE) for p in self.strip_patterns]
-        
+
         # === Optional robot side effects: disabled unless explicitly enabled ===
         self.gesture_pub = None
         self.face_ctrl_pub = None
@@ -526,10 +624,10 @@ class LlmVoiceAgent(Node):
                 self.get_logger().warning(
                     f'无法创建 /servo_controller 发布器：{type(exc).__name__}'
                 )
-        
+
         # === 26/1/3 新增：gesture + face_follow 控制 ===
         self._task_paused_face_follow = False
-        
+
         # === 语音节点启动 → face_follow 进入“准备状态” ===
         #msg = String()
         #msg.data = "voice_ready"
@@ -564,13 +662,33 @@ class LlmVoiceAgent(Node):
         raw_text = (msg.data or '').strip()
         if not raw_text:
             return
-        
+
         # 统一归一化（供 L1 / L2 使用）
         norm_raw = re.sub(r'[，。！!？?\s]+', '', raw_text).lower()
         norm = norm_text(raw_text)   # ← 提前定义
-        
+
         now = time.time()
-        
+
+        # 导航停止属于运动安全指令，不能被静音状态、唤醒窗口关闭，
+        # 或 face-follow 的“先别动”逻辑阻挡。
+        stop_navigation_requested = is_stop_movement(raw_text)
+        if stop_navigation_requested:
+            if self.waiting_confirm and self._pending_nav:
+                self._reset_nav_confirm()
+
+            # 无论当前是否静音，都必须下发停止命令。
+            self._publish_command('停止移动')
+
+            # 静音时不主动说话，但仍然执行停止。
+            if self.system_active and not self.l3_muted:
+                self._say('好的，正在停止移动。')
+
+            self._set_state('nav_stop')
+            return
+
+        # =====================================================
+        # L2：系统级休眠 / 唤醒（最高优先级）
+
         # =====================================================
         # L2：系统级休眠 / 唤醒（最高优先级）
         # =====================================================
@@ -582,10 +700,10 @@ class LlmVoiceAgent(Node):
                 # self.face_ctrl_pub.publish(String(data="resume"))
                 self._say("系统已启动。")
                 self._set_state("system_active")
-        
+
                 self.get_logger().info("🌅 L2 SYSTEM_WAKE (boot → active)")
             return
-            
+
         # ---- 系统级休眠 ----
         if self.system_active and any(k in norm_raw for k in SYSTEM_SLEEP_KEYWORDS):
             self.get_logger().info(
@@ -603,7 +721,7 @@ class LlmVoiceAgent(Node):
 
             self.get_logger().info("🌙 L2 SYSTEM_SLEEP (active → inactive)")
             return
-        
+
         # =====================================================
         # “清空上下文 / 重置对话”
         if self._maybe_handle_memory_commands(norm):
@@ -633,7 +751,7 @@ class LlmVoiceAgent(Node):
             self.get_logger().debug("🔇 L3 muted，忽略语音输入")
             return
 
-        
+
 
         # ---- L3 mute：进入静音（系统不休眠）----
         if any(k in norm_raw for k in L3_MUTE_KEYWORDS):
@@ -641,7 +759,7 @@ class LlmVoiceAgent(Node):
 
             # 👉 静音时：暂停 face_follow（但系统仍在线）
             self._publish_face_control("pause_for_action")
-            self._action_paused_face_follow = True   # ✅ 
+            self._action_paused_face_follow = True   # ✅
 
             self._say("好的，我先不说话。")
             self._set_state("chat_muted")
@@ -652,7 +770,7 @@ class LlmVoiceAgent(Node):
         # =====================================================
         # L1：语义动作控制（不影响系统态）
         # =====================================================
-        
+
         # ---- 语义触发 pause ----
         if any(k in norm_raw for k in PAUSE_KEYWORDS):
             self._publish_face_control("pause_for_action")
@@ -676,17 +794,17 @@ class LlmVoiceAgent(Node):
                 self._say("任务模式下不跟随，你说任务即可。")
             self.get_logger().info("🎯 L1：语义 resume")
             return
-        
+
         # =====================================================
         # L3：统一唤醒词注意力窗口。聊天、模式切换、任务补槽、
         # 确认和取消都必须经过同一个窗口，避免 task 模式绕过门控。
         # =====================================================
         if self.use_wakeword and self.system_active and not self.l3_muted:
-            
+
             hit = self._is_wake_hit(raw_text)
 
             if hit and (now - self._last_wake_ts) >= self.wake_cooldown_s:
-                
+
                 # ✅ first_wake 只由“上一次唤醒命中时间”决定，不受 /tts/done 续窗影响
                 first_wake = (now - self._last_wake_ts) > self.wake_window_s
 
@@ -696,7 +814,7 @@ class LlmVoiceAgent(Node):
                     f"first_wake={first_wake} | "
                     f"now={now:.2f}"
                 )
-                
+
                 # 打开注意力窗口
                 self._last_wake_ts = now
                 self._wake_until = now + self.wake_window_s
@@ -705,7 +823,7 @@ class LlmVoiceAgent(Node):
                     f"until={self._wake_until:.2f} "
                     f"(duration={self.wake_window_s:.1f}s)"
                 )
-                
+
                 # ✅ 只在“第一次唤醒”时，叫醒机械臂
                 # if first_wake and self.mode == 'chat':
                 #     if self._action_paused_face_follow:
@@ -716,7 +834,7 @@ class LlmVoiceAgent(Node):
                 #         self.face_ctrl_pub.publish(String(data="resume"))
                 #         self.get_logger().info("🤖 L3_WAKE → resume")
                 # ✅ 唤醒时：chat 模式下“按需恢复”
-                
+
                 # 触发条件：
                 # - 第一次唤醒（first_wake）
                 # - 或者当前处于 action_pause / task_pause（需要恢复）
@@ -759,21 +877,26 @@ class LlmVoiceAgent(Node):
                     "⏱️ L3_WAKE ignored (cooldown active)"
                 )
                 return
-            
+
             elif now > self._wake_until:
                 self.get_logger().info(f"⏱️ L3 window closed | now={now:.2f}")
                 return
 
+        # 导航意图（命名地点导航 / 停止移动），独立于 chat/task 模式，复用
+        # waiting_confirm / pending_cmd_text，不另建第二套确认状态机。
+        if self._handle_navigation(norm, raw_text):
+            return
+
         # 模式切换也必须通过上面的注意力门控。
         if self._maybe_switch_mode(norm):
             return
-        
+
         if self.mode == 'chat':
             self._handle_chat(norm_text=norm, raw_text=raw_text)
         else:
             self._handle_task(norm); return
-       
-    
+
+
     def _maybe_nod(self, reply_text: str):
         """
                   检测 LLM 回复是否为肯定句，是 → 自动发布点头命令
@@ -785,9 +908,9 @@ class LlmVoiceAgent(Node):
 
         if any(w in reply_text for w in positive_words):
             self.get_logger().info(f"🤖 检测到肯定回答 → 自动点头 nod")
-    
+
             self._publish_gesture("nod")
-    
+
     def _maybe_shake(self, reply_text: str):
         """
                   检测 LLM 回复是否是否定句，是 → 自动摇头 shake
@@ -801,8 +924,8 @@ class LlmVoiceAgent(Node):
             self.get_logger().info(f"🤖 检测到否定回答 → 自动摇头 shake")
 
             self._publish_gesture("shake")
-    
-    # ===== 11/8新增：监听tts_speaking话题，用于判断是否可以进入休息 =====        
+
+    # ===== 11/8新增：监听tts_speaking话题，用于判断是否可以进入休息 =====
     #def _on_tts_speaking(self, msg: Bool):
     #    was = self.tts_is_speaking
     #    self.tts_is_speaking = bool(msg.data)
@@ -813,7 +936,7 @@ class LlmVoiceAgent(Node):
     #        # 打断后的瞬间 False 不计入（防抖）
     #        if now < self._ignore_tts_false_until:
     #            return
-    
+
             # 若处于等待激活状态，则在“播报真正结束”时开始计时
     #        if self.pending_wake_activation:
     #            self._last_wake_ts = now
@@ -822,7 +945,7 @@ class LlmVoiceAgent(Node):
     #            self.get_logger().info(
     #                f"🕓 播报结束 -> 开始计时 {self.wake_window_s:.1f}s 唤醒窗口"
     #            )
-            
+
             # 成功开窗后，取消兜底定时器
     #        try:
     #            if self._wake_fallback_timer is not None:
@@ -830,7 +953,7 @@ class LlmVoiceAgent(Node):
     #        except Exception:
     #            pass
     #        self._wake_fallback_timer = None
-                
+
     def _on_tts_done(self, msg: Bool):
         if not msg or not msg.data:
             return
@@ -843,7 +966,7 @@ class LlmVoiceAgent(Node):
         after = float(self.after_tts_window_s)
         self._wake_until = max(self._wake_until, now + after)
         self.get_logger().info(f"🕓 /tts/done → extend wake window to {self._wake_until:.2f} (+{after:.1f}s)")
-    
+
     #    if self.pending_wake_activation:
             # 唤醒词路径：开长窗
     #        self._last_wake_ts = now
@@ -869,7 +992,7 @@ class LlmVoiceAgent(Node):
     #    except Exception:
     #        pass
     #    self._wake_fallback_timer = None
-    
+
     # =====12/6 新增 环境扫描结果回调 =====
     def _on_env_objects(self, msg):
         # 只在“用户主动请求环境播报”时，播报一次 env_objects
@@ -902,7 +1025,7 @@ class LlmVoiceAgent(Node):
             self._say("扫描完成，但解析失败。")
             self.env_report_done = True
             self.env_report_pending = False
-    
+
     # ===== 12/11 优化 /env_objects 转成自然语言 =====
     def _summarize_env_objects(self, msg):
         # === 情况 1：完全没看到 ===
@@ -940,7 +1063,7 @@ class LlmVoiceAgent(Node):
         summary2 = "，".join(distances) + "。"
 
         return summary1 + summary2
-            
+
     # def _wake_fallback_open(self):
         # 仅当仍在等待激活时才生效
     #    if self.pending_wake_activation:
@@ -958,7 +1081,85 @@ class LlmVoiceAgent(Node):
     #    except Exception:
     #        pass
     #    self._wake_fallback_timer = None
-    
+
+    # ===== 导航：命名地点导航 / 停止移动 =====
+    def _handle_navigation(self, norm: str, raw_text: str) -> bool:
+        """导航意图处理，复用 waiting_confirm / pending_cmd_text。
+
+        - 停止移动：不需要确认，立即下发一次 cancel_navigation。
+        - 命名地点导航：必须二次确认，确认后才下发一次 navigate_to_place。
+        - “停止说话 / 安静” 等只中止 LLM/TTS 的指令绝不在此处理，直接返回
+          False 交给后续对话流程，保证不会误取消导航。
+
+        返回 True 表示已作为导航处理。
+        """
+        # “停止说话 / 安静”属于对话静音意图，绝不是导航停止或取消。
+        if '说话' in norm or '安静' in norm:
+            return False
+
+        # 1) 停止移动 / 取消导航：无需确认，立即下发一次。
+        #    语义边界：这里只播报“正在停止移动”（进行中）；导航真正终止后由
+        #    executor_done_sayer 根据 /runtime/execution_result 的 CANCELLED 播报
+        #    “已停止移动”（已完成）。绝不在此处宣布“已停止移动”。
+        if is_stop_movement(raw_text):
+            if self.waiting_confirm and self._pending_nav:
+                self._reset_nav_confirm()
+            self._say('好的，正在停止移动。')
+            self._publish_command('停止移动')
+            self._set_state('nav_stop')
+            return True
+
+        # 2) 正在等待导航确认：处理 确认 / 取消 / 更改目标。
+        if self.waiting_confirm and self._pending_nav:
+            # 取消/否定必须优先于确认，避免“不要确认”中的“确认”
+            # 或“好，不去”中的“好”错误启动导航。
+            if is_nav_cancel_reply(raw_text):
+                self._say('好的，已取消导航。')
+                self._reset_nav_confirm()
+                self._set_state('nav_cancel')
+                return True
+
+            if is_nav_confirm_reply(raw_text):
+                self._say('好的，开始导航。')
+                self._publish_command(self.pending_cmd_text or '导航')
+                self._reset_nav_confirm()
+                self._set_state('nav_confirmed')
+                return True
+
+            if any(w in norm for w in CANCEL_WORDS):
+                self._say('好的，已取消导航。')
+                self._reset_nav_confirm()
+                self._set_state('nav_cancel')
+                return True
+
+            place = extract_navigation_place(raw_text)
+            if place is not None:
+                # 保存规范化命令，避免“去客厅吧”被 Parser 解析成地点“客厅吧”。
+                self.pending_cmd_text = f'导航到{place}'
+                self._say(f'好的，改为前往{place}，是否确认？')
+                self._set_state('nav_wait_confirm')
+                return True
+            self._say('请说“确认”开始导航，或“取消”放弃。')
+            return True
+
+        # 3) 新的命名地点导航请求：进入二次确认。
+        place = extract_navigation_place(raw_text)
+        if place is None:
+            return False  # 非导航：交给后续 chat/task 处理
+        # 若正在等待机械臂任务确认，导航优先级更高，覆盖为导航确认。
+        # 只向 Parser 发布规范化文本，确保 Rebecca 与 Parser 地点名一致。
+        self.pending_cmd_text = f'导航到{place}'
+        self.waiting_confirm = True
+        self._pending_nav = True
+        self._say(f'将前往{place}，是否确认？')
+        self._set_state('nav_wait_confirm')
+        return True
+
+    def _reset_nav_confirm(self) -> None:
+        self.waiting_confirm = False
+        self.pending_cmd_text = ''
+        self._pending_nav = False
+
     def _maybe_switch_mode(self, normed: str) -> bool:
         # start/stop_keywords 里的词本身通常没有标点，这里直接用包含判断即可
         if any(k in normed for k in self.start_keywords):
@@ -967,6 +1168,7 @@ class LlmVoiceAgent(Node):
                 self.waiting_confirm = False
                 self.pending_cmd_text = ''
                 self.slots = {'color': None, 'klass': None, 'side': None}
+                self._pending_nav = False
 
                 # ✅ 进入任务模式：暂停 face_follow，避免“看着我”干扰抓取
                 self._publish_face_control("pause")
@@ -985,6 +1187,7 @@ class LlmVoiceAgent(Node):
                 self.waiting_confirm = False
                 self.pending_cmd_text = ''
                 self.slots = {'color': None, 'klass': None, 'side': None}
+                self._pending_nav = False
 
                 # ✅ 退出任务模式：如果是任务模式暂停的，就恢复 face_follow
                 if self._task_paused_face_follow:
@@ -1009,14 +1212,14 @@ class LlmVoiceAgent(Node):
         if is_smalltalk(norm_text):
             self._say('在的。 您想聊点什么？')
             self._set_state('chat_idle'); return
-        
+
         # === 新增：识别查看面前物体 ===
         SCAN_FRONT_KEYWORDS = [
             "看面前", "看看面前", "前面有什么", "面前有什么",
             "看前面", "看看前面", "检测前面", "检测面前",
             "看看物体", "检测物体", "看看下面", "看看下面前"
         ]
-        
+
         # === 新增：弱语义“再扫描一次”触发 ===
         RESCAN_KEYWORDS = [
             "再看", "再看看", "你再看", "再看一下",
@@ -1031,7 +1234,7 @@ class LlmVoiceAgent(Node):
             self._publish_command("static_env_report") # ② 执行静态环境扫描
             self.get_logger().info("📢 已触发 static_env_report_node")
             return
-        
+
         if any(k in norm_text for k in RESCAN_KEYWORDS):
             self._say("好的，我再看一下。")
             self.env_report_pending = True
@@ -1039,7 +1242,7 @@ class LlmVoiceAgent(Node):
             self._publish_command("static_env_report")
             self.get_logger().info("📢 语义触发：重新环境扫描")
             return
-        
+
         if "检测环境" in norm_text or "扫描环境" in norm_text or "看看周围" in norm_text:
             self._say("好的，开始扫描环境。")
             self._publish_command("env_scan")
@@ -1091,13 +1294,13 @@ class LlmVoiceAgent(Node):
         # Streaming output was already published sentence by sentence.
         if not streamed_sentences:
             self._say(clamp(reply, 2000 if use_long else 600), concise=not use_long)
-        
+
         # ======= 互斥判断：否定优先、再判断肯定 =======
         reply_clean = reply.strip().lower()
 
         NEG_WORDS = ["不对", "不是", "不太对", "不可以", "不能", "不行", "错误", "否"]
         POS_WORDS = ["是的", "对", "没错", "正确", "当然", "嗯", "对的"]
-        
+
         gesture = None  # ★★★ 防止 UnboundLocalError ★★★
 
         # ---- 1) 否定优先 ----
@@ -1113,14 +1316,14 @@ class LlmVoiceAgent(Node):
         # ---- 若需要动作，执行延迟触发 ----
         if gesture is not None:
             delay = self.gesture_delay_s  # 参数中默认 0.4 秒
-            
+
             timer = None  # 关键：闭包用
-            
+
             def _do_once():
                 nonlocal timer
                 self._publish_gesture(gesture)
                 self.get_logger().info(f"🤖 手势已触发 (delay={delay}s): {gesture}")
-                
+
                 # 重要：停止 timer，避免无限循环
                 if timer is not None:
                     timer.cancel()
@@ -1128,24 +1331,30 @@ class LlmVoiceAgent(Node):
 
             # 只跑一次的 timer
             timer = self.create_timer(delay, _do_once)
-        
+
         self._remember_turn(user_for_memory, reply)
 
     # ===== Task 模式 =====
     def _handle_task(self, norm_text: str):
-        # 先处理确认/取消
+    # 确认阶段：取消优先，并且只接受完整的确认短语
         if self.waiting_confirm:
-            if any(w in norm_text for w in CONFIRM_WORDS):
-                self._say('好的，开始执行。')
-                self._publish_command(self.pending_cmd_text or '执行命令')
-                self._reset_dialog(keep_mode=True)
-                self._set_state('task_done')
-                return
-            if any(w in norm_text for w in CANCEL_WORDS):
-                self._say('已取消，请继续描述你的任务。')
+            if is_nav_cancel_reply(norm_text):
+                self._say('好的，已取消，请继续描述任务。')
                 self._reset_dialog(keep_mode=True)
                 self._set_state('task_cancel')
                 return
+
+            if is_nav_confirm_reply(norm_text):
+                cmd_text = self.pending_cmd_text
+                self._reset_dialog(keep_mode=True)
+
+                self._say('好的，开始执行。')
+                self._publish_command(cmd_text)
+                self._set_state('task_done')
+                return
+
+            self._say('请说“确认”开始执行，或“取消”放弃。')
+            return
 
         # 抽槽
         color, klass, side = extract_slots(norm_text)
@@ -1186,15 +1395,16 @@ class LlmVoiceAgent(Node):
         cmd_text = build_cmd_text(self.slots['color'], self.slots['klass'], self.slots['side'])
         self.pending_cmd_text = cmd_text
         self.waiting_confirm = True
+        self._pending_nav = False
         self._say(f'将执行：{cmd_text}，是否确认？（说“确认”或“取消”）')
         self._set_state('task_wait_confirm')
-        
+
     def _should_long_form_this_turn(self, raw_text: str) -> bool:
         if self.detail_mode:
             return True
         t = (raw_text or '').strip()
         return any(kw in t for kw in self.detail_keywords)
-        
+
     def _is_wake_hit(self, asr_text: str) -> bool:
         if not asr_text:
             return False
@@ -1426,6 +1636,7 @@ class LlmVoiceAgent(Node):
         self.waiting_confirm = False
         self.pending_cmd_text = ''
         self.slots = {'color':None, 'klass':None, 'side':None}
+        self._pending_nav = False
         if not keep_mode:
             self.mode = 'chat'
         self._set_state('idle' if self.mode=='task' else 'chat_idle')

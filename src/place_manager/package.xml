@@ -24,10 +24,21 @@
 
   <!-- ROS dependencies -->
   <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>nav2_msgs</depend>
   <depend>action_msgs</depend>
+
+  <!--
+    navigation.launch.py 启动 executor_done_sayer（属于 llm_voice_agent），
+    并解析 launch 文件，因此显式声明这些运行期依赖。std_msgs/std_srvs 已在上文
+    作为 <depend> 声明（既是构建期也是运行期依赖）。
+  -->
+  <exec_depend>llm_voice_agent</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <!-- Python runtime dependency -->
   <exec_depend>python3-yaml</exec_depend>
