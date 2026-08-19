@@ -232,6 +232,15 @@ class SpeechDialogFunASR(Node):
         self.create_subscription(String, self.reply_topic, self._on_tts_reply, 10)
         self.create_subscription(Bool, '/tts_speaking', self._on_tts_speaking, 10)
 
+        # ===== Agent 状态：用于安全放行导航确认词 =====
+        self._voice_agent_state = ''
+        self.create_subscription(
+            String,
+            '/voice_agent/state',
+            self._on_voice_agent_state,
+            10
+        )
+
         # ===== 自语抑制 & 动态静音参数 =====
         self.self_speech_window_s = float(self.declare_parameter("self_speech_window_s", 4.0).get_parameter_value().double_value)
         self.tts_chars_per_sec    = float(self.declare_parameter("tts_chars_per_sec", 6.0).get_parameter_value().double_value)
@@ -425,6 +434,10 @@ class SpeechDialogFunASR(Node):
         #     self.active = True
         #     self.active_until = max(self.active_until, self.mute_until + self.followup_window_s)
 
+    def _on_voice_agent_state(self, msg: String):
+        """只读保存 Agent 当前状态，用于控制类短语的安全门控。"""
+        self._voice_agent_state = (msg.data or '').strip()
+
     def _on_tts_speaking(self, msg: Bool):
         """TTS 正在说话门控：True 时立即清空端点缓冲；False 延时释放。"""
         if not self.respect_tts_gate:
@@ -580,21 +593,117 @@ class SpeechDialogFunASR(Node):
 
         # —— 打断监听模式：只识别“打断词”，命中即发出中断信号，并**不**转发给 Agent ——
         if self._interrupt_listen_only:
-            # 兼容中文/英文标点与空格
+            # 统一去除标点 / 空白，用于严格控制词匹配
+            control_reply = re.sub(
+                r'[，。！!？?、；;：:\s]+',
+                '',
+                text
+            ).lower()
+
+            # ---------------------------------------------------------
+            # 导航确认安全直通
+            #
+            # 必须同时满足：
+            #   1. Agent 正处于 nav_wait_confirm
+            #   2. ASR 结果整句严格等于允许词
+            #   3. 置信度达到控制阈值
+            #
+            # 不允许包含式匹配，避免：
+            #   “是否确认” / “请说确认” / “确认开始导航”
+            # 被当成用户确认。
+            # ---------------------------------------------------------
+            NAV_CONFIRM_TOKENS = (
+                '确认',
+                '我确认',
+                '确定',
+                '我确定',
+                '可以',
+            )
+
+            NAV_CONFIRM_BLOCKERS = (
+                '取消',
+                '不去',
+                '不要',
+                '别去',
+                '算了',
+                '不用',
+                '停止',
+                '不确认',
+                '不确定',
+            )
+
+            # TTS 与真人讲话可能被 ASR 拼成一句，例如：
+            #   “要让Eric去餐厅吗确认”
+            # 所以 nav_wait_confirm 下允许确认词位于整句开头或结尾。
+            #
+            # 安全前提：
+            #   1. 必须处于 nav_wait_confirm
+            #   2. Rebecca 的导航询问本身不得包含“确认/确定”
+            #   3. 有任何明确否定词则禁止确认
+            has_confirm_token = (
+                any(control_reply.startswith(w) for w in NAV_CONFIRM_TOKENS)
+                or any(control_reply.endswith(w) for w in NAV_CONFIRM_TOKENS)
+            )
+
+            has_confirm_blocker = any(
+                w in control_reply
+                for w in NAV_CONFIRM_BLOCKERS
+            )
+
+            nav_confirm_hit = (
+                self._voice_agent_state == 'nav_wait_confirm'
+                and has_confirm_token
+                and not has_confirm_blocker
+                and conf >= self.min_avg_conf
+            )
+
+            if nav_confirm_hit:
+                self.get_logger().info(
+                    f"✅ 导航确认直通 | "
+                    f"state={self._voice_agent_state} | "
+                    f"text='{text}'"
+                )
+
+                # 先停止 Rebecca 当前播报
+                self.pub_interrupt.publish(Bool(data=True))
+
+                # 再把真人确认送给 Agent
+                self._publish(text)
+
+                # 避免刚打断的 TTS 尾音再次形成端点
+                self.mute_until = time.time() + 0.3
+                return
+
+            # ---------------------------------------------------------
+            # 原有普通语音打断逻辑
+            # ---------------------------------------------------------
             norm = (
                 text.replace("，", ",").replace("。", ".")
                     .replace("！", "!").replace("？", "?")
                     .replace(" ", "")
             ).lower()
-            # 命中条件：①单独打断词；②“唤醒词 + 打断词”组合（中间<=4字）
-            hit_interrupt = any(w in norm for w in self._interrupt_words_lc) or bool(self._interrupt_combo_re.search(text))
-            self.get_logger().info(f"🎧(interrupt) -> '{text}' (conf~{conf:.2f}) hit={hit_interrupt}")
+
+            hit_interrupt = (
+                any(w in norm for w in self._interrupt_words_lc)
+                or bool(self._interrupt_combo_re.search(text))
+            )
+
+            self.get_logger().info(
+                f"🎧(interrupt) -> '{text}' "
+                f"(conf~{conf:.2f}) "
+                f"state={self._voice_agent_state} "
+                f"interrupt={hit_interrupt} "
+                f"nav_confirm={nav_confirm_hit}"
+            )
+
             if hit_interrupt:
                 self.pub_interrupt.publish(Bool(data=True))
-                # 打断后加长静音，减少回声复触发
                 self.mute_until = time.time() + 2.0
-                self.get_logger().info("🛑 已发送语音打断信号到 /tts/interrupt")
-            return  # 打断监听模式不转发给 Agent
+                self.get_logger().info(
+                    "🛑 已发送语音打断信号到 /tts/interrupt"
+                )
+
+            return
 
         # —— 正常模式（以下逻辑与之前相同 + 唤醒直通）——
         self.get_logger().info(f"🎧 识别[{reason}] -> '{text}' (conf~{conf:.2f})")
@@ -690,6 +799,31 @@ class SpeechDialogFunASR(Node):
 
         # ===== 普通文本：口头语清理 + 短句过滤 =====
         cleaned = self._post_clean_cn(text)
+
+        # ============================================================
+        # 导航短命令直通
+        #
+        # “去餐厅 / 去客厅 / 到房间”等虽然字数短，
+        # 但具有明确的导航句式，不能被 min_text_len 当口头语过滤。
+        #
+        # 这里只负责放行，真正是否构成有效导航仍由 Agent 判断。
+        # ============================================================
+        nav_short = re.sub(
+            r'[，。！!？?、；;：:\s]+',
+            '',
+            cleaned
+        )
+
+        NAV_SHORT_RE = re.compile(
+            r'^(?:导航到|移动到|前往|到达|去|到).{2,}$'
+        )
+
+        if NAV_SHORT_RE.match(nav_short):
+            self.get_logger().info(
+                f"🧭 导航短句直通：{text} -> {nav_short}"
+            )
+            self._publish(cleaned)
+            return
 
         if not cleaned or len(cleaned) < self.min_text_len:
             if hit_wake:

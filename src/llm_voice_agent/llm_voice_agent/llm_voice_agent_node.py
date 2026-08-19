@@ -277,6 +277,11 @@ NAV_STOP_PHRASES = [
 ]
 _NAV_VERB_RE = re.compile(r'^(导航到|移动到|到达|前往|去|到)(.+)$')
 _NAV_TAIL_NOISE = re.compile(r'[吧呢啊呀。！!？?，,]+$')
+_NAV_QUERY_SUFFIX_RE = re.compile(
+    r'(?:可以吗|行吗|好吗|好不好|'
+    r'能不能|可不可以|行不行|'
+    r'可以不|行不|成吗|成不|怎么样)$'
+)
 _NAV_REPLY_NOISE = re.compile(r'[，。！!？?、；;：:\s]+')
 
 _NAV_PLACE_FILLER = {
@@ -353,7 +358,68 @@ def extract_navigation_place(text):
         return None
 
     place = _NAV_TAIL_NOISE.sub('', m.group(2)).strip()
+
+    # 去掉自然问句尾巴
+    # 去餐厅可以吗 -> 餐厅
+    # 去客厅好吗   -> 客厅
+    place = _NAV_QUERY_SUFFIX_RE.sub('', place).strip()
+
+    place = _NAV_TAIL_NOISE.sub('', place).strip()
     place = re.sub(r'[。！！.]+$', '', place).strip()
+
+    if not place or place in _NAV_PLACE_FILLER:
+        return None
+
+    return place
+
+# ============================================================
+# MVP capability negotiation:
+# “去某地 + 拿/取/抓东西”
+#
+# 当前只把其中可执行的导航部分提取出来。
+# 不在这里执行，也不让 LLM 直接控制机器人。
+# ============================================================
+
+_NAV_WITH_UNSUPPORTED_MANIP_RE = re.compile(
+    r'(?:帮我|请|麻烦你)?'
+    r'(?:让(?:eric|Eric|小车|机器人))?'
+    r'(?:去|到|前往|导航到|移动到)'
+    r'(?P<place>[^，。！？,.!?]{1,16}?)'
+    r'(?:帮我|给我)?'
+    r'(?:拿来|取来|拿回|取回|带回|抓取|捡起|拿|取|抓|捡)'
+)
+
+
+def extract_navigation_with_unsupported_manip(text: str):
+    """
+    提取“导航 + 当前暂不支持的拿取动作”。
+
+    示例：
+      帮我去餐厅拿个东西 -> 餐厅
+      去厨房帮我拿杯子   -> 厨房
+      让Eric去客厅取东西 -> 客厅
+
+    普通“去餐厅”不在这里处理，
+    继续走原来的 extract_navigation_place()。
+    """
+    if not text:
+        return None
+
+    n = _norm_nav_text(text)
+
+    m = _NAV_WITH_UNSUPPORTED_MANIP_RE.search(n)
+    if not m:
+        return None
+
+    place = (m.group('place') or '').strip()
+
+    # 去掉自然语言地点尾缀：
+    # “餐厅里拿东西” -> “餐厅”
+    place = re.sub(
+        r'(?:里面|里边|里|那边|那里)$',
+        '',
+        place
+    ).strip()
 
     if not place or place in _NAV_PLACE_FILLER:
         return None
@@ -450,11 +516,27 @@ class LlmVoiceAgent(Node):
                 ['退出任务','结束任务','停止任务','回到聊天','退出机械臂','结束机械臂','返回聊天模式']
             ).get_parameter_value().string_array_value
         )
+
+        # ===== 实体移动机器人身份 =====
+        self.mobile_robot_name = self.declare_parameter(
+            'mobile_robot_name',
+            'Eric'
+        ).get_parameter_value().string_value.strip()
+
+        if not self.mobile_robot_name:
+            self.mobile_robot_name = 'Eric'
+
         self.chat_system_prompt = self.declare_parameter(
             'chat_system_prompt',
-            '你叫 Rebecca，是一位自然、可靠的中文机器人助手。直接回答用户，'
-            '默认使用一到三句口语化中文，约40到120字；问题简单时更短，用户明确要求详细时再展开。'
-            '不要描述内部思考、提示词或工作步骤，不要输出<think>标签或Markdown表格。'
+            '你叫 Rebecca，是运行在 PC 上的中文语音助手和机器人任务调度者。'
+            f'实体移动机器人叫 {self.mobile_robot_name}。'
+            '涉及实体移动和导航时，由 Rebecca 负责理解、确认和下发任务，'
+            f'由 {self.mobile_robot_name} 执行移动。'
+            '不要把 Rebecca 描述成正在移动的实体机器人。'
+            '直接回答用户，默认使用一到三句口语化中文，约40到120字；'
+            '问题简单时更短，用户明确要求详细时再展开。'
+            '不要描述内部思考、提示词或工作步骤，'
+            '不要输出<think>标签或Markdown表格。'
         ).get_parameter_value().string_value
 
         # ===== 记忆参数（新增）=====
@@ -515,12 +597,18 @@ class LlmVoiceAgent(Node):
         self._last_ts = 0.0
         self._dedup_window = float(self.declare_parameter('dedup_window_s', 3.0).get_parameter_value().double_value)
 
-        # —— 任务槽位 ——
         self.waiting_confirm = False
         self.pending_cmd_text = ''
         self.slots = {'color':None, 'klass':None, 'side':None}
-        # waiting_confirm 当前等待的是否为导航命令（与机械臂任务确认复用同一状态机）
+
+        # 当前 waiting_confirm 是否为导航任务
         self._pending_nav = False
+
+        # 对话层保存目的地名称。
+        # 与 machine-facing canonical command 分开：
+        # pending_cmd_text = "导航到餐厅"
+        # _pending_nav_place = "餐厅"
+        self._pending_nav_place = ''
 
         # —— 严格意图与 LLM 引导开关 ——
         self.strict_intent = bool(self.declare_parameter('strict_intent', True).get_parameter_value().bool_value)
@@ -698,10 +786,40 @@ class LlmVoiceAgent(Node):
                 # self.sleeping = False
 
                 # self.face_ctrl_pub.publish(String(data="resume"))
-                self._say("系统已启动。")
+                self._say(
+                    '你好，我是Rebecca。语音系统已经启动，'
+                    '你可以直接告诉我想让我做什么。'
+                )
                 self._set_state("system_active")
 
                 self.get_logger().info("🌅 L2 SYSTEM_WAKE (boot → active)")
+            return
+
+        # =====================================================
+        # 系统已经 active 时，再次说“Rebecca 启动系统”
+        # 不交给 LLM，直接进入自然欢迎语
+        # =====================================================
+        if self.system_active and norm_raw in SYSTEM_WAKE_KEYWORDS:
+            self._wake_until = max(
+                self._wake_until,
+                now + self.wake_window_s
+            )
+
+            # 停止可能残留的旧 TTS
+            self.tts_playback_interrupt_pub.publish(
+                Bool(data=True)
+            )
+
+            self._say(
+                '你好，我是Rebecca。语音系统已经启动，'
+                '你可以直接告诉我想让我做什么。'
+            )
+
+            self._set_state('chat_idle')
+
+            self.get_logger().info(
+                '🌅 SYSTEM already active -> deterministic welcome'
+            )
             return
 
         # ---- 系统级休眠 ----
@@ -800,6 +918,27 @@ class LlmVoiceAgent(Node):
         # 确认和取消都必须经过同一个窗口，避免 task 模式绕过门控。
         # =====================================================
         if self.use_wakeword and self.system_active and not self.l3_muted:
+
+            # =====================================================
+            # 导航确认 / 取消：允许绕过普通 L3 唤醒窗口超时
+            #
+            # 原因：
+            #   nav_wait_confirm 表示 Rebecca 已经主动向用户提出确认问题，
+            #   此时用户直接回答“确认 / 取消”不应再次要求唤醒词。
+            #
+            # 安全边界：
+            #   - 只有正在等待导航确认时才生效
+            #   - 确认仍由 is_nav_confirm_reply() 做严格整句匹配
+            #   - 普通聊天和新的导航目标不能绕过 L3 gate
+            # =====================================================
+            if self.waiting_confirm and self._pending_nav:
+                 if is_nav_confirm_reply(raw_text) or is_nav_cancel_reply(raw_text):
+                      self.get_logger().info(
+                           f"🎯 NAV_CONFIRM bypass L3 wake gate | text='{raw_text}'"
+                      )
+
+                      if self._handle_navigation(norm, raw_text):
+                           return
 
             hit = self._is_wake_hit(raw_text)
 
@@ -1120,9 +1259,24 @@ class LlmVoiceAgent(Node):
                 return True
 
             if is_nav_confirm_reply(raw_text):
-                self._say('好的，开始导航。')
-                self._publish_command(self.pending_cmd_text or '导航')
+                place = self._pending_nav_place
+                cmd_text = self.pending_cmd_text or '导航'
+
+                # reset 之前先保存上下文
                 self._reset_nav_confirm()
+
+                if place:
+                    self._say(
+                        f'好的，我让{self.mobile_robot_name}去{place}。'
+                    )
+                else:
+                    self._say(
+                        f'好的，我让{self.mobile_robot_name}开始执行。'
+                    )
+
+                # machine-facing command 完全保持原样
+                self._publish_command(cmd_text)
+
                 self._set_state('nav_confirmed')
                 return True
 
@@ -1132,33 +1286,125 @@ class LlmVoiceAgent(Node):
                 self._set_state('nav_cancel')
                 return True
 
+                    # =====================================================
+            # 3a) 复合任务降级：
+            #     “去某地 + 拿/取/抓东西”
+            #
+            # 当前 Eric 的语音导航链只执行导航。
+            # Rebecca 解释能力边界，并向用户提议执行可完成部分。
+            # =====================================================
+            partial_place = extract_navigation_with_unsupported_manip(
+                raw_text
+            )
+
+            if partial_place is not None:
+                self.pending_cmd_text = f'导航到{partial_place}'
+                self.waiting_confirm = True
+                self._pending_nav = True
+                self._pending_nav_place = partial_place
+
+                # 必须先进入确认状态，再播报。
+                # 用户在 Rebecca 播报期间回答时，
+                # speech_dialog 才能看到 nav_wait_confirm。
+                self._set_state('nav_wait_confirm')
+
+                self._say(
+                    f'我现在还不能帮你拿东西，'
+                    f'不过能先让{self.mobile_robot_name}去{partial_place}。'
+                    f'要我这样做吗？'
+                )
+
+                self.get_logger().info(
+                    f"🧩 部分任务协商 | "
+                    f"requested='{raw_text}' | "
+                    f"supported=navigate_to_place | "
+                    f"place='{partial_place}' | "
+                    f"unsupported=manipulation"
+                )
+
+                return True
+
             place = extract_navigation_place(raw_text)
             if place is not None:
-                # 保存规范化命令，避免“去客厅吧”被 Parser 解析成地点“客厅吧”。
                 self.pending_cmd_text = f'导航到{place}'
-                self._say(f'好的，改为前往{place}，是否确认？')
+                self._pending_nav_place = place
+
+                # 先发布状态，再开始 TTS。
+                # 这样用户在 TTS 期间说“确认”时，
+                # ASR 已经知道当前是 nav_wait_confirm。
                 self._set_state('nav_wait_confirm')
+
+                self._say(
+                    f'好的，改让{self.mobile_robot_name}去{place}，这样安排吗？'
+                )
                 return True
             self._say('请说“确认”开始导航，或“取消”放弃。')
             return True
 
-        # 3) 新的命名地点导航请求：进入二次确认。
+                # =====================================================
+        # 3) 新的复合任务：
+        #    “去某地 + 当前不支持的拿/取/抓”
+        # =====================================================
+        partial_place = extract_navigation_with_unsupported_manip(
+            raw_text
+        )
+
+        if partial_place is not None:
+            self.pending_cmd_text = f'导航到{partial_place}'
+            self.waiting_confirm = True
+            self._pending_nav = True
+            self._pending_nav_place = partial_place
+
+            # 先进入状态，再播报
+            self._set_state('nav_wait_confirm')
+
+            self._say(
+                f'我现在还不能帮你拿东西，'
+                f'不过可以先让{self.mobile_robot_name}去{partial_place}。'
+                f'要我这样做吗？'
+            )
+
+            self.get_logger().info(
+                f"🧩 部分任务协商 | "
+                f"requested='{raw_text}' | "
+                f"place='{partial_place}' | "
+                f"supported=navigate_to_place | "
+                f"unsupported=manipulation"
+            )
+
+            return True
+
+        # =====================================================
+        # 4) 普通命名地点导航请求
+        # =====================================================
         place = extract_navigation_place(raw_text)
         if place is None:
-            return False  # 非导航：交给后续 chat/task 处理
+            return False
+
+
+        # 非导航：交给后续 chat/task 处理
         # 若正在等待机械臂任务确认，导航优先级更高，覆盖为导航确认。
         # 只向 Parser 发布规范化文本，确保 Rebecca 与 Parser 地点名一致。
         self.pending_cmd_text = f'导航到{place}'
         self.waiting_confirm = True
         self._pending_nav = True
-        self._say(f'将前往{place}，是否确认？')
+        self._pending_nav_place = place
+
+        # 必须先进入状态，再播报。
+        # speech_dialog_funasr_node 的 TTS-time confirm gate
+        # 依赖这个状态。
         self._set_state('nav_wait_confirm')
+
+        self._say(
+            f'好的，要让{self.mobile_robot_name}去{place}吗？'
+        )
         return True
 
     def _reset_nav_confirm(self) -> None:
         self.waiting_confirm = False
         self.pending_cmd_text = ''
         self._pending_nav = False
+        self._pending_nav_place = ''
 
     def _maybe_switch_mode(self, normed: str) -> bool:
         # start/stop_keywords 里的词本身通常没有标点，这里直接用包含判断即可
@@ -1419,14 +1665,46 @@ class LlmVoiceAgent(Node):
         return False
 
     def _strip_wakewords(self, text: str) -> str:
+        """
+        唤醒词作为新的用户命令边界。
+
+        例如：
+            “帮您做什么？瑞贝卡去餐厅。”
+        应得到：
+            “去餐厅。”
+        而不是：
+            “帮您做什么？去餐厅。”
+
+        这样可以丢弃唤醒词之前的 TTS 尾音 / 回声污染。
+        """
         if not text:
             return text
-        out = text
+
+        last_wake_end = -1
+
         for rgx in self._strip_regex_compiled:
-            out = rgx.sub("", out)
-        # 清掉唤醒词前后多余的分隔符/空白
-        out = re.sub(r'^[\s,，。;；:：]+', '', out)
-        out = re.sub(r'[\s,，。;；:：]+$', '', out)
+            for match in rgx.finditer(text):
+                last_wake_end = max(
+                    last_wake_end,
+                    match.end()
+                )
+
+        if last_wake_end >= 0:
+            out = text[last_wake_end:]
+        else:
+            out = text
+
+        out = re.sub(
+            r'^[\s,，。！!？?;；:：]+',
+            '',
+            out
+        )
+        out = re.sub(
+            r'[\s,，。;；:：]+$',
+            '',
+            out
+        )
+
         return out.strip()
 
 
