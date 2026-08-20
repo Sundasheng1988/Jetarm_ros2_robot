@@ -76,6 +76,11 @@ def strip_markdown_to_speech(text: str) -> str:
     # 8️⃣ 压缩重复中文标点（只限中文）
     text = re.sub(r'([，。])\1+', r'\1', text)
 
+    # 8.5️⃣ Patch 2：去掉句末标点前残留的逗顿号
+    # （「换行→句号」转换的常见残留，如“好的，。”→“好的。”；
+    #   短文本整体播报后这类残留会直接进入合成，必须清掉）
+    text = re.sub(r'[，、；;：:]+(?=[。！？.!?])', '', text)
+
     # 9️⃣ 句尾兜底
     if text and text[-1] not in '。！？.!?':
         text += '。'
@@ -141,6 +146,24 @@ def split_sentences(text: str, max_len: int) -> List[str]:
     return final
 
 
+# ========= 分段策略（Voice Stabilization Patch 2） =========
+
+def plan_segments(text: str, whole_speak_max_len: int, max_sentence_len: int) -> List[str]:
+    """
+    Patch 2 分段策略：
+    1) 清洗后长度 <= whole_speak_max_len：整体合成、整体播放，不拆句。
+       短确认回复（“好的，我让Eric去餐厅。”“好的。”“收到。”）只发
+       一次 CosyVoice 请求、起一次播放进程，降低响应延迟。
+    2) 长文本：仍按自然句切分（split_sentences），保留分段播放能力。
+    """
+    if not text:
+        return []
+    whole_max = min(whole_speak_max_len, max_sentence_len)
+    if len(text) <= whole_max:
+        return [text]
+    return split_sentences(text, max_sentence_len)
+
+
 # ========= 播放器参数归一 =========
 
 def normalize_player_for_file(player_cmd: str) -> list:
@@ -185,6 +208,12 @@ class TTSSpeakerNode(Node):
         self.player = self.declare_parameter('player', 'ffplay -autoexit -nodisp -loglevel quiet').get_parameter_value().string_value
         self.emit_mode = self.declare_parameter('emit_mode', 'wav').get_parameter_value().string_value
         self.max_sentence_len = int(self.declare_parameter('max_sentence_len', 200).get_parameter_value().integer_value)
+        # Patch 2：短文本整体播报阈值。清洗后长度 <= 该值时不拆句，
+        # 一次合成一次播放（默认 50 字符；与 max_sentence_len 取小兜底）
+        self.whole_speak_max_len = max(
+            1,
+            int(self.declare_parameter('whole_speak_max_len', 50).get_parameter_value().integer_value),
+        )
         self.dedup_window_s = float(self.declare_parameter('dedup_window_s', 1.5).get_parameter_value().double_value)
 
         # CosyVoice is a separately-running persistent service. Piper remains
@@ -390,7 +419,14 @@ class TTSSpeakerNode(Node):
 
         reply_generation = self._q.generation
         enqueued = False
-        for seg in split_sentences(clean, self.max_sentence_len):
+
+        # Patch 2 分段策略：短文本整体播报（不拆句），长文本按自然句切分
+        whole_max = min(self.whole_speak_max_len, self.max_sentence_len)
+        if 0 < len(clean) <= whole_max:
+            self.get_logger().info(
+                f'⚡ 短文本整体播报（{len(clean)}≤{whole_max}字，一次合成播放）'
+            )
+        for seg in plan_segments(clean, self.whole_speak_max_len, self.max_sentence_len):
             try:
                 if not self._q.put_nowait_if_current(reply_generation, seg):
                     self.get_logger().info('⏭️ 回复在排队期间被打断，停止入队')
