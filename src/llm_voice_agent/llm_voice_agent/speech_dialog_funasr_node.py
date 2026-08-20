@@ -134,6 +134,59 @@ def _read_str_array_param(node: Node, name: str, default: list[str] | None = Non
     return out
 
 
+# ============================================================
+# Voice Mode 状态机（Voice Stabilization Patch 1）
+#
+# VOICE_MODE_NORMAL    正常工作：全部语音照旧进入 /speech_query
+# VOICE_MODE_MUTED     静音：普通语音全部丢弃，仅放行 控制命令
+# VOICE_MODE_SLEEPING  休眠：普通语音全部丢弃，仅放行 唤醒 + Robot Stop
+#
+# 检测顺序（所有模式一致，Robot Stop 最高优先级）：
+#   1. robot stop
+#   2. wake / sleep / mute 模式控制
+#   3. confirmation（保留原有导航确认逻辑）
+#   4. normal speech
+#
+# 注意：不关麦克风、不停 FunASR——休眠下仍需要语音唤醒。
+# ============================================================
+VOICE_MODE_NORMAL = 'voice_mode_normal'
+VOICE_MODE_MUTED = 'voice_mode_muted'
+VOICE_MODE_SLEEPING = 'voice_mode_sleeping'
+
+# Robot Stop 短语：与 llm_voice_agent_node.NAV_STOP_PHRASES 对齐（只读对齐，
+# 不修改 Agent）。整句精确匹配，覆盖用户指定的：
+#   “停止移动 / 停止导航 / 取消导航 / 别走了”
+VOICE_STOP_PHRASES = frozenset([
+    '停止移动', '停止导航', '取消导航', '取消移动',
+    '别走了', '别走啦', '别走', '不要走了', '不要走',
+    '停下移动', '停下导航',
+])
+
+# 进入静音（NORMAL -> MUTED）：与 Agent L3_MUTE_KEYWORDS 对齐（子串匹配）
+VOICE_MUTE_ENTER_KEYWORDS = (
+    '别说话', '安静', '静音', '我在拍视频', '不要说话',
+)
+
+# 解除静音（MUTED -> NORMAL）：用户指定词 + Agent L3_UNMUTE_KEYWORDS
+VOICE_UNMUTE_KEYWORDS = (
+    '瑞贝卡可以说话了', '瑞贝卡恢复说话', '取消静音',
+    '可以说话了', '继续说话', '恢复对话', '你可以说话了',
+)
+
+# 系统休眠（NORMAL/MUTED -> SLEEPING）：用户指定词 + Agent SYSTEM_SLEEP_KEYWORDS
+VOICE_SLEEP_ENTER_KEYWORDS = (
+    '系统休眠', '瑞贝卡系统休眠',
+    '瑞贝卡请先休息吧', 'rebecca请先休息吧', 'rebecca系统休眠',
+)
+
+# 唤醒（SLEEPING -> NORMAL）：用户指定词 + Agent SYSTEM_WAKE_KEYWORDS
+VOICE_WAKE_KEYWORDS = (
+    '瑞贝卡启动系统', 'rebecca启动系统', '启动语音系统',
+    '瑞贝卡唤醒系统', '瑞贝卡恢复系统',
+    'rebecca唤醒系统', 'rebecca恢复系统',
+)
+
+
 class SpeechDialogFunASR(Node):
     """
     麦克风 -> WebRTC VAD -> 端点检测 -> FunASR 识别 -> 发布至 topic_out
@@ -144,6 +197,9 @@ class SpeechDialogFunASR(Node):
       - 自语抑制、短句过滤、口头语清理
       - 进入休眠时友好提醒
       - “唤醒直通”：命中唤醒词时**也发布原句**给 agent（双保险）
+      - ✅ Voice Mode 状态机：NORMAL / MUTED / SLEEPING
+        （静音/休眠下普通语音在源头丢弃，仅放行控制命令；
+         Robot Stop 在任何模式下都放行并固定下发“停止移动”）
     """
 
     def __init__(self):
@@ -240,6 +296,12 @@ class SpeechDialogFunASR(Node):
             self._on_voice_agent_state,
             10
         )
+
+        # ===== Voice Mode 状态机（Patch 1）：本地权威门控 =====
+        # NORMAL：全部语音照旧进入 /speech_query
+        # MUTED / SLEEPING：普通语音在源头丢弃，仅放行控制命令
+        # 注意：不关麦克风、不停 FunASR，休眠下仍可语音唤醒
+        self._voice_mode = VOICE_MODE_NORMAL
 
         # ===== 自语抑制 & 动态静音参数 =====
         self.self_speech_window_s = float(self.declare_parameter("self_speech_window_s", 4.0).get_parameter_value().double_value)
@@ -477,6 +539,134 @@ class SpeechDialogFunASR(Node):
         self.ms_sil = 0
         self.speeching = False
 
+    # ---------------- Voice Mode 状态机（Patch 1） ----------------
+    @staticmethod
+    def _norm_control_text(text: str) -> str:
+        """控制命令归一化：去中英文标点/空白 + 小写（与 Agent 侧风格一致）。"""
+        return re.sub(r'[，。！!？?、；;：:,.\s]+', '', text or '').lower()
+
+    def _strip_wake_prefix(self, n: str) -> str:
+        """容忍“唤醒词 + 前缀”的控制命令，如“瑞贝卡，停止移动”。"""
+        for w in self._wake_words_lc:
+            if w and n.startswith(w):
+                return n[len(w):]
+        return n
+
+    def _handle_robot_stop(self, text: str) -> bool:
+        """检测顺序第 1 位：Robot Stop，任何 Voice Mode 下都必须放行。
+
+        修复问题：TTS 期间识别到“停止移动”只打断了 Rebecca 播报，
+        没有可靠传递给机器人。这里统一做两件事：
+          1. 发布 /speech_query，内容固定为“停止移动”
+          2. 发布 /tts/interrupt
+
+        整句（去唤醒前缀/语气尾缀后）精确匹配才命中；
+        停止属于安全方向指令，不做置信度门控（宁可偶发不漏停）。
+        """
+        n = self._strip_wake_prefix(self._norm_control_text(text))
+        n = re.sub(r'[吧呢啊呀]+$', '', n)
+        if n not in VOICE_STOP_PHRASES:
+            return False
+
+        self.get_logger().info(
+            f"🛑 [VoiceMode:{self._voice_mode}] Robot STOP 命中：'{text}'"
+        )
+        # 1. 固定内容下发停止（Agent / 导航链路按既有关键词处理）
+        self._publish('停止移动')
+        # 2. 立即打断当前 TTS 播报
+        self.pub_interrupt.publish(Bool(data=True))
+        # 防止刚被打断的 TTS 尾音再次形成端点
+        self.mute_until = time.time() + 0.5
+        return True
+
+    def _handle_mode_control(self, text: str, conf: float) -> bool:
+        """检测顺序第 2 位：MUTED / SLEEPING 下唯一放行的控制命令。
+
+        NORMAL 模式直接返回 False（进入命令由 _handle_mode_enter 处理）。
+        返回 True 表示本句已处理，调用方不再进入后续流程。
+        """
+        n = self._norm_control_text(text)
+
+        if self._voice_mode == VOICE_MODE_MUTED:
+            # 恢复说话（MUTED -> NORMAL）
+            if any(k in n for k in VOICE_UNMUTE_KEYWORDS):
+                if conf < self.min_avg_conf:
+                    self.get_logger().info(
+                        f"🎛️ [VoiceMode] 解除静音低置信度({conf:.2f})，丢弃：{text}"
+                    )
+                    return True
+                self._voice_mode = VOICE_MODE_NORMAL
+                self.get_logger().info(
+                    f"🔊 [VoiceMode] MUTED -> NORMAL（恢复说话）：'{text}'"
+                )
+                # 放行原句：Agent 侧同步解除 L3 muted 并播报确认
+                self._publish(text)
+                return True
+
+            # 系统休眠（MUTED -> SLEEPING）
+            if any(k in n for k in VOICE_SLEEP_ENTER_KEYWORDS):
+                if conf < self.min_avg_conf:
+                    self.get_logger().info(
+                        f"🎛️ [VoiceMode] 系统休眠低置信度({conf:.2f})，丢弃：{text}"
+                    )
+                    return True
+                self._voice_mode = VOICE_MODE_SLEEPING
+                self.get_logger().info(
+                    f"🌙 [VoiceMode] MUTED -> SLEEPING（系统休眠）：'{text}'"
+                )
+                self._publish(text)
+                return True
+
+            return False
+
+        if self._voice_mode == VOICE_MODE_SLEEPING:
+            # 唤醒（SLEEPING -> NORMAL）
+            if any(k in n for k in VOICE_WAKE_KEYWORDS):
+                if conf < self.min_avg_conf:
+                    self.get_logger().info(
+                        f"🎛️ [VoiceMode] 唤醒低置信度({conf:.2f})，丢弃：{text}"
+                    )
+                    return True
+                self._voice_mode = VOICE_MODE_NORMAL
+                self.get_logger().info(
+                    f"🌅 [VoiceMode] SLEEPING -> NORMAL（唤醒）：'{text}'"
+                )
+                self._publish(text)
+                return True
+
+            return False
+
+        return False
+
+    def _handle_mode_enter(self, text: str, conf: float) -> bool:
+        """检测顺序第 2 位（NORMAL 模式）：静音/休眠进入命令。
+
+        放行原句（Agent 侧同步进入 L3 muted / system sleep），
+        同时本地切换 Voice Mode，从源头拦住后续普通语音。
+        必须放在自语抑制之后，防止 Rebecca 自己的播报内容触发静音。
+        """
+        if conf < self.min_avg_conf:
+            return False
+
+        n = self._norm_control_text(text)
+        if any(k in n for k in VOICE_MUTE_ENTER_KEYWORDS):
+            self._voice_mode = VOICE_MODE_MUTED
+            self.get_logger().info(
+                f"🔇 [VoiceMode] NORMAL -> MUTED（静音）：'{text}'"
+            )
+            self._publish(text)
+            return True
+
+        if any(k in n for k in VOICE_SLEEP_ENTER_KEYWORDS):
+            self._voice_mode = VOICE_MODE_SLEEPING
+            self.get_logger().info(
+                f"🌙 [VoiceMode] NORMAL -> SLEEPING（系统休眠）：'{text}'"
+            )
+            self._publish(text)
+            return True
+
+        return False
+
     # ---------------- 主循环 ----------------
     def _main_loop(self):
         frame_ms = self.frame_ms
@@ -591,8 +781,29 @@ class SpeechDialogFunASR(Node):
             self.get_logger().debug("空识别结果，丢弃")
             return
 
+        # ============================================================
+        # Voice Mode 状态机（Patch 1）——统一入口，先于一切分支
+        #
+        # 检测顺序（所有模式一致）：
+        #   1. robot stop（最高优先级，任何模式都必须传递给机器人）
+        #   2. wake / sleep / mute 模式控制
+        #   3. 导航确认（原有逻辑，仅 NORMAL）
+        #   4. 普通语音（原有逻辑，仅 NORMAL）
+        # ============================================================
+        if self._handle_robot_stop(text):
+            return
+
         # —— 打断监听模式：只识别“打断词”，命中即发出中断信号，并**不**转发给 Agent ——
         if self._interrupt_listen_only:
+            # 静音/休眠模式下，TTS 播放期间同样只放行模式控制命令
+            if self._voice_mode != VOICE_MODE_NORMAL:
+                if self._handle_mode_control(text, conf):
+                    return
+                self.get_logger().info(
+                    f"🎧 [VoiceMode:{self._voice_mode}] (TTS中) 丢弃语音：'{text}'"
+                )
+                return
+
             # 统一去除标点 / 空白，用于严格控制词匹配
             control_reply = re.sub(
                 r'[，。！!？?、；;：:\s]+',
@@ -739,6 +950,26 @@ class SpeechDialogFunASR(Node):
             if (a in b) or (b in a) or (sim >= 0.55):
                 self.get_logger().info(f"🛡️ 自语过滤：{text} (sim={sim:.2f})")
                 return
+
+        # ============================================================
+        # Voice Mode 状态机（Patch 1）
+        #
+        # 静音/休眠：普通语音在源头丢弃，不发布 /speech_query，
+        # 不进入 llm_voice_agent（只放行 _handle_mode_control 的控制命令）
+        # ============================================================
+        if self._voice_mode != VOICE_MODE_NORMAL:
+            if self._handle_mode_control(text, conf):
+                return
+            mode_tag = '🔇' if self._voice_mode == VOICE_MODE_MUTED else '💤'
+            self.get_logger().info(
+                f"{mode_tag} [VoiceMode:{self._voice_mode}] 丢弃语音：'{text}'"
+            )
+            return
+
+        # NORMAL 模式：静音/休眠进入命令
+        # （检测顺序第 2 位，放在自语抑制之后、确认白名单之前）
+        if self._handle_mode_enter(text, conf):
+            return
 
         # ============================================================
         # 控制回复白名单：必须优先于“口头语清理 / 短句过滤”
