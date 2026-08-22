@@ -275,7 +275,7 @@ NAV_STOP_PHRASES = [
     '别走了', '别走啦', '别走', '不要走了', '不要走',
     '停下移动', '停下导航',
 ]
-_NAV_VERB_RE = re.compile(r'^(导航到|移动到|到达|前往|去|到)(.+)$')
+_NAV_VERB_RE = re.compile(r'^(导航到|移动到|到达|前往|回到|返回|去|到|回)(.+)$')
 _NAV_TAIL_NOISE = re.compile(r'[吧呢啊呀。！!？?，,]+$')
 _NAV_QUERY_SUFFIX_RE = re.compile(
     r'(?:可以吗|行吗|好吗|好不好|'
@@ -293,21 +293,29 @@ _NAV_PLACE_FILLER = {
 
 # 导航确认必须整句匹配，不能再用 “好 in 不好” 这样的包含判断。
 _NAV_CONFIRM_REPLIES = {
-    '确认', '确定', '执行', '好的', '好',
-    '行', 'ok', '可以', '是的', '没问题',
+    '确认', '确定', '执行',
+    '好的', '好', '行', 'ok',
+    '可以', '是的', '对的', '没错',
+    '是的就是', '对就是', '是的',
+    '没问题',
 }
 
-# 导航取消采用保守策略：出现明确否定时不启动机器人。
-_NAV_CANCEL_MARKERS = (
-    '取消',
-    '不去',
-    '不要',
-    '别去',
-    '先不要',
-    '算了',
-    '不用',
+# Patch 4A：导航取消改为整句精确匹配。
+# 此前 startswith('不'/'别') + marker substring 过宽，Rebecca
+# 自播报回声碎片（“或取消放弃”）会取消 pending 导航。
+_NAV_CANCEL_REPLIES = {
+    '取消', '不去', '不要', '别去', '先不要', '算了',
+    '不用', '不用了', '不去了', '别去了', '先不去', '不确认',
     '停止',
-    '没想好',
+}
+
+# task 模式取消：保持 Patch 4A 前的既有语义
+# （startswith 不/别 的安全侧策略 + 取消关键词 substring）。
+# 本 Patch 只硬化 navigation confirmation，不重新设计机械臂
+# task confirmation。
+_TASK_CANCEL_MARKERS = (
+    '取消', '不去', '不要', '别去', '先不要', '算了',
+    '不用', '停止', '没想好',
 )
 
 
@@ -322,7 +330,17 @@ def _norm_nav_reply(text):
 
 
 def is_nav_cancel_reply(text):
-    """确认阶段是否表达了取消或否定。"""
+    """导航确认阶段的取消意图：只接受整句精确匹配。"""
+    return _norm_nav_reply(text) in _NAV_CANCEL_REPLIES
+
+
+def is_task_cancel_reply(text):
+    """task 确认阶段的取消意图：保持 Patch 4A 前的既有语义。
+
+    startswith 不/别 的安全侧策略 + 取消关键词 substring，
+    与 navigation 的严格集合互相独立，避免 navigation
+    strictification 静默改变机械臂确认行为。
+    """
     reply = _norm_nav_reply(text)
     if not reply:
         return False
@@ -331,7 +349,7 @@ def is_nav_cancel_reply(text):
     if reply.startswith(('不', '别')):
         return True
 
-    return any(marker in reply for marker in _NAV_CANCEL_MARKERS)
+    return any(marker in reply for marker in _TASK_CANCEL_MARKERS)
 
 
 def is_nav_confirm_reply(text):
@@ -345,9 +363,71 @@ def is_stop_movement(text):
     return n in NAV_STOP_PHRASES
 
 
+# ============================================================
+# Patch 4A.1：导航地点候选净化（仅作用于 place 提取路径）
+#
+#   B1. 问句尾词（吗/呢/吧…）不并入共享 _NAV_TAIL_NOISE——
+#       共享尾噪声同时服务 is_stop_movement 等控制路径，
+#       加进去会改变现有控制语义边界。
+#   B2. 问句尾词只在 place 候选上剥离（餐厅吗 -> 餐厅）。
+#   B3. 候选含句内标点残留（TTS→NORMAL 跨界混音特征，
+#       如 “吗？可以”）或控制词污染时整句判无效，
+#       不做子串级猜测式修复。
+# ============================================================
+_NAV_PLACE_QUESTION_TAIL_RE = re.compile(r'[吗呢吧啊呀嘛]+$')
+_NAV_PLACE_INNER_PUNCT_RE = re.compile(r'[?？!！。,，;；:：]')
+_NAV_PLACE_CONTROL_TOKENS = (
+    '确认',
+    '取消',
+    '可以',
+    '执行',
+    '停止',
+)
+
+_NAV_PLACE_INVALID_ALONE = frozenset(
+    {'吗', '呢', '吧'}
+    | _NAV_CONFIRM_REPLIES
+    | _NAV_CANCEL_REPLIES
+)
+
+
+def normalize_navigation_place_candidate(place):
+    """Patch 4A.1：地点候选归一化（仅 place 提取路径使用）。
+
+    剥离问句尾词与既有尾噪声（餐厅吗 -> 餐厅，客厅呢 -> 客厅）；
+    不修改共享 _NAV_TAIL_NOISE 本身。
+    """
+    p = _NAV_TAIL_NOISE.sub('', (place or '').strip())
+    p = _NAV_PLACE_QUESTION_TAIL_RE.sub('', p).strip()
+    p = _NAV_TAIL_NOISE.sub('', p).strip()
+    return p
+
+
+def is_valid_navigation_place_candidate(place):
+    """Patch 4A.1：地点候选最低合法性判断。
+
+    拒绝：空候选 / 纯语气词或控制词 / 占位 filler /
+    句内标点残留（如 “吗？可以”）/ 控制词污染（如 “吗可以”）。
+    """
+    if not place:
+        return False
+    if place in _NAV_PLACE_INVALID_ALONE or place in _NAV_PLACE_FILLER:
+        return False
+    if _NAV_PLACE_INNER_PUNCT_RE.search(place):
+        return False
+    if any(tok in place for tok in _NAV_PLACE_CONTROL_TOKENS):
+        return False
+    return True
+
+
 def extract_navigation_place(text):
-    """识别命名地点导航，返回地点名；空地点或占位词返回 None。"""
-    n = _norm_nav_text(text)
+    """识别命名地点导航，返回地点名；空地点或占位词返回 None。
+
+    Patch 3：入口先做前缀归一化（请/帮我/麻烦/让Eric…），
+    支持“让Eric去餐厅”“麻烦Eric去客厅”等自然表达；
+    Rebecca 前缀不在剥离范围（角色边界见 _NAV_LEAD_AGENT_RE）。
+    """
+    n = _norm_nav_text(_strip_navigation_lead(text))
 
     # 避免“去年的天气”“到底怎么回事”被句首单字“去/到”误识别。
     if n.startswith(('去年', '到底')):
@@ -364,10 +444,10 @@ def extract_navigation_place(text):
     # 去客厅好吗   -> 客厅
     place = _NAV_QUERY_SUFFIX_RE.sub('', place).strip()
 
-    place = _NAV_TAIL_NOISE.sub('', place).strip()
-    place = re.sub(r'[。！！.]+$', '', place).strip()
-
-    if not place or place in _NAV_PLACE_FILLER:
+    # Patch 4A.1：候选级净化 + 合法性校验（B2/B3）。
+    # “去餐厅吗？” -> 餐厅；“去吗？可以。” -> None。
+    place = normalize_navigation_place_candidate(place)
+    if not is_valid_navigation_place_candidate(place):
         return None
 
     return place
@@ -382,11 +462,12 @@ def extract_navigation_place(text):
 
 _NAV_WITH_UNSUPPORTED_MANIP_RE = re.compile(
     r'(?:帮我|请|麻烦你)?'
-    r'(?:让(?:eric|Eric|小车|机器人))?'
+    r'(?:让(?:eric|Eric|艾瑞克|埃里克|小车|机器人))?'
     r'(?:去|到|前往|导航到|移动到)'
     r'(?P<place>[^，。！？,.!?]{1,16}?)'
     r'(?:帮我|给我)?'
-    r'(?:拿来|取来|拿回|取回|带回|抓取|捡起|拿|取|抓|捡)'
+    r'(?:拿来|取来|拿回|取回|带回|抓取|捡起|拿|取|抓|捡)',
+    re.IGNORECASE,
 )
 
 
@@ -421,10 +502,74 @@ def extract_navigation_with_unsupported_manip(text: str):
         place
     ).strip()
 
-    if not place or place in _NAV_PLACE_FILLER:
+    # Patch 4A.1：与 extract_navigation_place 同一套候选净化与校验
+    place = normalize_navigation_place_candidate(place)
+    if not is_valid_navigation_place_candidate(place):
         return None
 
     return place
+
+
+# ============================================================
+# Patch 3：chat / navigation MVP 能力表与前缀归一化
+#
+# 作用域：仅限本文件的语音 chat / navigation 复合任务路径。
+# 已有 task 模式（机械臂槽位流程）的整机能力不受此表影响。
+# ============================================================
+VOICE_CHAT_CAPABILITIES = {
+    'navigation': True,    # 确认后可下发 navigate_to_place（走 Parser / executor）
+    'manipulation': False, # 拿/取/抓/搬/递等物理操作不在该语音链的承诺范围
+}
+
+# 句首礼貌前缀：可连续出现（“请麻烦让Eric去餐厅”）
+_NAV_LEAD_POLITE_RE = re.compile(r'^(?:请|帮我|给我|麻烦一下|麻烦你|麻烦)+')
+
+# 句首实体执行者前缀：只有 Eric / 小车 / 机器人 是移动底盘执行主体。
+# ⚠️ 不含 Rebecca：Rebecca 是 PC 侧语音助手 / 任务调度者，不是实体导航
+# 执行主体。“让Rebecca去餐厅”不得被归一化成“去餐厅”而触发 Eric 导航。
+_NAV_LEAD_AGENT_RE = re.compile(
+    r'^(?:(?:你)?(?:可以|能不能|能否|可不可以)?让)?'
+    r'(?:eric|艾瑞克|埃里克|小车|机器人)',
+    re.IGNORECASE
+)
+
+
+def _strip_navigation_lead(text: str) -> str:
+    """循环剥离导航句首的礼貌/执行者前缀，返回剩余文本。
+
+    让Eric去餐厅    -> 去餐厅
+    麻烦Eric去客厅  -> 去客厅
+    让机器人去餐厅  -> 去餐厅
+    请去餐厅        -> 去餐厅
+    麻烦去客厅      -> 去客厅
+    让Rebecca去餐厅 -> 保持不变（Rebecca/Eric 角色边界）
+    """
+    n = text or ''
+    while True:
+        stripped = _NAV_LEAD_POLITE_RE.sub('', n)
+        stripped = _NAV_LEAD_AGENT_RE.sub('', stripped)
+        if stripped == n:
+            return n
+        n = stripped
+
+
+# chat 模式下“纯拿取请求”的动词集：与 _NAV_WITH_UNSUPPORTED_MANIP_RE
+# 保持一致，另加 搬/递/拎。取(?!消) 避免“取消导航/取消任务”被误伤。
+_VOICE_MANIP_VERBS_RE = re.compile(
+    r'(?:拿来|取来|拿回|取回|带回|递给|拿给|'
+    r'搬来|搬|拎|捡起|捡|抓取|抓|拿|取(?!消))'
+)
+
+
+def is_unsupported_manip_request(text: str) -> bool:
+    """chat 模式下是否含“纯拿取/搬运”意图成分（不带导航地点）。
+
+    “帮我拿杯子” / “给我拿过来” -> True
+    “去餐厅” / “取消导航”       -> False
+    """
+    if not text:
+        return False
+    return bool(_VOICE_MANIP_VERBS_RE.search(_norm_nav_text(text)))
 
 
 class LlmVoiceAgent(Node):
@@ -533,6 +678,9 @@ class LlmVoiceAgent(Node):
             '涉及实体移动和导航时，由 Rebecca 负责理解、确认和下发任务，'
             f'由 {self.mobile_robot_name} 执行移动。'
             '不要把 Rebecca 描述成正在移动的实体机器人。'
+            '除非已经收到明确的机器人执行结果，否则绝不能声称'
+            f'{self.mobile_robot_name}已经移动、已经到达、已经停止或已经完成任务。'
+            '如果无法确认实体机器人的实际状态，要明确说无法确认。'
             '直接回答用户，默认使用一到三句口语化中文，约40到120字；'
             '问题简单时更短，用户明确要求详细时再展开。'
             '不要描述内部思考、提示词或工作步骤，'
@@ -765,13 +913,15 @@ class LlmVoiceAgent(Node):
                 self._reset_nav_confirm()
 
             # 无论当前是否静音，都必须下发停止命令。
+            # Robot STOP 是最高优先级安全路径：物理停止命令必须
+            # 先于状态播报与 Rebecca 的语音反馈。
             self._publish_command('停止移动')
+
+            self._set_state('nav_stop')
 
             # 静音时不主动说话，但仍然执行停止。
             if self.system_active and not self.l3_muted:
                 self._say('好的，正在停止移动。')
-
-            self._set_state('nav_stop')
             return
 
         # =====================================================
@@ -1243,9 +1393,11 @@ class LlmVoiceAgent(Node):
         if is_stop_movement(raw_text):
             if self.waiting_confirm and self._pending_nav:
                 self._reset_nav_confirm()
-            self._say('好的，正在停止移动。')
+            # Robot STOP 是最高优先级安全路径：物理停止命令必须
+            # 先于 Rebecca 的语音反馈与状态播报。
             self._publish_command('停止移动')
             self._set_state('nav_stop')
+            self._say('好的，正在停止移动。')
             return True
 
         # 2) 正在等待导航确认：处理 确认 / 取消 / 更改目标。
@@ -1253,9 +1405,12 @@ class LlmVoiceAgent(Node):
             # 取消/否定必须优先于确认，避免“不要确认”中的“确认”
             # 或“好，不去”中的“好”错误启动导航。
             if is_nav_cancel_reply(raw_text):
-                self._say('好的，已取消导航。')
+                # 先关闭 pending state，再播取消反馈：
+                # Rebecca 开始说“已取消导航”时，ASR 已不再看到
+                # nav_wait_confirm。
                 self._reset_nav_confirm()
                 self._set_state('nav_cancel')
+                self._say('好的，已取消导航。')
                 return True
 
             if is_nav_confirm_reply(raw_text):
@@ -1264,6 +1419,7 @@ class LlmVoiceAgent(Node):
 
                 # reset 之前先保存上下文
                 self._reset_nav_confirm()
+                self._set_state('nav_confirmed')
 
                 if place:
                     self._say(
@@ -1274,16 +1430,9 @@ class LlmVoiceAgent(Node):
                         f'好的，我让{self.mobile_robot_name}开始执行。'
                     )
 
-                # machine-facing command 完全保持原样
+                # machine-facing command 完全保持原样；
+                # 只有用户明确确认后才下发，且仅此一次。
                 self._publish_command(cmd_text)
-
-                self._set_state('nav_confirmed')
-                return True
-
-            if any(w in norm for w in CANCEL_WORDS):
-                self._say('好的，已取消导航。')
-                self._reset_nav_confirm()
-                self._set_state('nav_cancel')
                 return True
 
                     # =====================================================
@@ -1297,7 +1446,10 @@ class LlmVoiceAgent(Node):
                 raw_text
             )
 
-            if partial_place is not None:
+            if (
+                partial_place is not None
+                and not VOICE_CHAT_CAPABILITIES['manipulation']
+            ):
                 self.pending_cmd_text = f'导航到{partial_place}'
                 self.waiting_confirm = True
                 self._pending_nav = True
@@ -1309,9 +1461,9 @@ class LlmVoiceAgent(Node):
                 self._set_state('nav_wait_confirm')
 
                 self._say(
-                    f'我现在还不能帮你拿东西，'
+                    f'我目前还不能直接完成拿取，'
                     f'不过能先让{self.mobile_robot_name}去{partial_place}。'
-                    f'要我这样做吗？'
+                    f'要让它过去吗？'
                 )
 
                 self.get_logger().info(
@@ -1335,10 +1487,18 @@ class LlmVoiceAgent(Node):
                 self._set_state('nav_wait_confirm')
 
                 self._say(
-                    f'好的，改让{self.mobile_robot_name}去{place}，这样安排吗？'
+                    f'那改让{self.mobile_robot_name}去{place}，这样安排吗？'
                 )
                 return True
-            self._say('请说“确认”开始导航，或“取消”放弃。')
+            # Patch 4A：nav_wait_confirm 期间的追问不得包含确认/取消
+            # token，防止 Rebecca 自己的 TTS 回声被 ASR 识别成控制词。
+            if self._pending_nav_place:
+                self._say(
+                    f'我没听清。还要让{self.mobile_robot_name}'
+                    f'去{self._pending_nav_place}吗？'
+                )
+            else:
+                self._say('我没听清。还要继续这个导航安排吗？')
             return True
 
                 # =====================================================
@@ -1349,7 +1509,10 @@ class LlmVoiceAgent(Node):
             raw_text
         )
 
-        if partial_place is not None:
+        if (
+            partial_place is not None
+            and not VOICE_CHAT_CAPABILITIES['manipulation']
+        ):
             self.pending_cmd_text = f'导航到{partial_place}'
             self.waiting_confirm = True
             self._pending_nav = True
@@ -1359,9 +1522,9 @@ class LlmVoiceAgent(Node):
             self._set_state('nav_wait_confirm')
 
             self._say(
-                f'我现在还不能帮你拿东西，'
-                f'不过可以先让{self.mobile_robot_name}去{partial_place}。'
-                f'要我这样做吗？'
+                f'我目前还不能直接完成拿取，'
+                f'不过能先让{self.mobile_robot_name}去{partial_place}。'
+                f'要让它过去吗？'
             )
 
             self.get_logger().info(
@@ -1379,6 +1542,29 @@ class LlmVoiceAgent(Node):
         # =====================================================
         place = extract_navigation_place(raw_text)
         if place is None:
+            # =================================================
+            # 4a) 纯拿取请求（仅 chat mode）：
+            #     “帮我拿杯子”“帮我拿个东西过来”
+            #
+            # chat/navigation 链路只承诺 navigation，拿取不在
+            # VOICE_CHAT_CAPABILITIES 内。确定性回复能力边界，
+            # 阻止后续 LLM 自由发挥虚构“已执行拿取”。
+            # task mode 的机械臂链路不受此拦截影响。
+            # =================================================
+            if (
+                self.mode == 'chat'
+                and not VOICE_CHAT_CAPABILITIES['manipulation']
+                and is_unsupported_manip_request(raw_text)
+            ):
+                self._say('我现在还不能直接帮你完成拿取任务。')
+                self._set_state('chat_manip_unsupported')
+                self.get_logger().info(
+                    f"🧩 纯拿取请求 | "
+                    f"requested='{raw_text}' | "
+                    f"supported=none | "
+                    f"scope=VOICE_CHAT_CAPABILITIES(chat/navigation)"
+                )
+                return True
             return False
 
 
@@ -1396,7 +1582,7 @@ class LlmVoiceAgent(Node):
         self._set_state('nav_wait_confirm')
 
         self._say(
-            f'好的，要让{self.mobile_robot_name}去{place}吗？'
+            f'要让{self.mobile_robot_name}去{place}吗？'
         )
         return True
 
@@ -1584,7 +1770,7 @@ class LlmVoiceAgent(Node):
     def _handle_task(self, norm_text: str):
     # 确认阶段：取消优先，并且只接受完整的确认短语
         if self.waiting_confirm:
-            if is_nav_cancel_reply(norm_text):
+            if is_task_cancel_reply(norm_text):
                 self._say('好的，已取消，请继续描述任务。')
                 self._reset_dialog(keep_mode=True)
                 self._set_state('task_cancel')

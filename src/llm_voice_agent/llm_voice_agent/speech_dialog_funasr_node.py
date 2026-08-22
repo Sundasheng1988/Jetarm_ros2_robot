@@ -162,29 +162,255 @@ VOICE_STOP_PHRASES = frozenset([
     '停下移动', '停下导航',
 ])
 
-# 进入静音（NORMAL -> MUTED）：与 Agent L3_MUTE_KEYWORDS 对齐（子串匹配）
+VOICE_STOP_PREFIX_SAFE = frozenset({
+    '停止移动',
+    '停止导航',
+    '取消导航',
+    '取消移动',
+    '停下移动',
+    '停下导航',
+})
+
+# ============================================================
+# Voice Control Canonical Commands
+#
+# L2:
+#   瑞贝卡，系统休眠
+#   瑞贝卡，启动系统
+#
+# L3:
+#   瑞贝卡，静音
+#   瑞贝卡，取消静音
+#
+# 下面保留少量自然语言 alias，但 ASR / Agent 必须保持一致。
+# ============================================================
+
 VOICE_MUTE_ENTER_KEYWORDS = (
-    '别说话', '安静', '静音', '我在拍视频', '不要说话',
+    '静音',
+    '别说话',
+    '不要说话',
+    '安静',
+    '我在拍视频',
 )
 
-# 解除静音（MUTED -> NORMAL）：用户指定词 + Agent L3_UNMUTE_KEYWORDS
 VOICE_UNMUTE_KEYWORDS = (
-    '瑞贝卡可以说话了', '瑞贝卡恢复说话', '取消静音',
-    '可以说话了', '继续说话', '恢复对话', '你可以说话了',
+    '取消静音',
+    '瑞贝卡取消静音',
+    '可以说话了',
+    '瑞贝卡可以说话了',
+    '继续说话',
+    '恢复对话',
+    '你可以说话了',
 )
 
-# 系统休眠（NORMAL/MUTED -> SLEEPING）：用户指定词 + Agent SYSTEM_SLEEP_KEYWORDS
 VOICE_SLEEP_ENTER_KEYWORDS = (
-    '系统休眠', '瑞贝卡系统休眠',
-    '瑞贝卡请先休息吧', 'rebecca请先休息吧', 'rebecca系统休眠',
+    '瑞贝卡系统休眠',
+    'rebecca系统休眠',
+    '瑞贝卡请先休息吧',
+    'rebecca请先休息吧',
+    '瑞贝卡你先休息吧',
+    'rebecca你先休息吧',
 )
 
-# 唤醒（SLEEPING -> NORMAL）：用户指定词 + Agent SYSTEM_WAKE_KEYWORDS
 VOICE_WAKE_KEYWORDS = (
-    '瑞贝卡启动系统', 'rebecca启动系统', '启动语音系统',
-    '瑞贝卡唤醒系统', '瑞贝卡恢复系统',
-    'rebecca唤醒系统', 'rebecca恢复系统',
+    '瑞贝卡启动系统',
+    'rebecca启动系统',
+
+    '瑞贝卡系统启动',
+    'rebecca系统启动',
+
+    '瑞贝卡唤醒系统',
+    'rebecca唤醒系统',
+
+    '瑞贝卡系统唤醒',
+    'rebecca系统唤醒',
+
+    '瑞贝卡恢复系统',
+    'rebecca恢复系统',
+
+    '瑞贝卡系统恢复',
+    'rebecca系统恢复',
 )
+
+# ============================================================
+# Patch 4A：Self-Echo Control Hardening
+#
+# TTS 播放期间（interrupt-listen-only）的全部控制匹配都改为
+# “归一化 + 剥离唤醒前缀 + 整句精确匹配”，禁止 startswith /
+# endswith / substring，防止 Rebecca 自身 TTS 回声碎片
+# （“确认开始导航”“或取消放弃”“正在停止移动”）误触
+# 确认 / 取消 / 打断。
+# ============================================================
+
+# TTS-time 导航确认：仅强确认词。
+# FunASR 无真实 confidence 时默认 1.0，conf 门只能作辅助条件，
+# 安全边界由窄集合承担。弱确认（好/好的/行/ok/是的/没问题）
+# 只保留在 Agent 正常 listening 的 _NAV_CONFIRM_REPLIES，
+# 不开放给 TTS-time barge-in。
+VOICE_TTS_NAV_CONFIRM_REPLIES = frozenset({
+    '确认',
+    '我确认',
+    '确定',
+    '我确定',
+    '可以',
+    '执行',
+    '是的',
+    '对的',
+    '没错',
+})
+
+VOICE_TTS_NAV_CONFIRM_SUFFIX_REPLIES = frozenset({
+    '确认',
+    '确定',
+    '可以',
+    '执行',
+    '是的',
+    '对的',
+    '没错',
+})
+
+VOICE_TTS_QUESTION_TAILS = (
+    '吗',
+    '么',
+    '呢',
+    '吧',
+)
+
+# TTS-time 导航取消：整句精确匹配，命中后只把规范文本“取消”
+# 发给 Agent，不转发带噪声的原始 ASR 句子。
+VOICE_TTS_NAV_CANCEL_REPLIES = frozenset({
+    '取消', '不去', '不要', '别去', '先不要', '算了',
+    '不用', '不用了', '不去了', '别去了', '先不去', '不确认',
+})
+
+# 普通 TTS 打断（仅停播报，不进 Agent）：整句精确匹配，
+# 与 Robot STOP（VOICE_STOP_PHRASES）完全分离。
+# 必须排除 '停' / '停止' / '好了'，否则 Rebecca 播报
+# “正在停止移动”会自己打断自己。
+VOICE_TTS_STOP_PHRASES = frozenset({
+    '打断', '打住', '停一下', '别说了', '别播了', '别念了',
+    '别继续了', '够了', '先这样', '先这样吧', '暂停', '暂停一下',
+    '停止播放', '停止播报', '等一下', '等会', '等会儿',
+    '闭嘴', 'stop', 'pause',
+})
+
+VOICE_TTS_STOP_FORBIDDEN = frozenset({'停', '停止', '好了'})
+
+# Patch 4A.3：
+# 真实 barge-in 时，用户控制词可能与 Rebecca 尾音被 ASR 合并。
+# 仅对足够明确的 TTS-stop 短语开放“句首匹配”。
+#
+# 不包含：
+#   停 / 停止 / 好了
+# 也暂不把“等一下 / 等会 / 先这样”开放为 prefix，
+# 因为这些更容易出现在正常聊天内容中。
+VOICE_TTS_STOP_PREFIX_SAFE = frozenset({
+    '打断',
+    '打住',
+    '停一下',
+    '别说了',
+    '别播了',
+    '别念了',
+    '别继续了',
+    '够了',
+    '暂停一下',
+    '停止播放',
+    '停止播报',
+    '闭嘴',
+    'stop',
+    'pause',
+})
+
+
+def classify_tts_control_reply(norm_reply: str, agent_state: str):
+    """TTS-time navigation control classifier.
+
+    安全原则：
+    1. 只有 nav_wait_confirm 才允许确认/取消；
+    2. 干净回复继续 exact match；
+    3. 对“Rebecca 问句尾音 + 用户确认”只开放非常窄的 suffix 规则；
+    4. 不做任意 substring matching。
+    """
+    if agent_state != 'nav_wait_confirm':
+        return None
+
+    if not norm_reply:
+        return None
+
+    # clean exact confirmation
+    if norm_reply in VOICE_TTS_NAV_CONFIRM_REPLIES:
+        return 'confirm'
+
+    # clean exact cancellation
+    if norm_reply in VOICE_TTS_NAV_CANCEL_REPLIES:
+        return 'cancel'
+
+    # --------------------------------------------------------
+    # Acoustic boundary case:
+    #
+    # Rebecca: "要让 Eric 去餐厅吗？"
+    # User:    "是的"
+    #
+    # ASR may produce:
+    #   "要让eric去餐厅吗是的"
+    #
+    # Only accept when:
+    #   - final suffix is an explicit confirmation reply
+    #   - preceding text itself ends like a question
+    #
+    # Thus this is NOT arbitrary endswith confirmation.
+    # --------------------------------------------------------
+    for reply in sorted(
+        VOICE_TTS_NAV_CONFIRM_SUFFIX_REPLIES,
+        key=len,
+        reverse=True,
+    ):
+        if not norm_reply.endswith(reply):
+            continue
+
+        prefix = norm_reply[:-len(reply)]
+
+        if (
+            prefix
+            and prefix.endswith(VOICE_TTS_QUESTION_TAILS)
+        ):
+            return 'confirm'
+
+    return None
+
+
+def is_tts_stop_phrase(norm_reply: str, stop_phrases) -> bool:
+    """TTS 播放期间的安全打断判断。
+
+    1. 所有配置短语继续支持整句 exact match；
+    2. 仅对明确、安全的强打断词支持句首匹配，
+       解决用户 barge-in 与 Rebecca 尾音被 ASR 合并的问题；
+    3. 不做任意 substring 匹配，避免重新引入 self-echo 误触发。
+    """
+    if not norm_reply:
+        return False
+
+    if norm_reply in stop_phrases:
+        return True
+
+    return any(
+        phrase in stop_phrases
+        and (
+            norm_reply.startswith(phrase)
+            or norm_reply.endswith(phrase)
+        )
+        for phrase in VOICE_TTS_STOP_PREFIX_SAFE
+    )
+
+
+def merged_utt_restricted(current_restricted: bool, captured_restricted: bool) -> bool:
+    """Patch 4A.1：utterance 级 restricted 锁存。
+
+    utterance 内任意一帧在“仅打断监听”期间采集，整个 utterance 即按
+    restricted 处理；之后全局 _interrupt_listen_only 变回 False（TTS
+    播完）也不能把它切回正常阈值 / NORMAL 发布分支。
+    """
+    return bool(current_restricted or captured_restricted)
 
 
 class SpeechDialogFunASR(Node):
@@ -324,39 +550,38 @@ class SpeechDialogFunASR(Node):
 
         # ===== 语音打断（新增）=====
         self.enable_voice_interrupt = bool(self.declare_parameter("enable_voice_interrupt", True).get_parameter_value().bool_value)
+        # Patch 4A：默认集合与 VOICE_TTS_STOP_PHRASES 对齐，
+        # 不再包含 '停' / '停止' / '好了' 等会误伤 Rebecca 自身
+        # 播报（“正在停止移动”）的单字/短词。
         interrupt_words_str = self.declare_parameter(
             "interrupt_words",
-            "打断,停,停止,别说了,好了,下一条,跳过,够了,先这样,暂停"
+            "打断,打住,停一下,别说了,别播了,别念了,别继续了,"
+            "够了,先这样,先这样吧,暂停,暂停一下,停止播放,停止播报,"
+            "等一下,等会,等会儿,闭嘴,stop,pause"
         ).get_parameter_value().string_value
         self.interrupt_words = [w.strip() for w in interrupt_words_str.split(",") if w.strip()]
         self.interrupt_topic = self.declare_parameter("interrupt_topic", "/tts/interrupt").get_parameter_value().string_value
         self.pub_interrupt = self.create_publisher(Bool, self.interrupt_topic, 10)
-        
-        # ---11/8 增加，打断关键词拓展
-        extra_interrupt_syns = [
-            "打住","停一下","打断一下","别播了","别念了","别继续了",
-            "够了","先这样吧","暂停一下","停停停","停止播放","先这样",
-            # ⬇️ 新增
-            "等一下","等会儿","等会","先别说","住手","别说话",
-            "停","停停","闭嘴","stop","pause","shut up"
-        ]
-        for w in extra_interrupt_syns:
-            if w not in self.interrupt_words:
-                self.interrupt_words.append(w)
 
-        # —— 允许“唤醒词 + 打断词”组合命中（中间容忍0~4字）——
-              # 先构建小写词表，便于后续统一以小写匹配
-        self._interrupt_words_lc = [w.lower() for w in self.interrupt_words]
+        # Patch 4A：普通 TTS 打断改为“整句精确匹配”集合。
+        # 1) “瑞贝卡，别说了”通过先 strip wake prefix 再 exact
+        #    match 实现，不再使用宽泛的 wakeword+0~4字 combo regex。
+        # 2) 禁止 '停' / '停止' / '好了' 进入有效集合：即使参数
+        #    重新带入，也在启动时过滤并打印 warning，不静默接受。
         self._wake_words_lc = [w.lower() for w in self.wake_words]
 
-        wake_re = "|".join(map(re.escape, self.wake_words))
-        intr_re = "|".join(map(re.escape, self.interrupt_words))
-        # ✅ 忽略大小写匹配组合（唤醒词 ... 0~4 任意字符 ... 打断词）
-        self._interrupt_combo_re = re.compile(
-            rf"(?:{wake_re}).{{0,4}}(?:{intr_re})",
-            re.IGNORECASE
-        )
-        # ---11/8 增强--- end
+        self._tts_stop_phrases = set()
+        for w in self.interrupt_words:
+            n = self._norm_control_text(w)
+            if not n:
+                continue
+            if n in VOICE_TTS_STOP_FORBIDDEN:
+                self.get_logger().warning(
+                    f"⚠️ interrupt_words 含禁止短语 '{w}'"
+                    f"（会误伤自播报回声），已过滤"
+                )
+                continue
+            self._tts_stop_phrases.add(n)
 
         # ===== 休眠提醒（补回）=====
         self.sleep_notice = bool(self.declare_parameter("sleep_notice", True).get_parameter_value().bool_value)
@@ -412,6 +637,8 @@ class SpeechDialogFunASR(Node):
 
         # 仅打断监听模式开关（在主循环里动态决定）
         self._interrupt_listen_only = False
+        # Patch 4A.1：utterance 级 restricted 锁存（随语音段累积，随段复位）
+        self._utt_restricted = False
 
         # ===== 线程 =====
         self._stop = threading.Event()
@@ -441,14 +668,18 @@ class SpeechDialogFunASR(Node):
             b = indata.tobytes() if hasattr(indata, "tobytes") else bytes(indata)
             if len(b) != self.bytes_per_chunk:
                 self.get_logger().debug(f"chunk bytes={len(b)} != {self.bytes_per_chunk}")
-            self.q.put_nowait(b)
+            # Patch 4A.1：帧入队时记录采集时刻是否处于“仅打断监听”，
+            # 主循环据此做 utterance 级锁存，防止 TTS→NORMAL 边界
+            # 跨界混音在 TTS 结束后被当成正常语音处理。
+            captured_restricted = bool(self._interrupt_listen_only)
+            self.q.put_nowait((b, captured_restricted))
         except queue.Full:
             try:
                 _ = self.q.get_nowait()
             except queue.Empty:
                 pass
             try:
-                self.q.put_nowait(b)
+                self.q.put_nowait((b, captured_restricted))
             except Exception:
                 pass
 
@@ -496,9 +727,41 @@ class SpeechDialogFunASR(Node):
         #     self.active = True
         #     self.active_until = max(self.active_until, self.mute_until + self.followup_window_s)
 
+    def _apply_vad_mode_for_context(self):
+        """根据当前语音上下文选择 VAD 灵敏度。
+
+        - TTS 播放期间：mode 0，保证 barge-in / STOP 能被抓到
+        - nav_wait_confirm：mode 0，保证“是的 / 可以 / 取消”等短回复
+        在 TTS 结束后仍能被可靠检测
+        - 其它正常场景：恢复用户配置的 vad_aggressiveness
+        """
+        fast_listen = (
+            self._tts_speaking
+            or self._voice_agent_state == 'nav_wait_confirm'
+        )
+
+        mode = 0 if fast_listen else self.vad_aggressiveness
+
+        try:
+            self.vad.set_mode(mode)
+        except Exception:
+            pass
+
     def _on_voice_agent_state(self, msg: String):
         """只读保存 Agent 当前状态，用于控制类短语的安全门控。"""
+        old_state = self._voice_agent_state
         self._voice_agent_state = (msg.data or '').strip()
+
+        # Patch 4B.1:
+        # nav_wait_confirm 本身进入短控制语音监听模式。
+        if self._voice_agent_state != old_state:
+            self._apply_vad_mode_for_context()
+
+            self.get_logger().debug(
+                f"🎚️ Agent state: {old_state!r} -> "
+                f"{self._voice_agent_state!r}; "
+                f"VAD fast={self._voice_agent_state == 'nav_wait_confirm'}"
+            )
 
     def _on_tts_speaking(self, msg: Bool):
         """TTS 正在说话门控：True 时立即清空端点缓冲；False 延时释放。"""
@@ -513,24 +776,31 @@ class SpeechDialogFunASR(Node):
             # 进入播报：切到“仅打断监听”模式
             self._interrupt_listen_only = self.enable_voice_interrupt
             self._reset_vad_buffers_if_any()
-            # ✅ 进入播报：VAD 调宽，单字也能抓到
-            try:
-                self.vad.set_mode(0)  # 0最宽松，3最激进
-            except Exception:
-                pass
-            # 叠加一个很短的静音窗，给播放器尾音一点余量
-            self.mute_until = max(self.mute_until, now + self.tts_gate_release_ms / 1000.0)
-            self.get_logger().debug("🔒 TTS 正在说话：ASR 暂停（仅保留打断监听）")
+
+            # TTS / nav confirmation 共用上下文 VAD 策略
+            self._apply_vad_mode_for_context()
+
+            self.mute_until = max(
+                self.mute_until,
+                now + self.tts_gate_release_ms / 1000.0
+            )
+            self.get_logger().debug(
+                "🔒 TTS 正在说话：ASR 暂停（仅保留打断监听）"
+            )
         else:
-            # 退出播报：恢复正常
             self._interrupt_listen_only = False
             self._tts_last_off_ts = now
-            # ✅ 退出播报：还原成用户配置
-            try:
-                self.vad.set_mode(self.vad_aggressiveness)
-            except Exception:
-                pass
-            self.get_logger().debug("🔓 TTS 结束说话：ASR 即将恢复")
+
+            # 关键：
+            # 如果仍处于 nav_wait_confirm，不恢复 aggressive VAD，
+            # 继续保持短控制词敏感监听。
+            self._apply_vad_mode_for_context()
+
+            self.get_logger().debug(
+                "🔓 TTS 结束说话：ASR 恢复；"
+                f"nav_wait_confirm="
+                f"{self._voice_agent_state == 'nav_wait_confirm'}"
+            )
 
     def _reset_vad_buffers_if_any(self):
         """安全清空当前语音段与端点累计；不打印噪声性日志。"""
@@ -538,6 +808,8 @@ class SpeechDialogFunASR(Node):
         self.ms_in_cur_utt = 0
         self.ms_sil = 0
         self.speeching = False
+        # Patch 4A.1：语音段清空时同步复位 restricted 锁存
+        self._utt_restricted = False
 
     # ---------------- Voice Mode 状态机（Patch 1） ----------------
     @staticmethod
@@ -565,7 +837,14 @@ class SpeechDialogFunASR(Node):
         """
         n = self._strip_wake_prefix(self._norm_control_text(text))
         n = re.sub(r'[吧呢啊呀]+$', '', n)
-        if n not in VOICE_STOP_PHRASES:
+        exact_stop = n in VOICE_STOP_PHRASES
+
+        prefix_stop = any(
+            n.startswith(phrase)
+            for phrase in VOICE_STOP_PREFIX_SAFE
+        )
+
+        if not (exact_stop or prefix_stop):
             return False
 
         self.get_logger().info(
@@ -672,7 +951,7 @@ class SpeechDialogFunASR(Node):
         frame_ms = self.frame_ms
         while not self._stop.is_set():
             try:
-                chunk = self.q.get(timeout=0.1)
+                chunk, captured_restricted = self.q.get(timeout=0.1)
             except queue.Empty:
                 # 空闲期也要检查是否需要从激活态降到休眠并播报提示
                 now = time.time()
@@ -690,13 +969,35 @@ class SpeechDialogFunASR(Node):
 
             now = time.time()
 
-            # 如果不是“仅打断监听”模式，才应用静音窗口丢帧
-            if not self._interrupt_listen_only:
-                # 🔒 门控：TTS 说话期间直接丢帧（除非启用仅打断监听）
+            # Patch 4A.1：
+            # frame 的处理身份必须由“采集时状态”决定，而不是由当前
+            # _interrupt_listen_only 决定。
+            #
+            # 如果当前已经处于一个 restricted utterance 中，那么即使
+            # TTS 此刻已经结束，后续 frame 仍属于同一个 restricted utterance，
+            # 不能重新经过 normal mute gate，否则会截断跨边界的 STOP / confirm。
+            frame_restricted = bool(
+                captured_restricted
+                or (self.speeching and self._utt_restricted)
+            )
+
+            nav_control_fast = (
+                self._voice_agent_state == 'nav_wait_confirm'
+            )
+
+            if not frame_restricted:
+                # TTS 真正在播放时，仍保持硬门控。
                 if self.respect_tts_gate and self._tts_speaking:
                     continue
-                # 🔇 动态静音：在估计的播报期内也丢帧（双保险）
-                if now < self.mute_until:
+
+                # Patch 4B.1:
+                # nav_wait_confirm 时不能继续受“估算动态静音窗”影响。
+                #
+                # 否则会出现：
+                #   TTS 已经实际播完
+                #   但 mute_until 还剩 0.x~1.x 秒
+                #   用户自然回答“是的”被直接丢帧。
+                if now < self.mute_until and not nav_control_fast:
                     continue
 
             # 唤醒/激活窗口管理（仅在正常模式下影响发布；打断模式不影响）
@@ -727,6 +1028,13 @@ class SpeechDialogFunASR(Node):
                     self.ms_in_cur_utt = 0
                     self.ms_sil = 0
                     self.cur_pcm = io.BytesIO()
+                    # Patch 4A.1：起始帧决定 restricted 初值
+                    self._utt_restricted = captured_restricted
+                else:
+                    # Patch 4A.1：任一 restricted 帧即把整个 utterance 锁存
+                    self._utt_restricted = merged_utt_restricted(
+                        self._utt_restricted, captured_restricted
+                    )
                 self.cur_pcm.write(chunk)
                 self.ms_in_cur_utt += frame_ms
 
@@ -735,9 +1043,15 @@ class SpeechDialogFunASR(Node):
                 #     self.active_until = now + self.active_extend_s
 
                 # 打断模式给完整口令留足时间；检测到静音仍会提前 endpoint。
+                # Patch 4A.1：端点参数跟随 utterance 锁存值，不跟随实时
+                # _interrupt_listen_only（TTS→NORMAL 边界后不得切回正常阈值）。
+                nav_control_fast = (
+                    self._voice_agent_state == 'nav_wait_confirm'
+                )
+
                 max_utt = (
                     self.interrupt_max_utt_ms
-                    if self._interrupt_listen_only
+                    if (self._utt_restricted or nav_control_fast)
                     else self.max_utt_ms
                 )
                 if self.ms_in_cur_utt >= max_utt:
@@ -746,10 +1060,15 @@ class SpeechDialogFunASR(Node):
                 if self.speeching:
                     self.ms_sil += frame_ms
                     # 端点阈值（打断模式更敏感，可在最大时长前完成）
+                    # Patch 4A.1：同样跟随 utterance 锁存值
+                    nav_control_fast = (
+                    self._voice_agent_state == 'nav_wait_confirm'
+                    )
+
                     needed = (
-                        self.interrupt_max_sil_ms
-                        if self._interrupt_listen_only
-                        else self.max_sil_ms
+                    self.interrupt_max_sil_ms
+                    if (self._utt_restricted or nav_control_fast)
+                    else self.max_sil_ms
                     )
                     if self.ms_sil >= needed:
                         self._finalize_utterance(reason="endpoint")
@@ -761,12 +1080,34 @@ class SpeechDialogFunASR(Node):
         self.ms_in_cur_utt = 0
         self.ms_sil = 0
         self.speeching = False
+        # Patch 4A.1：先保存 utterance 级 restricted 锁存再复位；
+        # 下面的 min_utt 与分支选择都用保存值，不用实时 _interrupt_listen_only
+        # （即使 TTS 已播完、全局开关回到 False，跨界 utterance 仍按 restricted 处理）。
+        utt_restricted = self._utt_restricted
+        self._utt_restricted = False
 
-        # 最短时长（打断模式也需要一点点）
-        # 11/8 更改 min_utt = 240 if self._interrupt_listen_only else self.min_utt_ms
-        min_utt = self.interrupt_min_utt_ms if self._interrupt_listen_only else self.min_utt_ms #11/8 新增
+        # Patch 4B.1:
+        # nav_wait_confirm 是短控制回复窗口。
+        # “是的 / 可以 / 确认 / 取消”等自然回复通常很短，
+        # 不应继续受到 NORMAL 模式 min_utt_ms 的限制。
+        nav_control_fast = (
+            self._voice_agent_state == 'nav_wait_confirm'
+        )
+
+        min_utt = (
+            self.interrupt_min_utt_ms
+            if (utt_restricted or nav_control_fast)
+            else self.min_utt_ms
+        )
+
         if utt_ms < min_utt:
-            self.get_logger().debug(f"丢弃短语音 {utt_ms}ms ({reason})")
+            self.get_logger().debug(
+                f"🪶 丢弃短语音 {utt_ms}ms ({reason}) | "
+                f"min={min_utt}ms | "
+                f"restricted={utt_restricted} | "
+                f"nav_fast={nav_control_fast} | "
+                f"agent_state={self._voice_agent_state}"
+            )
             return
 
         # 识别
@@ -793,8 +1134,10 @@ class SpeechDialogFunASR(Node):
         if self._handle_robot_stop(text):
             return
 
-        # —— 打断监听模式：只识别“打断词”，命中即发出中断信号，并**不**转发给 Agent ——
-        if self._interrupt_listen_only:
+        # —— 打断监听模式：只识别控制短语，命中即处理，**不**转发普通语音 ——
+        # Patch 4A.1：分支选择用 utterance 锁存值（utt_restricted），
+        # 跨 TTS→NORMAL 边界的混音 utterance 不得落入 NORMAL 发布路径。
+        if utt_restricted:
             # 静音/休眠模式下，TTS 播放期间同样只放行模式控制命令
             if self._voice_mode != VOICE_MODE_NORMAL:
                 if self._handle_mode_control(text, conf):
@@ -804,116 +1147,60 @@ class SpeechDialogFunASR(Node):
                 )
                 return
 
-            # 统一去除标点 / 空白，用于严格控制词匹配
-            control_reply = re.sub(
-                r'[，。！!？?、；;：:\s]+',
-                '',
-                text
-            ).lower()
+            # Patch 4A：统一“归一化 + 剥离唤醒前缀 + 整句精确匹配”。
+            # 禁止 startswith / endswith / substring，防止 Rebecca 的
+            # TTS 回声碎片（“确认开始导航”“或取消放弃”“正在停止移动”）
+            # 误触确认 / 取消 / 打断。
+            reply = self._strip_wake_prefix(self._norm_control_text(text))
 
             # ---------------------------------------------------------
-            # 导航确认安全直通
+            # 1) TTS-time 导航确认 / 取消直通
             #
-            # 必须同时满足：
-            #   1. Agent 正处于 nav_wait_confirm
-            #   2. ASR 结果整句严格等于允许词
-            #   3. 置信度达到控制阈值
-            #
-            # 不允许包含式匹配，避免：
-            #   “是否确认” / “请说确认” / “确认开始导航”
-            # 被当成用户确认。
+            # 仅当 Agent 处于 nav_wait_confirm，且整句等于强确认 /
+            # 取消集合中的词。conf 只作辅助条件（FunASR 无真实置信度
+            # 时默认 1.0，安全边界由窄集合承担）。
+            # 命中后发布规范文本（确认/取消），不转发原始噪声句。
             # ---------------------------------------------------------
-            NAV_CONFIRM_TOKENS = (
-                '确认',
-                '我确认',
-                '确定',
-                '我确定',
-                '可以',
+            tts_ctrl = (
+                classify_tts_control_reply(reply, self._voice_agent_state)
+                if conf >= self.min_avg_conf
+                else None
             )
-
-            NAV_CONFIRM_BLOCKERS = (
-                '取消',
-                '不去',
-                '不要',
-                '别去',
-                '算了',
-                '不用',
-                '停止',
-                '不确认',
-                '不确定',
-            )
-
-            # TTS 与真人讲话可能被 ASR 拼成一句，例如：
-            #   “要让Eric去餐厅吗确认”
-            # 所以 nav_wait_confirm 下允许确认词位于整句开头或结尾。
-            #
-            # 安全前提：
-            #   1. 必须处于 nav_wait_confirm
-            #   2. Rebecca 的导航询问本身不得包含“确认/确定”
-            #   3. 有任何明确否定词则禁止确认
-            has_confirm_token = (
-                any(control_reply.startswith(w) for w in NAV_CONFIRM_TOKENS)
-                or any(control_reply.endswith(w) for w in NAV_CONFIRM_TOKENS)
-            )
-
-            has_confirm_blocker = any(
-                w in control_reply
-                for w in NAV_CONFIRM_BLOCKERS
-            )
-
-            nav_confirm_hit = (
-                self._voice_agent_state == 'nav_wait_confirm'
-                and has_confirm_token
-                and not has_confirm_blocker
-                and conf >= self.min_avg_conf
-            )
-
-            if nav_confirm_hit:
+            if tts_ctrl is not None:
+                canonical = '确认' if tts_ctrl == 'confirm' else '取消'
                 self.get_logger().info(
-                    f"✅ 导航确认直通 | "
+                    f"✅ TTS-time 导航{tts_ctrl}直通 | "
                     f"state={self._voice_agent_state} | "
-                    f"text='{text}'"
+                    f"text='{text}' -> '{canonical}'"
                 )
 
                 # 先停止 Rebecca 当前播报
                 self.pub_interrupt.publish(Bool(data=True))
 
-                # 再把真人确认送给 Agent
-                self._publish(text)
+                # 再把规范控制文本送给 Agent（不带 ASR 噪声）
+                self._publish(canonical)
 
                 # 避免刚打断的 TTS 尾音再次形成端点
                 self.mute_until = time.time() + 0.3
                 return
 
             # ---------------------------------------------------------
-            # 原有普通语音打断逻辑
+            # 2) 普通 TTS 打断：整句精确匹配独立集合，仅停播报。
+            #    “瑞贝卡，别说了”已在 reply 归一化时剥离唤醒前缀。
             # ---------------------------------------------------------
-            norm = (
-                text.replace("，", ",").replace("。", ".")
-                    .replace("！", "!").replace("？", "?")
-                    .replace(" ", "")
-            ).lower()
-
-            hit_interrupt = (
-                any(w in norm for w in self._interrupt_words_lc)
-                or bool(self._interrupt_combo_re.search(text))
-            )
-
-            self.get_logger().info(
-                f"🎧(interrupt) -> '{text}' "
-                f"(conf~{conf:.2f}) "
-                f"state={self._voice_agent_state} "
-                f"interrupt={hit_interrupt} "
-                f"nav_confirm={nav_confirm_hit}"
-            )
-
-            if hit_interrupt:
+            if is_tts_stop_phrase(reply, self._tts_stop_phrases):
                 self.pub_interrupt.publish(Bool(data=True))
                 self.mute_until = time.time() + 2.0
                 self.get_logger().info(
-                    "🛑 已发送语音打断信号到 /tts/interrupt"
+                    f"🛑 TTS 打断（exact）'{text}' -> 已发送 /tts/interrupt"
                 )
+                return
 
+            # 其余 TTS 期间语音一律丢弃（回声保护）
+            self.get_logger().info(
+                f"🎧(interrupt-only) 丢弃非控制语音：'{text}' "
+                f"(conf~{conf:.2f}) state={self._voice_agent_state}"
+            )
             return
 
         # —— 正常模式（以下逻辑与之前相同 + 唤醒直通）——
@@ -1001,6 +1288,8 @@ class SpeechDialogFunASR(Node):
             'ok',
             '可以',
             '是的',
+            '对的',
+            '没错',
             '没问题',
 
             # 明确取消 / 否定
