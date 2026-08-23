@@ -824,39 +824,147 @@ class SpeechDialogFunASR(Node):
                 return n[len(w):]
         return n
 
-    def _handle_robot_stop(self, text: str) -> bool:
-        """检测顺序第 1 位：Robot Stop，任何 Voice Mode 下都必须放行。
+    def _is_recent_tts_echo(self, text: str) -> bool:
+        """判断 restricted Robot STOP prefix 是否很可能来自 Rebecca TTS 回声。
 
-        修复问题：TTS 期间识别到“停止移动”只打断了 Rebecca 播报，
-        没有可靠传递给机器人。这里统一做两件事：
-          1. 发布 /speech_query，内容固定为“停止移动”
-          2. 发布 /tts/interrupt
+        这里只会在：
+            allow_prefix=True
+            -> utt_restricted=True
+        的 Robot STOP prefix 分支中调用。
 
-        整句（去唤醒前缀/语气尾缀后）精确匹配才命中；
-        停止属于安全方向指令，不做置信度门控（宁可偶发不漏停）。
+        因此 utterance 级 restricted 锁存本身已经证明：
+        当前语音与 TTS 播放发生了声学重叠，不再额外依赖
+        self_speech_window_s 的墙钟时间窗口。
+
+        exact Robot STOP 不经过本判断，始终保持最高优先级。
         """
-        n = self._strip_wake_prefix(self._norm_control_text(text))
-        n = re.sub(r'[吧呢啊呀]+$', '', n)
-        exact_stop = n in VOICE_STOP_PHRASES
-
-        prefix_stop = any(
-            n.startswith(phrase)
-            for phrase in VOICE_STOP_PREFIX_SAFE
-        )
-
-        if not (exact_stop or prefix_stop):
+        if not self.last_tts_text:
             return False
 
-        self.get_logger().info(
-            f"🛑 [VoiceMode:{self._voice_mode}] Robot STOP 命中：'{text}'"
+        a = self._norm_control_text(text)
+        b = self._norm_control_text(self.last_tts_text)
+
+        if not a or not b:
+            return False
+
+        sim = difflib.SequenceMatcher(
+            None,
+            a,
+            b,
+        ).ratio()
+
+        return (
+            a in b
+            or b in a
+            or sim >= 0.55
         )
-        # 1. 固定内容下发停止（Agent / 导航链路按既有关键词处理）
+
+    def _handle_robot_stop(
+        self,
+        text: str,
+        *,
+        allow_prefix: bool = False,
+    ) -> bool:
+        """检测顺序第 1 位：Robot Stop，任何 Voice Mode 下都必须放行。
+
+        NORMAL listening:
+            只接受规范 Robot STOP 整句，避免：
+            “停止移动是什么意思”
+            “停止导航怎么用”
+            等普通讨论句误触机器人停止。
+
+        TTS / boundary restricted utterance:
+            允许有限 prefix-safe 匹配，以容忍：
+            “用户 STOP + Rebecca TTS 尾音”
+            被 ASR 合并的真实声学情况。
+
+        Safety ordering:
+            1. exact STOP 永远最高优先级；
+            2. prefix STOP 若疑似 Rebecca 最近 TTS 回声则禁止；
+            3. 非回声 prefix 才允许作为 barge-in Robot STOP。
+        """
+        n = self._strip_wake_prefix(
+            self._norm_control_text(text)
+        )
+        n = re.sub(r'[吧呢啊呀]+$', '', n)
+
+        # -----------------------------------------------------
+        # 1) Exact Robot STOP
+        #
+        # 任意 Voice Mode、任意 TTS 状态下始终最高优先级。
+        # 即使当前 TTS 内容恰巧包含相同文本，也宁可安全停止。
+        # -----------------------------------------------------
+        exact_stop = n in VOICE_STOP_PHRASES
+
+        if exact_stop:
+            self.get_logger().info(
+                f"🛑 [VoiceMode:{self._voice_mode}] "
+                f"Robot STOP exact 命中：'{text}'"
+            )
+
+            self._publish('停止移动')
+            self.pub_interrupt.publish(Bool(data=True))
+
+            self.mute_until = time.time() + 0.5
+            return True
+
+        # -----------------------------------------------------
+        # 2) Prefix Robot STOP
+        #
+        # 只在 TTS / boundary restricted utterance 中开放。
+        # -----------------------------------------------------
+        prefix_candidate = (
+            allow_prefix
+            and any(
+                n.startswith(phrase)
+                for phrase in VOICE_STOP_PREFIX_SAFE
+            )
+        )
+
+        if not prefix_candidate:
+            return False
+
+        # -----------------------------------------------------
+        # 3) Prefix self-echo guard
+        #
+        # Rebecca 自己正在说：
+        #   “停止移动就是保持当前位置……”
+        #
+        # ASR 可能得到：
+        #   “停止移动，就是保持当。”
+        #
+        # 这种情况虽然满足 prefix，却不能触发 Robot STOP。
+        #
+        # 注意 exact STOP 已在上面提前放行，因此不会削弱：
+        #   用户：“停止移动”
+        # 的最高优先级安全能力。
+        # -----------------------------------------------------
+        if self._is_recent_tts_echo(text):
+            self.get_logger().info(
+                f"🛡️ Robot STOP prefix self-echo suppressed："
+                f"'{text}'"
+            )
+            return False
+
+        # -----------------------------------------------------
+        # 4) 非 self-echo 的 restricted prefix
+        #
+        # 用于真实 barge-in：
+        #   用户：“停止移动”
+        #   + Rebecca 尾音
+        #   -> “停止移动操作和交流”
+        # -----------------------------------------------------
+        self.get_logger().info(
+            f"🛑 [VoiceMode:{self._voice_mode}] "
+            f"Robot STOP prefix 命中：'{text}'"
+        )
+
         self._publish('停止移动')
-        # 2. 立即打断当前 TTS 播报
         self.pub_interrupt.publish(Bool(data=True))
-        # 防止刚被打断的 TTS 尾音再次形成端点
+
         self.mute_until = time.time() + 0.5
         return True
+
 
     def _handle_mode_control(self, text: str, conf: float) -> bool:
         """检测顺序第 2 位：MUTED / SLEEPING 下唯一放行的控制命令。
@@ -866,18 +974,41 @@ class SpeechDialogFunASR(Node):
         """
         n = self._norm_control_text(text)
 
+        # L3 unmute hardening:
+        # “不要取消静音 / 别恢复对话”等否定恢复表达
+        # 不能因为包含 unmute keyword 而解除静音。
+        l3_unmute_hit = any(
+            k in n for k in VOICE_UNMUTE_KEYWORDS
+        )
+
+        l3_unmute_negated = bool(re.search(
+            r'(?:不要|别|不用|无需|不需要).{0,3}'
+            r'(?:取消静音|可以说话|继续说话|恢复对话)',
+            n,
+        ))
+
         if self._voice_mode == VOICE_MODE_MUTED:
+            # “不要取消静音 / 别恢复对话”等否定表达：
+            # 保持 MUTED，并消费本句。
+            if l3_unmute_negated:
+                self.get_logger().info(
+                    f"🔇 [VoiceMode] unmute negation guard：'{text}'"
+                )
+                return True
+
             # 恢复说话（MUTED -> NORMAL）
-            if any(k in n for k in VOICE_UNMUTE_KEYWORDS):
+            if l3_unmute_hit:
                 if conf < self.min_avg_conf:
                     self.get_logger().info(
                         f"🎛️ [VoiceMode] 解除静音低置信度({conf:.2f})，丢弃：{text}"
                     )
                     return True
+
                 self._voice_mode = VOICE_MODE_NORMAL
                 self.get_logger().info(
                     f"🔊 [VoiceMode] MUTED -> NORMAL（恢复说话）：'{text}'"
                 )
+
                 # 放行原句：Agent 侧同步解除 L3 muted 并播报确认
                 self._publish(text)
                 return True
@@ -928,14 +1059,56 @@ class SpeechDialogFunASR(Node):
             return False
 
         n = self._norm_control_text(text)
+
+        # L3 mute hardening:
+        #
+        # “取消静音”包含裸关键词“静音”，但绝不能进入 MUTED。
+        # “不要静音 / 不要请静音”同样不得进入 MUTED。
+        #
+        # 注意：
+        # “不要说话”本身仍是合法 MUTE 指令，因此这里只针对“静音”。
+
+        l3_unmute_hit = any(
+            k in n for k in VOICE_UNMUTE_KEYWORDS
+        )
+
+        l3_mute_negated = bool(re.search(
+            r'(?:不要|别|不用|无需|不需要).{0,3}静音',
+            n,
+        ))
+
+        # NORMAL 状态下重复“取消静音”是幂等 no-op。
+        # 不允许继续落入裸“静音”的 substring matcher。
+        if l3_unmute_hit:
+            self.get_logger().debug(
+                f"🔊 [VoiceMode] already NORMAL，忽略重复解除静音：'{text}'"
+            )
+            return True
+
+        # “不要静音 / 不要请静音”等否定表达：
+        # 保持 NORMAL，不进入 MUTED。
+        if l3_mute_negated:
+            self.get_logger().info(
+                f"🔊 [VoiceMode] mute negation guard：'{text}'"
+            )
+            return True
+
+        # -----------------------------------------------------
+        # 正常进入静音：
+        # 这一段必须保留。前面的两个 guard 只负责排除
+        # “取消静音 / 不要静音”等假阳性，不能替代真正的 MUTE。
+        # -----------------------------------------------------
         if any(k in n for k in VOICE_MUTE_ENTER_KEYWORDS):
             self._voice_mode = VOICE_MODE_MUTED
             self.get_logger().info(
                 f"🔇 [VoiceMode] NORMAL -> MUTED（静音）：'{text}'"
             )
+
+            # 放行原句，让 Agent 同步设置 self.l3_muted=True
             self._publish(text)
             return True
 
+        # 系统休眠
         if any(k in n for k in VOICE_SLEEP_ENTER_KEYWORDS):
             self._voice_mode = VOICE_MODE_SLEEPING
             self.get_logger().info(
@@ -1131,7 +1304,10 @@ class SpeechDialogFunASR(Node):
         #   3. 导航确认（原有逻辑，仅 NORMAL）
         #   4. 普通语音（原有逻辑，仅 NORMAL）
         # ============================================================
-        if self._handle_robot_stop(text):
+        if self._handle_robot_stop(
+            text,
+            allow_prefix=utt_restricted,
+        ):
             return
 
         # —— 打断监听模式：只识别控制短语，命中即处理，**不**转发普通语音 ——

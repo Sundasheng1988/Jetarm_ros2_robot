@@ -175,28 +175,47 @@ SMALLTALK_RE = re.compile('|'.join(SMALLTALK_PATTERNS), re.IGNORECASE)
 
 # === 25/12/14  L1：语义动作暂停（动作层）===
 PAUSE_KEYWORDS = [
-    "别跟着我", "不用跟了", "先别动", "回到原位",
+    "暂停跟随",
+    "别跟着我",
+    "不用跟了",
+    "先别动",
+    "回到原位",
 ]
+
 RESUME_KEYWORDS = [
-    "开始跟着", "看着我",
-    "继续跟着", "你继续", "继续看着我"
+    "恢复跟随",
+    "开始跟着",
+    "看着我",
+    "继续跟着",
+    "你继续",
+    "继续看着我",
 ]
 
 # ===== 25/12/21 L2 系统级唤醒 / 休眠（必须带 jack）=====
 SYSTEM_WAKE_KEYWORDS = [
     "rebecca启动系统",
+    "rebecca系统启动",
     "rebecca唤醒系统",
+    "rebecca系统唤醒",
     "rebecca恢复系统",
+    "rebecca系统恢复",
+
     "瑞贝卡启动系统",
+    "瑞贝卡系统启动",
     "瑞贝卡唤醒系统",
+    "瑞贝卡系统唤醒",
     "瑞贝卡恢复系统",
+    "瑞贝卡系统恢复",
 ]
 
 SYSTEM_SLEEP_KEYWORDS = [
-    "rebecca请先休息吧",
     "rebecca系统休眠",
-    "瑞贝卡请先休息吧",
+    "rebecca请先休息吧",
+    "rebecca你先休息吧",
+
     "瑞贝卡系统休眠",
+    "瑞贝卡请先休息吧",
+    "瑞贝卡你先休息吧",
 ]
 
 SYSTEM_WAKE_KEYWORDS = [k.lower() for k in SYSTEM_WAKE_KEYWORDS]
@@ -204,15 +223,18 @@ SYSTEM_SLEEP_KEYWORDS = [k.lower() for k in SYSTEM_SLEEP_KEYWORDS]
 
 # ===== 25/12/21 L3：对话静音（不休眠系统）=====
 L3_MUTE_KEYWORDS = [
+    "静音",
     "别说话",
     "安静",
-    "静音",
     "我在拍视频",
     "不要说话",
 ]
 
 L3_UNMUTE_KEYWORDS = [
+    "取消静音",
+    "瑞贝卡取消静音",
     "可以说话了",
+    "瑞贝卡可以说话了",
     "继续说话",
     "恢复对话",
     "你可以说话了",
@@ -293,10 +315,17 @@ _NAV_PLACE_FILLER = {
 
 # 导航确认必须整句匹配，不能再用 “好 in 不好” 这样的包含判断。
 _NAV_CONFIRM_REPLIES = {
-    '确认', '确定', '执行',
-    '好的', '好', '行', 'ok',
-    '可以', '是的', '对的', '没错',
-    '是的就是', '对就是', '是的',
+    '确认',
+    '确定',
+    '执行',
+    '好的',
+    '好',
+    '行',
+    'ok',
+    '可以',
+    '是的',
+    '对的',
+    '没错',
     '没问题',
 }
 
@@ -995,14 +1024,49 @@ class LlmVoiceAgent(Node):
         if self._maybe_handle_memory_commands(norm):
             return
 
+
         # =====================================================
         # L3-State：对话静音 / 恢复（不影响系统态）
         # =====================================================
 
-        # ---- L3 unmute：允许唤醒词或明确恢复指令 ----
-        # ---- L3 unmute：只允许明确语义 ----
+        # Patch: L3 mute / unmute hardening
+        #
+        # 目标：
+        # 1. “取消静音”不能因为包含“静音”而反向进入 MUTED
+        # 2. “不要静音 / 不要请静音”不能误触 MUTE
+        # 3. “不要取消静音”在 muted 状态下不能误触 UNMUTE
+        # 4. 已经处于非静音状态时，再说“取消静音”按幂等 no-op 处理
+
+        # ---- L3 unmute candidate ----
+        l3_unmute_hit = any(
+            k in norm_raw for k in L3_UNMUTE_KEYWORDS
+        )
+
+        # “不要取消静音 / 别恢复对话 ...”
+        # 这些是否定恢复语义，不能执行 UNMUTE。
+        l3_unmute_negated = bool(re.search(
+            r'(?:不要|别|不用|无需|不需要).{0,3}'
+            r'(?:取消静音|可以说话|继续说话|恢复对话)',
+            norm_raw,
+        ))
+
+        # “不要静音 / 不要请静音 / 别静音 ...”
+        # 防止因为包含裸关键词“静音”而错误进入 MUTED。
+        #
+        # 注意：
+        # “不要说话”本身仍然是合法的 MUTE 指令，
+        # 因此这里只保护“否定 + 静音”，不保护“不要说话”。
+        l3_mute_negated = bool(re.search(
+            r'(?:不要|别|不用|无需|不需要).{0,3}静音',
+            norm_raw,
+        ))
+
+        if l3_unmute_negated:
+            l3_unmute_hit = False
+
+        # ---- L3 unmute：只允许明确恢复语义 ----
         if self.l3_muted:
-            if any(k in norm_raw for k in L3_UNMUTE_KEYWORDS):
+            if l3_unmute_hit:
                 self.l3_muted = False
 
                 # 解除静音 ≠ 必然恢复 face_follow
@@ -1012,28 +1076,62 @@ class LlmVoiceAgent(Node):
                         self._action_paused_face_follow = False
                     else:
                         self._publish_face_control("resume")
+
                 self._say("好的，我可以说话了。")
                 self._set_state("chat_active")
+
+                self.get_logger().info(
+                    f"🔊 L3 unmute | text='{raw_text}'"
+                )
                 return
 
+            # muted 状态下，其它普通语音继续忽略。
             self.get_logger().debug("🔇 L3 muted，忽略语音输入")
             return
 
+        # ---- 已经是非静音状态：重复 UNMUTE 幂等处理 ----
+        #
+        # 非常重要：
+        # “取消静音”包含“静音”，如果这里不 return，
+        # 会继续落到下面的 L3_MUTE_KEYWORDS substring matcher，
+        # 从而反向进入 MUTED。
+        if l3_unmute_hit:
+            self.get_logger().debug(
+                f"🔊 L3 already unmuted，忽略重复恢复指令 | text='{raw_text}'"
+            )
+            return
 
+        # ---- L3 mute negation guard ----
+        #
+        # 例如：
+        #   不要静音
+        #   不要请静音
+        #   别静音
+        #   不需要静音
+        #
+        # 均不能进入 MUTED。
+        if l3_mute_negated:
+            self.get_logger().info(
+                f"🔊 L3 mute negation guard | text='{raw_text}'"
+            )
+            return
 
         # ---- L3 mute：进入静音（系统不休眠）----
         if any(k in norm_raw for k in L3_MUTE_KEYWORDS):
             self.l3_muted = True
 
-            # 👉 静音时：暂停 face_follow（但系统仍在线）
+            # 静音时暂停 face_follow，但系统本身仍保持 active。
             self._publish_face_control("pause_for_action")
-            self._action_paused_face_follow = True   # ✅
+            self._action_paused_face_follow = True
 
             self._say("好的，我先不说话。")
             self._set_state("chat_muted")
 
-            self.get_logger().info("🔇 进入 L3 muted 状态")
+            self.get_logger().info(
+                f"🔇 进入 L3 muted 状态 | text='{raw_text}'"
+            )
             return
+
 
         # =====================================================
         # L1：语义动作控制（不影响系统态）
