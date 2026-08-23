@@ -1,62 +1,14 @@
 # JetArm Robot Runtime — Architecture Diagrams
 
-> Current Phase: Limited-Scene Robot Task Integration — Voice/Semantic Navigation + Fixed-Workspace Manipulation
+> Current Phase: Mobile Robot Foundation
 >
-> Last Updated: 2026-08-23
+> Last Updated: 2026-07-04
 >
 > Source of Truth:
 >
 > - runtime_index.md
 > - topic_service_map.md
 > - jetarm_runtime_roadmap.md
-
----
-
-
-## 2026-08-22 Architecture Snapshot
-
-> Part A / Part B remain historical architecture records and are intentionally preserved.
-> Current development has added a second task path beside fixed-workspace manipulation:
->
-> ```text
-> Rebecca Voice
-> → deterministic navigation confirmation
-> → Parser
-> → Navigation Executor
-> → Place Manager
-> → Nav2
-> ```
->
-> Current stable Voice baseline:
->
-> ```text
-> c3228a3
-> voice-stabilization-stable-20260822
-> ```
->
-> Semantic Locations are no longer “missing”: `place_manager` + `places.yaml` and
-> `/save_place /delete_place /list_places /get_place /goto_place /cancel_navigation`
-> are implemented.
->
-> Nav2 interface integration exists through `goto_place_node` / NavClient.
-> Real Voice → Semantic Navigation → Nav2 E2E has been verified on the physical
-> robot (bedroom / dining room / living room / return to bedroom); AMCL /
-> localization robustness remains in validation.
->
-> Current navigation map:
->
-> ```text
-> /home/ubuntu/ros2_ws/maps/home_map_navsafe_01_260809.yaml
-> ```
->
-> Current robot-side navigation bringup:
->
-> ```text
-> nav_bringup / nav_bringup.launch.py
-> ```
->
-> It integrates Mobile Base / RPLidar / Odom TF / Static TF /
-> Map Server / AMCL / Nav2 / RViz.
 
 ---
 
@@ -777,6 +729,10 @@ ros2 launch peripherals depth_camera.launch.py
 ros2 launch app perception_bringup.launch.py
 ```
 
+| 颜色 | 含义 |
+
+|------|------|
+
 ## 9. Verification Runtime
 
 > **生效日期**: Sprint 6.1
@@ -812,7 +768,6 @@ grounded → skill_selected → waiting_confirm → executing → verifying → 
 States are published on `/runtime/state` and events on `/runtime/log` with event_id, state, and timestamp enrichment.
 
 | 颜色 | 含义 |
-|---|---|
 | 🔵 蓝色边框 | 底层硬件/驱动 — 永不应修改 |
 | 🟡 黄色填充 | 需要修复/重构的模块 (Sprint 1) |
 | 🔴 红色填充 | 当前高风险区域 (硬编码/冲突) |
@@ -830,21 +785,19 @@ graph TD
 
 USER["User"]
 
-VOICE["Rebecca Voice / Keyboard"]
-ASR["FunASR + TTS Boundary Control"]
+VOICE["Voice / Keyboard"]
 PARSER["LLM Parser"]
-
-NAV_CONFIRM["Navigation Confirmation State"]
-NAV_EXEC["Navigation Executor"]
-PLACE_MGR["Place Manager / places.yaml"]
-NAV2["Nav2 NavigateToPose"]
-
 GROUND["Grounding"]
-RUNTIME["Manipulation Runtime"]
+
+RUNTIME["Runtime Platform"]
 
 WM["World Model"]
+
 PICK["PickSkill"]
 PLACE["PlaceSkill"]
+
+MOVE["MoveSkill (future)"]
+NAV["NavigateSkill (future)"]
 
 YOLO["YOLO"]
 ROI["ROI"]
@@ -855,42 +808,41 @@ BASE["Mobile Base"]
 SCAN["RPLidar"]
 ODOM["Odometry"]
 TF["TF Bridge"]
+SLAM["SLAM Toolbox"]
 AMCL["AMCL"]
+NAV2["Nav2 (planned)"]
 
 OPS["RobotOps"]
 
 USER --> VOICE
-VOICE --> ASR
-ASR --> VOICE
-
-VOICE --> NAV_CONFIRM
-NAV_CONFIRM --> PARSER
 VOICE --> PARSER
-
-PARSER -->|"manipulation action"| GROUND
+PARSER --> GROUND
 GROUND --> RUNTIME
+
 RUNTIME --> PICK
 RUNTIME --> PLACE
-
-PARSER -->|"navigate_to_place / cancel_navigation"| NAV_EXEC
-NAV_EXEC --> PLACE_MGR
-PLACE_MGR --> NAV2
+RUNTIME --> MOVE
+RUNTIME --> NAV
 
 YOLO --> FUSION
 ROI --> FUSION
 FUSION --> TRACK
 TRACK --> WM
-WM --> GROUND
 
-SCAN --> AMCL
+SCAN --> SLAM
 ODOM --> TF
 TF --> AMCL
+SLAM --> AMCL
 AMCL --> NAV2
-NAV2 --> BASE
+
+PICK --> WM
+PLACE --> WM
+MOVE --> NAV2
+NAV --> NAV2
 
 RUNTIME --> OPS
-NAV_EXEC --> OPS
 NAV2 --> OPS
+WM --> OPS
 ```
 
 ---
@@ -968,94 +920,6 @@ NAV --> PLACE
 
 ---
 
-
-## 12A. Rebecca Voice → Semantic Navigation Architecture
-
-```mermaid
-graph TD
-    MIC["Microphone"]
-    VAD["WebRTC VAD"]
-    ASR["FunASR"]
-    QUERY["/speech_query"]
-
-    AGENT["llm_voice_agent_node"]
-    STATE["/voice_agent/state<br/>chat_idle / nav_wait_confirm / nav_confirmed"]
-    CONFIRM["Deterministic Nav Confirmation"]
-
-    VOICE_INPUT["/voice_input/input"]
-    PARSER["llm_command_parser_node"]
-    PARSED["/parsed_command"]
-
-    GROUND_SKIP["grounding_node<br/>navigation action → explicit skip"]
-    NAV_EXEC["navigation_executor_node"]
-
-    GOTO["/goto_place"]
-    CANCEL["/cancel_navigation"]
-    PM["place_manager / goto_place_node"]
-    PLACES["places.yaml"]
-    NAVCLIENT["NavClient"]
-    NAV2["NavigateToPose"]
-
-    RESULT["/runtime/execution_result"]
-    SAYER["executor_done_sayer"]
-    REPLY["/speech_reply"]
-    TTS["tts_speaker_node"]
-    TTS_STATE["/tts_speaking"]
-    TTS_INT["/tts/interrupt"]
-
-    MIC --> VAD --> ASR --> QUERY --> AGENT
-    AGENT --> STATE --> ASR
-    AGENT --> CONFIRM --> VOICE_INPUT
-    VOICE_INPUT --> PARSER --> PARSED
-    PARSED --> GROUND_SKIP
-    PARSED --> NAV_EXEC
-    NAV_EXEC --> GOTO --> PM
-    NAV_EXEC --> CANCEL --> PM
-    PLACES --> PM --> NAVCLIENT --> NAV2
-    NAV_EXEC --> RESULT --> SAYER --> REPLY --> TTS
-    TTS --> TTS_STATE --> ASR
-    ASR --> TTS_INT --> TTS
-```
-
-### Voice / Navigation Safety Boundary
-
-```text
-LLM / Voice Agent:
-- can understand user intent
-- can request deterministic confirmation
-- cannot publish /cmd_vel
-- cannot create arbitrary map coordinates
-- cannot directly call NavigateToPose
-
-Navigation Executor:
-- consumes only navigation actions
-- owns task-level navigation dispatch/result
-
-Place Manager:
-- resolves pre-saved semantic locations
-- owns Nav2 service/action boundary
-```
-
-### `nav_wait_confirm` Fast-Listen Context
-
-```text
-Normal speech:
-VAD = configured mode
-min utterance ≈ 600 ms
-
-TTS / nav_wait_confirm:
-sensitive VAD context
-min utterance ≈ 120 ms
-fast endpoint
-
-TTS actually ended + nav_wait_confirm:
-bypass stale dynamic mute estimate
-```
-
-This behavior is intentionally state-scoped; it does not globally make ASR more sensitive.
-
----
-
 ## 13. Current Status
 
 | Module | Status |
@@ -1064,26 +928,19 @@ This behavior is intentionally state-scoped; it does not globally make ASR more 
 | RobotOps | ✅ Complete |
 | Perception Fusion | ✅ Complete |
 | StableObjectTracker | ✅ Complete |
-| Real Arm Pick | ✅ Verified |
-| Rebecca Voice Stabilization | ✅ Stable baseline `c3228a3` |
-| Semantic Locations / Place Manager | ✅ Implemented |
-| Navigation Intent / Executor | ✅ Implemented |
 | SLAM Mapping | ✅ Complete |
-| AMCL / Localization | 🔶 Real-navigation usable；robustness in validation |
-| Nav2 Interface | ✅ Connected through Place Manager |
-| Real Nav2 Motion | ✅ Verified on physical robot |
-| Voice → Semantic Navigation → Nav2 E2E | ✅ Verified: bedroom / dining room / living room / return to bedroom |
-| Navigation Pause / Resume | ⏳ Planned |
-| MoveSkill abstraction | ❌ Missing |
-| Mobile Manipulation | 🔶 Incremental Integration |
+| AMCL | 🔶 In Validation |
+| Nav2 | ❌ Not Verified |
+| Semantic Locations | ❌ Missing |
+| MoveSkill | ❌ Missing |
+| Mobile Manipulation | 🔶 Planned |
 
 ---
 
 # Part D — Mobile Manipulation Platform ⏳ PLANNED
 
-> This phase remains the long-term mobile-manipulation target.
-> Some foundation components now exist (Semantic Locations and the navigation execution boundary),
-> but full Navigate → Search → Pick → Return → Place task composition is not yet implemented.
+> This phase represents the future of the project.
+> No implementation exists yet.
 > See jetarm_runtime_roadmap.md Phase C for details.
 >
 > RobotOps acts as a cross-cutting infrastructure layer
@@ -1092,12 +949,12 @@ This behavior is intentionally state-scoped; it does not globally make ASR more 
 
 | Component | Status |
 |-----------|--------|
-| Semantic Locations | ✅ Implemented (`place_manager` + `places.yaml`) |
+| Semantic Locations | ❌ Not Implemented |
 | MoveSkill | ❌ Not Implemented |
-| Navigation execution boundary | ✅ Implemented (`navigation_executor_node` → Place Manager); higher-level NavigateSkill abstraction remains planned |
+| NavigateSkill | ❌ Not Implemented |
 | SearchSkill | ❌ Not Implemented |
 | Persistent World Model | ❌ Not Implemented |
-| Navigation Pause / Resume / stale-pending protection | ⏳ Planned |
+| Recovery Runtime | ❌ Not Implemented |
 
 ---
 

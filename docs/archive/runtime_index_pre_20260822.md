@@ -1,125 +1,12 @@
 # JetArm Robot Runtime — Documentation Index
 
-> 最后更新：2026-08-22
+> 最后更新：2026-08-02
 > 长期项目目标：Intelligent Autonomous Mobile Manipulation Robot
-> 当前阶段：Limited-Scene Robot Task Integration
-> 当前活动主线：Rebecca Voice → Semantic Location → Navigation Control 稳定化；固定工作区 Manipulation MVP 作为并行任务线保留
-> 当前 Voice 稳定基线：`c3228a3` / `voice-stabilization-stable-20260822`
-> 已解决 P0：Duplicate Mechanical Arm Control-Stack Instances；PC / Orin DDS 统一；首次真实视觉杯子抓取；Voice/Nav TTS boundary 与短确认可靠性
-> 当前 P0：导航控制状态机安全化——stale pending protection / pause-resume 设计与 PC-only 验收
-> 移动底盘状态：Voice → Semantic Navigation → Nav2 真实导航闭环已完成多地点实机验证（卧室、餐厅、客厅及返回卧室）；AMCL / localization 鲁棒性仍继续验证；当前重点转向导航安全状态机加固与 Localization 鲁棒性提升
-> 启动命令速查：`docs/quick_start.md`
-
----
-
-
-## 2026-08-22 Update Snapshot
-
-本次更新同步 8/13～8/22 已经真实完成的 Voice / Semantic Navigation 工作，不删除 8/02 机械臂真实 Pick 基线。
-
-### 新增稳定基线
-
-```text
-Branch:
-feature/voice_stabilization
-
-Commit:
-c3228a3
-
-Tag:
-voice-stabilization-stable-20260822
-```
-
-该版本已完成多轮 PC-only 真实语音回归，并建立稳定恢复点。
-
-### Rebecca Voice / Navigation 已验证
-
-```text
-FunASR → /speech_query → llm_voice_agent
-→ nav_wait_confirm
-→ /voice_input/input
-→ llm_command_parser_node
-→ /parsed_command
-→ navigation_executor_node
-→ /goto_place
-→ place_manager / NavClient
-```
-
-已验证交互：
-
-```text
-“瑞贝卡，让 Eric 去餐厅”
-→ nav_wait_confirm
-→ “是的 / 确认”
-→ nav_confirmed
-→ /voice_input/input: 导航到餐厅
-```
-
-本周完成的 Voice Stabilization 重点：
-
-```text
-TTS self-echo control hardening
-TTS → NORMAL utterance boundary isolation
-TTS-time navigation confirmation
-短“是的” fast-listen
-nav_wait_confirm:
-  - 120ms short utterance threshold
-  - fast endpoint
-  - post-TTS mute_until bypass
-  - sensitive VAD context
-TTS “停一下” barge-in
-Robot STOP passthrough
-L2 Sleep / Wake
-L3 Mute / Unmute
-```
-
-### Semantic Navigation 已实现
-
-当前已存在：
-
-```text
-place_manager_node
-goto_place_node
-navigation_executor_node
-
-places.yaml
-
-/save_place
-/delete_place
-/list_places
-/get_place
-/goto_place
-/cancel_navigation
-```
-
-Parser 已能产生：
-
-```json
-{"action":"navigate_to_place","place_name":"餐厅","source":"voice"}
-{"action":"cancel_navigation","source":"voice"}
-```
-
-Grounding 对导航 action 显式跳过，导航在 `/parsed_command` 后与机械臂 Runtime 分流。
-
-### 当前安全边界
-
-截至 8/22：
-
-```text
-Voice/Nav PC-only interaction        ✅ Stable baseline
-Semantic location management        ✅ Implemented
-Navigation executor                 ✅ Implemented
-Nav2 service/action integration     ✅ Connected in architecture
-Real Nav2 Motion                    ✅ Verified on physical robot
-Voice → Semantic Nav E2E            ✅ Verified（卧室/餐厅/客厅/返回卧室）
-AMCL / Localization                 🔶 Real-navigation usable；robustness in validation
-Navigation pause/resume             ⏳ Planned
-stale nav_wait_confirm timeout      ⏳ Required before unrestricted real motion
-```
-
-当前仍坚持：
-
-> **LLM 不直接发布 `/cmd_vel`，不生成任意导航坐标，不绕过 Place Manager / Navigation Executor。**
+> 当前阶段：Fixed-Workspace Task Manipulation MVP
+> 当前活动主线：固定工作区内的任务级闭环——AprilTag 标定与自检、目标轮廓、抓取位姿、Pick / Place、Verification 与 RobotOps
+> 已解决 P0：Duplicate Mechanical Arm Control-Stack Instances；PC / Orin DDS 统一；首次真实视觉杯子抓取
+> 当前 P0：Task MVP 1 — 整理蓝色积木
+> 移动底盘状态：PAUSED — AMCL / Nav2 等待后续重新验证
 
 ---
 
@@ -267,74 +154,16 @@ NavigateSkill
 | **Retry / Recovery** | ⏳ 尚未实现，计划基于真实失败数据开发 |
 | **Control Arbitration** | ⏳ 尚未实现 AUTO / MANUAL / PAUSED / ESTOP 仲裁 |
 | **Data Collection / VLA** | ⏳ 轨迹、图像和动作数据采集尚未完成 |
-| **Current Phase** | 🔶 Limited-Scene Robot Task Integration：当前 Voice/Semantic Navigation 稳定化；Fixed-Workspace Manipulation MVP 并行保留 |
+| **Current Phase** | 🔶 Fixed-Workspace Task Manipulation MVP |
 | **Duplicate Control Stack** | ✅ 已解决：核心机械臂节点均为单实例；底层控制端点恢复一对一 |
 | **Mechanical Arm Hardware** | ✅ STM32 通信正常；舵机 ID `1/2/3/4/5/10` 在线；反馈与初始姿态正常 |
 | **Network / Time** | ✅ `eth-static` 冷启动自动恢复；Jetson 自动从 PC `192.168.100.2` 校时；机器人服务不以网络或时间为启动门禁 |
 | **Cross-host DDS** | ✅ PC 与 Orin 已统一为 Cyclone DDS；跨机图像、Topic 与 Kinematics Service 已验证 |
-| **Rebecca Voice Baseline** | ✅ `c3228a3` / `voice-stabilization-stable-20260822`；TTS boundary、短确认、TTS STOP、Voice Mode 已完成真实语音回归 |
-| **Semantic Locations / Place Manager** | ✅ `places.yaml` + save/delete/list/get/goto/cancel interfaces 已实现 |
-| **Voice Navigation Intent** | ✅ `navigate_to_place` / `cancel_navigation` 已接入 Parser 与 Navigation Executor |
-| **Navigation Executor** | ✅ `/parsed_command` → `/goto_place` / `/cancel_navigation` → `/runtime/execution_result` 已实现 |
-| **Nav2 Integration** | ✅ `goto_place_node` 已通过 NavClient 对接 `NavigateToPose` |
-| **Real Nav2 Motion** | ✅ Verified on physical robot |
-| **Voice → Semantic Navigation E2E** | ✅ 已完成真实多地点导航：卧室 / 餐厅 / 客厅 / 返回卧室 |
-| **AMCL / Localization** | 🔶 Real-navigation usable；robustness still in validation |
-| **Current P0** | 🔶 Navigation control lifecycle：stale pending protection + pause/resume PC-only 状态机验收 |
+| **Current P0** | 🔶 Task MVP 1：固定工作区内识别、抓取并收纳蓝色积木 |
 | **Current Real-Motion Gate** | ⚠ 已完成分级验收并允许受控真实执行；仍必须保留单一控制栈、稳定目标位姿、`require_confirm=true` 和现场急停条件 |
-| **Near-Term Outcome** | 先冻结 8/22 Voice Stable Baseline，完成导航 pending 生命周期与 Pause/Resume；并行继续固定工作区 Pick/Place/Verification |
-| **Mobile Base** | ✅ Voice → Nav2 → 实体底盘真实导航闭环已验证；进入安全加固与鲁棒性提升阶段 |
+| **Near-Term Outcome** | 完成“蓝色积木识别 → 抓取 → 放入指定区域 → 双区域验证 → RobotOps 记录”的真实任务闭环 |
+| **Mobile Base** | ⏸ 底盘维修中，AMCL/Nav2 暂停 |
 | **Long-Term Direction** | Autonomous Mobile Manipulation Robot |
-
-
-## Current Active Development — 2026-08-22
-
-当前开发不再只有固定机械臂一条线。8/13～8/22 新增并稳定了 Voice → Semantic Navigation 主链。
-
-### Active Track A — Rebecca Voice / Navigation
-
-```text
-speech_dialog_funasr_node
-→ /speech_query
-→ llm_voice_agent_node
-→ navigation confirmation state
-→ /voice_input/input
-→ llm_command_parser_node
-→ /parsed_command
-→ navigation_executor_node
-→ /goto_place
-→ place_manager
-→ Nav2
-```
-
-当前状态：
-
-```text
-Voice stabilization stable baseline        ✅
-Semantic locations                         ✅
-Navigation intent                          ✅
-Navigation executor                        ✅
-TTS-time / post-TTS short confirmation     ✅
-TTS STOP / Robot STOP separation           ✅
-Nav2 real-motion E2E                       ✅
-AMCL / Localization robustness             🔶
-stale pending timeout                      ⏳
-Pause / Resume navigation                  ⏳
-```
-
-### Parallel Track B — Fixed-Workspace Manipulation MVP
-
-8/02 首次真实视觉 Pick 仍然是机械臂主线基线，Task MVP 1/2/3 不废弃：
-
-```text
-Task MVP 1：整理蓝色积木
-Task MVP 2：整理圆珠笔
-Task MVP 3：搬运空茶杯
-```
-
-当前优先级由具体开发 session 决定，不应再把 `Semantic Locations = Missing` 或 `Mobile Base = completely paused` 当作当前事实。
-
----
 
 ## Current Development Strategy
 
@@ -368,15 +197,12 @@ PC / Orin 全 Cyclone DDS          ✅
 
 当前不再把“物体中心坐标更准”作为最终目标；视觉输出必须服务于具体任务，并区分对象位姿与抓取位姿。
 
-移动底盘已从 7 月“完全暂停调参”状态进入受控恢复阶段。
-
-当前原则：
+移动底盘继续保持暂停：
 
 ```text
-仍不允许 Voice / LLM 直接发布 /cmd_vel
-Place Manager 只接受预先保存的命名地点
-任何 Voice / Navigation 状态机修改必须先通过 PC-only 状态机与停止链路回归，再进入真实 Nav2 回归
-Odom / IMU / TF / Localization 的历史风险仍需在实车阶段复核
+不发布 /cmd_vel
+不继续 AMCL / Nav2 参数调试
+恢复底盘开发前重新建立 Odom / IMU / TF / Localization 基线
 ```
 
 ## Current Development Stop Point
@@ -1152,18 +978,7 @@ Task MVP 1 重复性测试与失败分类              ⏳
 
 ### Current P0 Task
 
-当前项目存在两条活跃任务线。
-
-Voice / Navigation session 优先读取：
-- `runtime_index.md`
-- `topic_service_map.md`
-- `runtime_debug_guide.md`
-- 最新 Voice/Nav Dev Log
-- `place_manager` / `navigation_executor` / `navigation_intent` 相关源码
-
-Fixed-Workspace Manipulation session 仍按下面 Task MVP 1 范围执行：
-
-完成 Task MVP 1——在固定工作区内整理蓝色积木。
+当前任务范围：完成 Task MVP 1——在固定工作区内整理蓝色积木。
 
 ```text
 1. 保留 2026-08-02 首次真实 Pick 的日志、图片、task_id、目标位姿和 IK pulses，作为历史基线
@@ -1713,54 +1528,15 @@ ID10=700（close）
 | Teleop Arbitration | ⏳ PLANNED | AUTO / MANUAL / PAUSED / ESTOP |
 | Data Collection | ⏳ PLANNED | 图像、动作、状态、轨迹和失败数据 |
 | VLA Readiness | ⏳ PLANNED | 数据集、回放、VLA Bridge |
-| Mobile Robot Foundation | ✅ REAL NAVIGATION VERIFIED / HARDENING | Voice → Semantic Navigation → Nav2 真实闭环已实机验证；当前重点为安全状态机与鲁棒性加固 |
+| Mobile Robot Foundation | ⏸ PAUSED | 等待底盘维修和运动一致性恢复 |
 | Base Driver | ✅ HISTORICALLY VERIFIED | `/cmd_vel` 与底盘驱动 |
 | Odometry | 🔶 REQUIRES REVALIDATION | 底盘滑移破坏运动模型 |
 | RPLidar | ✅ HISTORICALLY VERIFIED | `/scan` 可用 |
 | SLAM Mapping | ✅ | 家庭地图已生成 |
-| AMCL / Nav2 | 🔶 IN VALIDATION | 真实命名地点导航已跑通；旋转 / 长距离 / 重定位鲁棒性仍需验证；历史滑移问题保留观察 |
-| Semantic Locations | ✅ | Place Manager + `places.yaml` 已实现 |
-| Navigation Executor / Navigate interface | ✅ / 🔶 | Executor 与 NavClient 已实现；更高层 NavigateSkill 仍可后续抽象 |
+| AMCL / Nav2 | ⏸ BLOCKED | 转弯受底盘打滑影响 |
+| Semantic Locations | ⏳ | 底盘恢复后继续 |
+| MoveSkill / NavigateSkill | ⏳ | 底盘恢复后继续 |
 | Mobile Manipulation | ⏳ | 底盘与机械臂分别稳定后集成 |
-
----
-
-
-## Voice / Navigation Recovery Reference — 2026-08-22
-
-当前 Voice 稳定恢复点：
-
-```text
-Commit:
-c3228a3
-
-Tag:
-voice-stabilization-stable-20260822
-
-Branch:
-feature/voice_stabilization
-```
-
-只读查看：
-
-```bash
-git show voice-stabilization-stable-20260822
-```
-
-与当前开发比较：
-
-```bash
-git diff voice-stabilization-stable-20260822..HEAD
-```
-
-如果需要从稳定点另开调试分支：
-
-```bash
-git switch -c debug/voice-from-stable \
-  voice-stabilization-stable-20260822
-```
-
-不要在 tag 的 detached HEAD 上直接继续长期开发。
 
 ---
 
@@ -1924,21 +1700,9 @@ Autonomous Mobile Manipulation
 
 ### Immediate Next Step
 
-当前 Voice / Navigation 主线：
-
 ```text
-冻结 c3228a3 stable baseline
-→ nav_wait_confirm stale pending timeout
-→ 明确 pause / cancel / resume 语义
-→ PC-only 状态机回归
-→ 真实 Nav2 regression（E2E 已完成首次多地点验证，后续修改按此回归）
-```
-
-并行 Fixed-Workspace Manipulation 主线：
-
-```text
-AprilTag 固定工作区坐标
-→ RGB CameraInfo / 权威坐标链
-→ 蓝色积木 mask / contour / grasp pose
-→ Pick + Place + 双区域 Verification
+建立 AprilTag 固定工作区坐标基线
+→ 统一 RGB CameraInfo 与权威坐标链
+→ 输出蓝色积木 mask / contour / grasp pose
+→ 实现 Pick + Place + 双区域 Verification
 ```

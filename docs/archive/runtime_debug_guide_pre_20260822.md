@@ -1,12 +1,10 @@
 # Robot Runtime — Operations & Debug Guide
 
-> 🚀 **只想找启动命令？直接看 [`docs/quick_start.md`](quick_start.md)**
-
-> **项目**：JetArm ROS 2 Robot
-> **文档职责**：启动、运行、监听、确认、验收与故障隔离
-> **当前基线日期**：2026-08-22
-> **当前通信基线**：PC 与 Orin 新启动的 ROS 2 进程统一使用 Cyclone DDS，`ROS_DOMAIN_ID=23`
-> **当前主线状态**：机械臂真实视觉 Pick 已完成；Rebecca Voice / Semantic Navigation 已建立 `voice-stabilization-stable-20260822` 稳定基线；Voice → Semantic Location → Nav2 真实导航闭环已完成多地点实机验证（卧室、餐厅、客厅及返回卧室）。AMCL / localization 鲁棒性仍继续验证。
+> **项目**：JetArm ROS 2 Robot  
+> **文档职责**：启动、运行、监听、确认、验收与故障隔离  
+> **当前基线日期**：2026-08-02  
+> **当前通信基线**：PC 与 Orin 新启动的 ROS 2 进程统一使用 Cyclone DDS，`ROS_DOMAIN_ID=23`  
+> **当前主线状态**：已完成一次真实视觉杯子抓取  
 > **注意**：Topic / Service 的完整发布订阅关系见 `docs/topic_service_map.md`
 
 ---
@@ -63,10 +61,6 @@ start_app_node.service
 - Runtime
 - Verification
 - RobotOps
-- Rebecca Voice / FunASR / TTS
-- `llm_command_parser_node`
-- `navigation_executor_node`
-- `place_manager` 上层接口与 PC-only 导航状态机调试
 - 调试、日志和 SQLite 查询
 
 ---
@@ -81,160 +75,37 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file:///home/ubuntu/ros2_ws/config/cyclonedds/orin_camera_eth0.xml
 ```
 
-### PC — 统一环境入口
-
-PC 新终端默认只加载公共 ROS 2 基线，不自动绑定 Voice / Robot 网络模式：
-
-```text
-ROS_DOMAIN_ID=23
-RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-ROS_LOCALHOST_ONLY=<unset>
-CYCLONEDDS_URI=<unset>
-```
-
-当前统一入口：
-
-```bash
-# 查看当前环境
-rosenv
-
-# PC-only：Rebecca Voice / Parser / Navigation 状态机
-rosvoice
-
-# PC ↔ Orin：Camera / Kinematics / Mobile Base / Nav2
-rosrobot
-```
-
-这些命令统一调用：
-
-```text
-~/ros2_ws/scripts/ros_env_pc.sh
-```
-
-#### A. PC-only Voice / Navigation Regression
-
-执行：
-
-```bash
-rosvoice
-```
-
-预期：
-
-```text
-mode=voice
-domain=23
-rmw=rmw_cyclonedds_cpp
-localhost_only=1
-cyclonedds_uri=<unset>
-```
-
-等价底层配置为：
+### PC
 
 ```bash
 export ROS_DOMAIN_ID=23
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_LOCALHOST_ONLY=1
-unset CYCLONEDDS_URI
+export CYCLONEDDS_URI=file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
 ```
 
-用于：
-
-```text
-ASR
-TTS
-Voice Agent
-Parser
-Navigation confirmation
-Navigation Executor PC-only 状态机
-```
-
-该模式不连接机器人 DDS，不用于真实 Nav2 / Camera / Kinematics。
-
-#### B. PC ↔ Orin Cross-host
-
-执行：
+PC 新终端检查：
 
 ```bash
-rosrobot
+printenv ROS_DOMAIN_ID
+printenv RMW_IMPLEMENTATION
+printenv CYCLONEDDS_URI
 ```
 
 预期：
 
 ```text
-mode=robot
-domain=23
-rmw=rmw_cyclonedds_cpp
-localhost_only=0
+23
+rmw_cyclonedds_cpp
+file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
 ```
 
-当 eno1：
-
-```text
-carrier = 1
-+
-持有 192.168.100.x 地址
-+
-pc_camera_eno1.xml 存在
-```
-
-时，脚本才会自动设置：
-
-```text
-CYCLONEDDS_URI=file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
-```
-
-如果机器人有线链路未建立，则：
-
-```text
-CYCLONEDDS_URI=<unset>
-```
-
-并明确输出 WARNING，不会静默加载错误的 eno1 / wlo1 XML。
-
-当前不要在 ~/.bashrc 中写死：
-
-```text
-ROS_LOCALHOST_ONLY
-CYCLONEDDS_URI
-```
-
-历史 pc_camera_wlo1.xml 不再作为 PC 默认环境自动加载。
-
-检查当前环境：
-
-```bash
-rosenv
-```
-
-或：
-
-```bash
-printenv ROS_DOMAIN_ID
-printenv RMW_IMPLEMENTATION
-printenv ROS_LOCALHOST_ONLY
-printenv CYCLONEDDS_URI
-```
-
-调试 ROS 2 CLI 时可按需：
+调试时建议：
 
 ```bash
 export ROS2CLI_DISABLE_DAEMON=1
 ```
 
-> 修改 RMW / DDS 环境后，已经运行的 ROS 2 进程不会动态切换，必须重启相关进程。
-
----
-
-## 1.3 Quick Start
-
-当前正式启动命令统一维护在：
-
-```text
-docs/quick_start.md
-```
-
-本文件不重复维护启动速查，只保留详细运行、验收与故障隔离步骤。
+> 修改 RMW 环境后，已经运行的 ROS 2 进程不会动态切换，必须重启进程。
 
 ---
 
@@ -344,48 +215,14 @@ timeout 10 ros2 topic echo \
 
 ## 3.2 PC 环境
 
-进入工作区：
-
 ```bash
 cd ~/ros2_ws
-```
 
-先根据任务选择模式。
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
 
-Voice / Parser / PC-only Navigation：
-
-```bash
-rosvoice
-```
-
-需要 Orin Camera / Kinematics / Nav2：
-
-```bash
-rosrobot
-```
-
-查看当前模式：
-
-```bash
-rosenv
-```
-
-调试 ROS 2 CLI 时按需：
-
-```bash
 export ROS2CLI_DISABLE_DAEMON=1
 ```
-
-不要在每个终端重复手工设置：
-
-```text
-ROS_DOMAIN_ID
-RMW_IMPLEMENTATION
-ROS_LOCALHOST_ONLY
-CYCLONEDDS_URI
-```
-
-这些由 scripts/ros_env_pc.sh 统一管理。
 
 检查包：
 
@@ -440,22 +277,8 @@ Terminal 3：RobotOps
 
 ```bash
 cd ~/ros2_ws
-
-# Perception 需要访问 Orin Camera
-rosrobot
-
 ./scripts/start_cyclone_perception.sh
 ```
-
-with_cyclone_camera.sh 已统一复用：
-
-```text
-scripts/ros_env_pc.sh robot
-```
-
-不再维护独立的 ROS_DOMAIN_ID / RMW / CYCLONEDDS_URI 配置。
-
-如果机器人有线 DDS 条件不成立，应明确报错，而不是静默使用错误网卡配置。
 
 当前该脚本负责启动：
 
@@ -773,331 +596,6 @@ ros2 run keyboard_input keyboard_input_node \
 ```
 
 由于 Grounding 也可能订阅 `/keyboard_input/input` 作为 raw-text fallback，该入口存在双路径风险。主线测试优先使用 `/voice_input/input`。
-
----
-
-
-# 5A. Rebecca Voice / Semantic Navigation Debugging — 2026-08-22
-
-> 本节是 8/13～8/22 新增的当前 Voice/Nav 调试基线。
-> 后续每次修改 Voice / Navigation 状态机后，进入真实 Nav2 regression 前，必须先完成 PC-only 语音与状态机回归。
-
-## 5A.1 稳定 Git 基线
-
-```text
-Branch:
-feature/voice_stabilization
-
-Commit:
-c3228a3
-
-Tag:
-voice-stabilization-stable-20260822
-```
-
-查看：
-
-```bash
-cd ~/ros2_ws
-git log --oneline --decorate -5
-git show --no-patch voice-stabilization-stable-20260822
-```
-
-## 5A.2 PC-only 安全环境
-
-当前推荐入口：
-
-```bash
-cd ~/ros2_ws
-rosvoice
-```
-
-确认：
-
-```bash
-rosenv
-```
-
-预期：
-
-```text
-mode=voice
-domain=23
-rmw=rmw_cyclonedds_cpp
-localhost_only=1
-cyclonedds_uri=<unset>
-```
-
-其底层等价配置为：
-
-```bash
-export ROS_DOMAIN_ID=23
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_LOCALHOST_ONLY=1
-unset CYCLONEDDS_URI
-```
-
-正常开发不要再重复手工 export；手动配置仅保留用于环境故障隔离。
-
-此模式用于：
-
-```text
-ASR
-TTS
-Voice Agent
-Parser
-Navigation confirmation
-Navigation Executor command flow
-```
-
-但不允许真实 Nav2 / `/cmd_vel` 运动。
-
-## 5A.3 启动 Rebecca
-
-```bash
-ros2 run llm_voice_agent rebecca_voice_start \
-  play_audio:=true
-```
-
-当前 Voice control canonical phrases：
-
-```text
-L1:
-瑞贝卡，暂停跟随
-瑞贝卡，恢复跟随
-
-L2:
-瑞贝卡，系统休眠
-瑞贝卡，启动系统
-
-L3:
-瑞贝卡，静音
-瑞贝卡，取消静音
-
-TTS:
-停一下
-别说了
-
-Robot:
-停止移动
-
-Navigation confirmation:
-是的
-可以
-确认
-对的
-没错
-```
-
-## 5A.4 推荐监听
-
-终端 A：
-
-```bash
-ros2 topic echo /speech_query std_msgs/msg/String
-```
-
-终端 B：
-
-```bash
-ros2 topic echo /voice_agent/state std_msgs/msg/String
-```
-
-终端 C：
-
-```bash
-ros2 topic echo /voice_input/input std_msgs/msg/String
-```
-
-终端 D：
-
-```bash
-ros2 topic echo /parsed_command std_msgs/msg/String
-```
-
-按需：
-
-```bash
-ros2 topic echo /tts/interrupt std_msgs/msg/Bool
-ros2 topic echo /tts_speaking std_msgs/msg/Bool
-ros2 topic echo /tts/done std_msgs/msg/Bool
-ros2 topic echo /runtime/execution_result std_msgs/msg/String
-```
-
-## 5A.5 Voice → Navigation 验收
-
-测试：
-
-```text
-用户：
-瑞贝卡，让 Eric 去餐厅
-
-Rebecca：
-要让 Eric 去餐厅吗
-
-用户：
-是的
-```
-
-预期：
-
-```text
-/voice_agent/state:
-chat_idle
-→ nav_wait_confirm
-→ nav_confirmed
-
-/voice_input/input:
-导航到餐厅
-
-/parsed_command:
-{"action":"navigate_to_place","place_name":"餐厅",...}
-```
-
-短确认必须在以下两种时机都工作：
-
-```text
-A. TTS 尾音附近说“是的”
-B. 等 TTS 完全结束约 0.3~0.5s 后正常短说“是的”
-```
-
-不要通过把“是——的”故意拖长来通过验收。
-
-## 5A.6 8/22 ASR fast-listen 基线
-
-`nav_wait_confirm` 使用专用短控制听音策略：
-
-```text
-normal:
-  VAD = configured aggressiveness
-  min_utt ≈ 600ms
-  normal silence endpoint
-
-TTS / nav_wait_confirm:
-  sensitive VAD context
-  min_utt ≈ 120ms
-  fast silence endpoint
-```
-
-并且在：
-
-```text
-TTS 已实际结束
-+
-state == nav_wait_confirm
-```
-
-时不再被动态估算的残余 `mute_until` 阻塞。
-
-不要为了短确认继续全局降低 `min_utt_ms`。
-
-## 5A.7 TTS STOP 与 Robot STOP 必须区分
-
-```text
-“停一下 / 别说了”
-→ /tts/interrupt
-→ 只停止 Rebecca 播报
-
-“停止移动 / 停止导航”
-→ Robot navigation stop/cancel path
-→ 不能只停止 TTS
-```
-
-8/22 已实测 TTS 尾音污染场景：
-
-```text
-“停一下或搜索当地天气预报”
-“与冲突停一下”
-```
-
-仍能触发安全 TTS barge-in。
-
-## 5A.8 当前已知 Voice/Nav 限制
-
-### stale `nav_wait_confirm`
-
-当前需要继续补：
-
-```text
-nav_wait_confirm timeout ≈ 10~15s
-```
-
-否则旧 pending navigation 可能跨越无关对话，后面的“是的”误确认旧目标。
-
-### L3 Mute 否定误触
-
-已观察：
-
-```text
-“不要静音”
-```
-
-可能因为 substring `静音` 被错误处理为进入 MUTED。
-
-后续应使用 canonical match + negation guard。
-
-### `暂停跟随` 与 TTS STOP 词义竞争
-
-TTS stop prefix-safe 中不应长期保留过宽的单独：
-
-```text
-暂停
-```
-
-避免抢走：
-
-```text
-暂停跟随
-```
-
-## 5A.9 Real Nav2 Gate
-
-Voice/Nav 真实运动之前必须确认：
-
-```text
-1. PC-only：navigation request / confirm / cancel / STOP 状态机通过
-2. 每次确认只产生 1 条 `/voice_input/input`
-3. Parser 只产生 1 条 navigation `/parsed_command`
-4. stale pending 不可被后续无关“是的”确认
-5. Robot STOP 永远可用
-6. Place Manager 目标必须来自 `places.yaml`
-7. LLM 不得发布 `/cmd_vel` 或任意坐标
-```
-
-当前已完成受控条件下的真实 Voice → Semantic Navigation → Nav2 多地点 E2E 验证。
-
-但上述列表同时也是后续真实 Nav2 regression 的安全 Gate。其中 stale pending protection 仍是当前 P0，尚不能因为真实 E2E 已成功而视为安全状态机问题已经关闭。
-
-当前已完成真实语音导航闭环：
-
-```text
-Voice
-→ Navigation confirmation
-→ /voice_input/input
-→ Parser
-→ Navigation Executor
-→ Place Manager
-→ Nav2
-→ Physical Mobile Base
-```
-
-已实机完成多个命名地点导航，包括：
-
-```text
-卧室
-餐厅
-客厅
-返回卧室
-```
-
-因此当前状态不是“尚未进入真实 Nav2”，而是：
-
-```text
-Real Voice → Semantic Navigation → Nav2：Verified
-Localization / AMCL robustness：仍在持续验证
-```
-
-后续任何 Voice / Navigation 状态机修改，仍必须先通过 PC-only regression，再进入实车回归。
 
 ---
 
@@ -1518,18 +1016,10 @@ timeout 15 ros2 topic hz /depth_cam/rgb/image_raw
 
 ## 9.5 查看图像
 
-PC 查看 Orin Camera 图像前，先进入 Cross-host Robot 环境：
+PC 默认已使用 Cyclone DDS，可直接运行：
 
 ```bash
-rosrobot
 ros2 run rqt_image_view rqt_image_view
-```
-
-如果无法看到 /depth_cam/*，先检查：
-
-```bash
-rosenv
-ros2 topic list | grep depth_cam
 ```
 
 ---
@@ -2111,98 +1601,37 @@ ros2 topic pub --once \
 
 ---
 
-# 16. Mobile Robot / Nav2
+# 16. Mobile Robot Debugging
 
-> 当前正常运行优先使用 Orin 上的统一 `nav_bringup`。
-> 后面的单模块命令仅用于故障隔离，不作为正常启动方式。
+> 本节属于 Mobile Robot Foundation，与当前机械臂视觉抓取主线分开。
 
-## 16.1 统一启动
-
-在 Orin 执行：
-
-```bash
-cd ~/ros2_ws
-source /opt/ros/humble/setup.zsh
-source ~/ros2_ws/install/setup.zsh
-
-ros2 launch nav_bringup nav_bringup.launch.py \
-  serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
-```
-
-当前统一 Bringup 使用的导航基线：
-
-```text
-Map:
-/home/ubuntu/ros2_ws/maps/home_map_navsafe_01_260809.yaml
-
-AMCL params:
-/home/ubuntu/ros2_ws/config/nav2_amcl_params.yaml
-
-Nav2 params:
-/home/ubuntu/ros2_ws/config/nav2_params.yaml
-```
-
-nav_bringup.launch.py 统一启动：
-
-```text
-Mobile Base
-RPLidar
-Odom TF Bridge
-base_footprint → laser static TF
-Map Server
-AMCL
-Nav2
-RViz
-```
-
-当前真实验证：
-
-```text
-卧室
-→ 餐厅
-→ 客厅
-→ 返回卧室
-```
-
-结果：
-
-```text
-Real Nav2 Motion                  ✅ Verified
-Voice → Semantic Navigation E2E  ✅ Verified
-AMCL / Localization              🔶 可用于真实导航，鲁棒性继续验证
-```
-
-## 16.2 单模块故障隔离
-
-> 以下命令仅用于定位单模块故障。正常运行不要与 `nav_bringup` 同时重复启动对应节点。
-
-### 底盘启动
+## 16.1 底盘启动
 
 ```bash
 ros2 launch turn_on_dlrobot_robot tank.launch.py
 ```
 
-### 激光雷达
+## 16.2 激光雷达
 
 ```bash
 ros2 launch rplidar_ros rplidar_a1_launch.py \
-  serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+  serial_port:=/dev/ttyUSB0
 ```
 
-### Odom TF Bridge
+## 16.3 Odom TF Bridge
 
 ```bash
 ros2 run mobile_base_bridge odom_tf_bridge_node
 ```
 
-### Laser Static TF
+## 16.4 Laser Static TF
 
 ```bash
 ros2 run tf2_ros static_transform_publisher \
   0 0 0.15 0 0 0 base_footprint laser
 ```
 
-### 检查
+## 16.5 检查
 
 ```bash
 ros2 topic echo /odom_combined --once
@@ -2220,104 +1649,34 @@ ros2 topic echo /tf --once
 ros2 topic info /mobile_base/sensors/imu_data
 ```
 
-### AMCL
-
-以下命令在 Orin 执行（故障隔离用；正常启动见 16.1 统一启动）：
+## 16.6 AMCL
 
 ```bash
 ros2 launch nav2_bringup localization_launch.py \
-  map:=/home/ubuntu/ros2_ws/maps/home_map_navsafe_01_260809.yaml \
+  map:=/home/ubuntu/ros2_ws/maps/home_map_clean_02_260705.yaml \
   use_sim_time:=false \
   params_file:=/home/ubuntu/ros2_ws/config/nav2_amcl_params.yaml
 ```
 
-历史调试地图 `home_map_clean_02_260705.yaml` 仅作为历史调试记录保留，不再是当前地图。
-
-### NAV2
-
-以下命令在 Orin 执行（故障隔离用；正常启动见 16.1 统一启动）：
-
-```bash
-source /opt/ros/humble/setup.zsh
-source /home/ubuntu/ros2_ws/install/setup.zsh
+## 16.7 NAV2
+source /opt/ros/humble/setup.bash
+source /home/ubuntu/ros2_ws/install/setup.bash
 
 ros2 launch nav2_bringup navigation_launch.py \
   use_sim_time:=false \
   autostart:=true \
   params_file:=/home/ubuntu/ros2_ws/config/nav2_params.yaml
-```
 
-状态（2026-08-22）：
-
-```text
-AMCL / Localization：🔶 已支持真实导航闭环，鲁棒性继续验证
-Nav2 Interface：✅ Connected
-Real Nav2 Motion：✅ Verified
-Voice → Semantic Navigation → Nav2：✅ Verified on real robot
-Semantic Locations：✅ Implemented
-Place Manager：✅ Implemented
-Navigation Executor：✅ Implemented
-Navigation Pause / Resume：⏳ Planned
-```
-
-已验证的真实命名地点路线包括：
+状态：
 
 ```text
-卧室
-餐厅
-客厅
-返回卧室
+AMCL：In validation
+Nav2：Not verified
+MoveSkill：Missing
+Semantic Locations：Missing
 ```
 
 ---
-
-
-## 16.3 Semantic Locations / Place Manager
-
-当前命名地点保存在：
-
-```text
-~/ros2_ws/config/places.yaml
-```
-
-核心 Service：
-
-```bash
-ros2 service list | grep -E \
-'/save_place|/delete_place|/list_places|/get_place|/goto_place|/cancel_navigation'
-```
-
-当前最小导航调用：
-
-```bash
-ros2 service call \
-  /goto_place \
-  place_manager/srv/GotoPlace \
-  "{name: dining_room_1}"
-```
-
-取消：
-
-```bash
-ros2 service call \
-  /cancel_navigation \
-  std_srvs/srv/Trigger \
-  "{}"
-```
-
-导航语音正常应经过：
-
-```text
-/speech_query
-→ Voice Agent confirmation
-→ /voice_input/input
-→ /parsed_command
-→ navigation_executor_node
-→ /goto_place
-```
-
-不要让 Voice Agent 或 Parser 直接调用 Nav2。
-
 
 # 17. 当前验收状态
 
@@ -2341,15 +1700,8 @@ ros2 service call \
 | Verification | 🔶 In validation |
 | 抓取重复性 | 🔶 To validate |
 | PlaceSkill | ❌ Not verified |
-| AMCL / Localization | 🔶 Real-navigation usable；robustness still in validation |
-| Semantic Locations / Place Manager | ✅ Implemented |
-| Rebecca Voice Stabilization | ✅ Stable baseline `c3228a3` |
-| Voice Navigation Confirm | ✅ Verified in real speech |
-| Navigation Executor | ✅ Implemented |
-| Nav2 Interface Integration | ✅ Connected |
-| Real Nav2 Motion | ✅ Verified on physical robot |
-| Voice → Semantic Navigation → Nav2 E2E | ✅ Verified: bedroom / dining room / living room / return to bedroom |
-| Navigation Pause / Resume | ⏳ Planned |
+| AMCL | 🔶 In validation |
+| Nav2 | ❌ Not verified |
 | MoveSkill | ❌ Missing |
 
 ---

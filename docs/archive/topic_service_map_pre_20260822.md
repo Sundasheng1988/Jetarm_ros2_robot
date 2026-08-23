@@ -1,18 +1,12 @@
 # JetArm ROS 2 Robot — Topic & Service Map
 
-> **文档职责**：记录当前 ROS 2 节点、Topic、Service、Action、启动归属，以及 Current / Legacy / Planned 状态。
-> **当前基线日期**：2026-08-22
-> **当前主线**：两条并行执行链：① 感知 → Grounding → Manipulation Runtime；② Rebecca Voice → Parser → Navigation Executor → Place Manager → Nav2
-> **通信基线**：PC 与 Orin 新启动的 ROS 2 进程统一使用 Cyclone DDS，`ROS_DOMAIN_ID=23`。
-> **当前状态**：真实视觉杯子 Pick 已完成；Semantic Locations / Voice Navigation 已实现；Voice Stabilization 稳定基线为 `c3228a3` / `voice-stabilization-stable-20260822`；Voice → Parser → Navigation Executor → Place Manager → Nav2 → Physical Mobile Base 真实导航闭环已完成多地点实机验证（卧室、餐厅、客厅及返回卧室）。AMCL / localization 鲁棒性仍继续验证。
+> **文档职责**：记录当前 ROS 2 节点、Topic、Service、Action、启动归属，以及 Current / Legacy / Planned 状态。  
+> **当前基线日期**：2026-08-02  
+> **当前主线**：真实相机 → 感知融合 → Stable World Model → 自然语言解析 → Grounding → Runtime → IK / Servo → Verification → RobotOps  
+> **通信基线**：PC 与 Orin 新启动的 ROS 2 进程统一使用 Cyclone DDS，`ROS_DOMAIN_ID=23`。  
+> **当前状态**：已完成一次真实视觉杯子抓取。  
 >
-> 正式启动命令：
->
-> ```text
-> docs/quick_start.md
-> ```
->
-> 监听、确认、验收和故障排查：
+> 启动、监听、确认和故障排查命令统一维护在：
 >
 > ```text
 > docs/runtime_debug_guide.md
@@ -68,66 +62,14 @@ PC 负责：
 - Runtime；
 - Verification；
 - RobotOps；
-- Rebecca Voice / FunASR / TTS；
-- `navigation_executor_node`；
-- `place_manager` 上层接口；
 - 调试和日志。
 
-当前 PC 公共环境基线：
-
-```text
-ROS_DOMAIN_ID=23
-RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-```
-
-PC 新终端默认保持网络模式中性：
-
-```text
-ROS_LOCALHOST_ONLY=<unset>
-CYCLONEDDS_URI=<unset>
-```
-
-明确运行模式由统一入口选择：
+当前 PC 环境：
 
 ```bash
-rosvoice
-```
-
-表示：
-
-```text
-PC-only Voice / Parser / Navigation Regression
-ROS_LOCALHOST_ONLY=1
-CYCLONEDDS_URI=<unset>
-```
-
-```bash
-rosrobot
-```
-
-表示：
-
-```text
-PC ↔ Orin Cross-host
-ROS_LOCALHOST_ONLY=0
-```
-
-只有在 eno1 机器人链路实际在线并具有 192.168.100.x 地址时，rosrobot 才加载：
-
-```text
-file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
-```
-
-统一环境实现：
-
-```text
-scripts/ros_env_pc.sh
-```
-
-当前环境查看：
-
-```bash
-rosenv
+export ROS_DOMAIN_ID=23
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file:///home/sundasheng/ros2_ws/config/cyclonedds/pc_camera_eno1.xml
 ```
 
 ---
@@ -147,57 +89,13 @@ ros_robot_controller
 hardware drivers
 ```
 
-### Orin Navigation Bringup
-
-真实移动导航由用户在 Orin 上显式启动：
-
-```bash
-ros2 launch nav_bringup nav_bringup.launch.py \
-  serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
-```
-
-当前导航地图：
-
-```text
-/home/ubuntu/ros2_ws/maps/home_map_navsafe_01_260809.yaml
-```
-
-统一启动：
-
-```text
-Mobile Base
-RPLidar
-Odom TF Bridge
-Static TF
-Map Server
-AMCL
-Nav2
-RViz
-```
-
-该 Navigation Bringup 与 Orin 常驻的机械臂 / Camera 主栈职责分离。
-
 ### PC Perception Bringup
 
-Perception 依赖 Orin Camera，因此使用 Cross-host Robot 环境：
-
-```bash
-rosrobot
-```
-
-推荐启动入口：
+推荐入口：
 
 ```bash
 ./scripts/start_cyclone_perception.sh
 ```
-
-Camera / perception wrapper 的 DDS 环境统一由：
-
-```text
-scripts/ros_env_pc.sh robot
-```
-
-负责，不再在独立脚本中维护另一套 Cyclone DDS hardcode。
 
 内部启动：
 
@@ -241,45 +139,6 @@ verification_result_node
 ```bash
 ros2 launch robotops robotops_recorder.launch.py
 ```
-
-### Rebecca Voice / Navigation
-
-PC-only Voice / Navigation regression 环境：
-
-```bash
-rosvoice
-```
-
-Voice stack 推荐启动入口：
-
-```bash
-ros2 run llm_voice_agent rebecca_voice_start \
-  play_audio:=true
-```
-
-Voice stack 由 `llm_voice_agent` 包启动；当前稳定分支为：
-
-```text
-feature/voice_stabilization
-```
-
-稳定恢复点：
-
-```text
-c3228a3
-voice-stabilization-stable-20260822
-```
-
-导航侧当前节点：
-
-```text
-llm_command_parser_node
-navigation_executor_node
-place_manager_node
-goto_place_node
-```
-
-其中 Voice/Parser 不直接发布 `/cmd_vel`，命名地点导航通过 `/parsed_command` 后分流到 Navigation Executor。
 
 ---
 
@@ -345,63 +204,6 @@ graph TD
     RUNTIME -->|"/runtime/execution_result"| REC
     VERIFY -->|"/runtime/verification_result"| REC
     REC --> DB
-```
-
----
-
-
-## 1.1 Rebecca Voice → Semantic Navigation Overlay — 2026-08-22
-
-```mermaid
-graph TD
-    MIC["Microphone"]
-    ASR["speech_dialog_funasr_node<br/>FunASR + WebRTC VAD"]
-    SQ["/speech_query"]
-    AGENT["llm_voice_agent_node<br/>L1/L2/L3 + nav confirmation"]
-    STATE["/voice_agent/state"]
-    VI["/voice_input/input"]
-    PARSER["llm_command_parser_node"]
-    PCMD["/parsed_command"]
-    NAVEXEC["navigation_executor_node"]
-    GOTO["/goto_place"]
-    CANCEL["/cancel_navigation"]
-    PM["place_manager / goto_place_node"]
-    YAML["places.yaml"]
-    NAV2["Nav2 NavigateToPose"]
-    RESULT["/runtime/execution_result"]
-    SAY["executor_done_sayer"]
-    REPLY["/speech_reply"]
-    TTS["tts_speaker_node"]
-    TS["/tts_speaking"]
-    TI["/tts/interrupt"]
-
-    MIC --> ASR --> SQ --> AGENT
-    AGENT --> STATE --> ASR
-    AGENT --> VI --> PARSER --> PCMD --> NAVEXEC
-    NAVEXEC --> GOTO --> PM
-    NAVEXEC --> CANCEL --> PM
-    YAML --> PM
-    PM --> NAV2
-    NAVEXEC --> RESULT --> SAY --> REPLY --> TTS
-    TTS --> TS --> ASR
-    ASR --> TI --> TTS
-```
-
-关键边界：
-
-```text
-Voice Agent / Parser:
-- 不发布 /cmd_vel
-- 不生成任意导航坐标
-- 不直接调用 NavigateToPose
-
-Navigation Executor:
-- 只消费 navigation action
-- 调用 /goto_place / /cancel_navigation
-
-Place Manager:
-- 只允许 places.yaml 中的命名地点
-- 负责地点解析与 Nav2 边界
 ```
 
 ---
@@ -652,13 +454,6 @@ llm_command_parser_node
 ```
 
 ### `navigation_executor_node`（place_manager）
-
-当前 Voice/Nav 稳定基线：
-
-```text
-c3228a3
-voice-stabilization-stable-20260822
-```
 
 - 同一时刻只允许一个导航任务；进行中收到第二个导航以 `BUSY` 拒绝，**不抢占**。
 - 异步调用 `/goto_place`（`call_async`），用低频定时器轮询 Future，不在订阅
@@ -911,13 +706,13 @@ xyz = [0.185, -0.011, 0.034]
 | `/world_model/stable_objects` | `std_msgs/msg/String` JSON | Stable Tracker | Grounding、Verification | Perception Bringup | Current |
 | `/voice_input/input` | `std_msgs/msg/String` | Voice Agent / CLI | Parser；部分社交节点 | Voice Stack / Manual | Current |
 | `/keyboard_input/input` | `std_msgs/msg/String` | Voice Agent | Parser、Grounding fallback | Voice Stack | Current with dual-path risk |
-| `/parsed_command` | `std_msgs/msg/String` JSON | Parser | Grounding、`navigation_executor_node` | Runtime / Navigation Bringup | Current |
+| `/parsed_command` | `std_msgs/msg/String` JSON | Parser | Grounding | Runtime Bringup | Current |
 | `/grounded_task_context` | `std_msgs/msg/String` JSON | Grounding | Runtime、Verification | Runtime Bringup | Current |
 | `/runtime/preview` | `std_msgs/msg/String` JSON | Runtime | UI / CLI / Logger | Runtime Bringup | Current |
 | `/runtime/confirm` | `std_msgs/msg/String` | Operator / UI | Runtime | Manual | Current |
 | `/runtime/state` | `std_msgs/msg/String` JSON | Runtime | RobotOps / Dashboard | Runtime Bringup | Current |
 | `/runtime/log` | `std_msgs/msg/String` JSON | Runtime | RobotOps / CLI | Runtime Bringup | Current event stream |
-| `/runtime/execution_result` | `std_msgs/msg/String` JSON | `real_grounded_runtime_node`、`navigation_executor_node` | RobotOps / CLI / navigation result sayer | Runtime / Navigation | Current shared result envelope |
+| `/runtime/execution_result` | `std_msgs/msg/String` JSON | Runtime | RobotOps / CLI | Runtime Bringup | Current |
 | `/runtime/verification_result` | `std_msgs/msg/String` JSON | Verification | Runtime、RobotOps | Runtime Bringup | Current |
 | `/executor/done` | `std_msgs/msg/Bool` | Runtime | Verification、Done Sayer | Runtime Bringup | Current |
 | `/servo_controller` | `servo_controller_msgs/msg/ServosPosition` | RuntimeAdapter、`grasp`、社交节点、Legacy Executor | `controller_manager` | Multiple | Current hardware command |
@@ -939,7 +734,7 @@ xyz = [0.185, -0.011, 0.034]
 | `/tts_speaking` | `std_msgs/msg/Bool` | TTS | ASR |
 | `/tts/done` | `std_msgs/msg/Bool` | TTS | Voice Agent |
 | `/tts/interrupt` | `std_msgs/msg/Bool` | Voice Agent、ASR | TTS |
-| `/voice_agent/state` | `std_msgs/msg/String` | Voice Agent | `speech_dialog_funasr_node`、Debug / UI |
+| `/voice_agent/state` | `std_msgs/msg/String` | Voice Agent | Debug / UI |
 | `/gesture/cmd` | `std_msgs/msg/String` | Voice Agent | Gesture Player |
 | `/face_follow/control` | `std_msgs/msg/String` | Voice Agent、Gesture、Env Nodes | Face Follow |
 | `/face_follow/status` | `std_msgs/msg/String` | Face Follow | Gesture、Env Scan |
@@ -947,19 +742,6 @@ xyz = [0.185, -0.011, 0.034]
 | `/world_objects` | `EnvObjectArray` | Social World Model | Consumers TBD |
 
 ---
-
-
-### 4.2A Navigation Control
-
-| Topic / State | Type | Publisher | Subscriber / Consumer | Purpose |
-|---|---|---|---|---|
-| `/voice_input/input` | `std_msgs/msg/String` | Voice Agent | Parser | 发布已确认的规范导航文本，例如 `导航到餐厅` |
-| `/parsed_command` | `std_msgs/msg/String` JSON | Parser | Grounding、Navigation Executor | 导航 action 在此分流 |
-| `/voice_agent/state` | `std_msgs/msg/String` | Voice Agent | ASR、Debug | `nav_wait_confirm` 驱动短确认 fast-listen |
-| `/runtime/execution_result` | `std_msgs/msg/String` JSON | Navigation Executor / Runtime | RobotOps / Sayer / Debug | 统一执行结果 envelope |
-| `/amcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | AMCL | `goto_place_node` | 导航到达验证 |
-| `/odom_combined` | `nav_msgs/msg/Odometry` | Base | `goto_place_node` / localization | 到达稳定速度验证 |
-
 
 ## 4.3 Legacy
 
@@ -997,12 +779,6 @@ Legacy /executor/confirm*
 |---|---|---|---|---|---|
 | `/kinematics/set_pose_target` | `kinematics_msgs/srv/SetRobotPose` | `kinematics` | RuntimeAdapter、`grasp`、Legacy Executor | Orin | Current，跨机已验证 |
 | `/kinematics/get_current_pose` | `kinematics_msgs/srv/GetRobotPose` | `kinematics` | YOLO、Object Pose、Calibration | Orin | Current，跨机已验证 |
-| `/save_place` | `place_manager/srv/SavePlace` | `place_manager_node` | CLI / future UI | PC | Current |
-| `/delete_place` | `place_manager/srv/DeletePlace` | `place_manager_node` | CLI / future UI | PC | Current |
-| `/list_places` | `place_manager/srv/ListPlaces` | `place_manager_node` | CLI / future UI | PC | Current |
-| `/get_place` | `place_manager/srv/GetPlace` | `place_manager_node` | `goto_place_node` / CLI | PC | Current |
-| `/goto_place` | `place_manager/srv/GotoPlace` | `goto_place_node` | `navigation_executor_node` | PC / Nav2 boundary | Current |
-| `/cancel_navigation` | `std_srvs/srv/Trigger` | `goto_place_node` | `navigation_executor_node` / CLI | PC / Nav2 boundary | Current |
 | `/grounding/clear_memory` | `std_srvs/srv/Trigger` | Grounding | External Debug | PC | Current |
 | `/ros_robot_controller/init_finish` | `std_srvs/srv/Trigger` | `ros_robot_controller` | `controller_manager` | Orin | Current |
 | `~/init_finish` | `std_srvs/srv/Trigger` | `controller_manager` | External Status Check | Orin | Runtime name must be verified |
@@ -1021,7 +797,7 @@ Legacy /executor/confirm*
 |---|---|---|---|---|
 | `/arm_controller/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | `controller_manager` | MoveIt / External | Available，Current Runtime 未使用 |
 | `/gripper_controller/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | `controller_manager` | MoveIt / External | Available，Current Runtime 未使用 |
-| Nav2 `NavigateToPose` | `nav2_msgs/action/NavigateToPose` | Nav2 | `goto_place_node` / NavClient | ✅ Interface connected；real robot navigation verified |
+| Nav2 `NavigateToPose` | `nav2_msgs/action/NavigateToPose` | Nav2 | Future NavigateSkill | Not verified |
 | Nav2 `FollowWaypoints` | `nav2_msgs/action/FollowWaypoints` | Nav2 | Future | Not verified |
 
 ---
@@ -1189,7 +965,7 @@ SQLite
 
 | Topic | Type | Publisher | Subscriber | Status |
 |---|---|---|---|---|
-| `/cmd_vel` | `geometry_msgs/msg/Twist` | Manual Teleop；Nav2 stack | `turn_on_dlrobot_robot` | Manual + real Nav2 motion verified |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | Manual Teleop；Nav2 planned | `turn_on_dlrobot_robot` | Manual verified |
 | `/odom_combined` | `nav_msgs/msg/Odometry` | `turn_on_dlrobot_robot` | TF Bridge、SLAM、AMCL、RViz | Verified |
 | `/scan` | `sensor_msgs/msg/LaserScan` | `rplidar_node` | SLAM、AMCL | Verified |
 | `/mobile_base/sensors/imu_data` | `sensor_msgs/msg/Imu` | Robot IMU Publisher | Current upper-layer unused | Topic verified |
@@ -1198,7 +974,7 @@ SQLite
 | `/map` | `nav_msgs/msg/OccupancyGrid` | `slam_toolbox` / `map_server` | RViz、AMCL | Verified |
 | `/map_metadata` | `nav_msgs/msg/MapMetaData` | `map_server` | RViz | Verified |
 | `/initialpose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | RViz | AMCL | Verified |
-| `/amcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | AMCL | RViz、Nav2、`goto_place_node` | Real-navigation usable；robustness in validation |
+| `/amcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | AMCL | RViz、Nav2 | In validation |
 | `/particle_cloud` | `geometry_msgs/msg/PoseArray` | AMCL | RViz | In validation |
 | `/goal_pose` | `geometry_msgs/msg/PoseStamped` | RViz | Nav2 | Not verified |
 | `/plan` | `nav_msgs/msg/Path` | Nav2 | RViz | Not verified |
@@ -1241,42 +1017,14 @@ AMCL
 
 | Module | Status |
 |---|---|
-| Mobile Base Driver | ✅ Verified |
-| Lidar | ✅ Verified |
-| SLAM Mapping | ✅ Complete |
-| AMCL / Localization | 🔶 Real-navigation usable；robustness in validation |
-| Semantic Locations | ✅ Implemented |
-| Place Manager | ✅ Implemented |
-| Navigation Intent | ✅ Verified |
-| Navigation Executor | ✅ Implemented |
-| Nav2 Interface | ✅ Connected |
-| Real Nav2 Motion | ✅ Verified |
-| Voice → Semantic Navigation → Nav2 | ✅ Real-robot E2E verified |
-| Navigation Pause / Resume | ⏳ Planned |
-| MoveSkill | ❌ Missing |
-| Mobile Manipulation | ⏳ Planned |
-
-已完成真实命名地点导航：
-
-```text
-卧室
-→ 餐厅
-→ 客厅
-→ 返回卧室
-```
-
-该验证证明当前：
-
-```text
-Voice
-→ Parser
-→ Navigation Executor
-→ Place Manager
-→ Nav2
-→ Mobile Base
-```
-
-可以形成真实执行闭环。
+| Mobile Base Driver | Verified |
+| Lidar | Verified |
+| SLAM Mapping | Complete |
+| AMCL | In validation |
+| Nav2 | Not verified |
+| MoveSkill | Missing |
+| Semantic Locations | Missing |
+| Mobile Manipulation | Planned |
 
 ---
 
@@ -1477,28 +1225,6 @@ NetworkInterfaceAddress: deprecated element
 
 ---
 
-
-## 12.7 Voice / Navigation Pending Lifecycle
-
-当前 `nav_wait_confirm` 已完成短确认 fast-listen，但仍需继续加固 pending 生命周期。
-
-已知安全项：
-
-```text
-旧 pending navigation 不应跨越长时间无关对话继续有效
-建议 nav_wait_confirm TTL ≈ 10~15s
-timeout 后应 clear pending → chat_idle
-```
-
-另有：
-
-```text
-“不要静音”可能被 substring 静音 matcher 误触
-```
-
-这些属于下一轮 Voice state-machine hardening，不改变当前 Topic / Service 拓扑。
-
-
 # 13. Current / Legacy / Planned 定义
 
 | Status | Meaning |
@@ -1526,13 +1252,7 @@ timeout 后应 clear pending → chat_idle
 - Legacy 节点下线；
 - Nav2 / MoveSkill 完成验收。
 
-启动命令不在本文重复维护，统一见：
-
-```text
-docs/quick_start.md
-```
-
-监听、确认和排查命令见：
+启动、监听、确认和排查命令不在本文重复维护，统一见：
 
 ```text
 docs/runtime_debug_guide.md
@@ -1580,13 +1300,7 @@ docs/dev_log/
 | Verification | 🔶 In validation |
 | Pick Repeatability | 🔶 To validate |
 | PlaceSkill | ❌ Not verified |
-| AMCL / Localization | 🔶 Real-navigation usable；robustness still in validation |
-| Rebecca Voice Stabilization | ✅ Stable baseline `c3228a3` |
-| Semantic Locations / Place Manager | ✅ Implemented |
-| Navigation Intent | ✅ Verified |
-| Navigation Executor | ✅ Implemented |
-| Nav2 Interface | ✅ Connected through `goto_place_node` |
-| Real Nav2 Motion | ✅ Verified on physical robot |
-| Voice → Semantic Navigation → Nav2 E2E | ✅ Verified: bedroom / dining room / living room / return to bedroom |
-| Navigation Pause / Resume | ⏳ Planned |
+| AMCL | 🔶 In validation |
+| Nav2 | ❌ Not verified |
 | MoveSkill | ❌ Missing |
+| Semantic Locations | ❌ Missing |
