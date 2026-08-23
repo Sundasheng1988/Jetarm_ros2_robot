@@ -68,6 +68,8 @@ def make_stub_agent(mode='chat'):
         pending_cmd_text='',
         _pending_nav=False,
         _pending_nav_place='',
+        nav_confirm_timeout_s=15.0,
+        _nav_confirm_deadline=0.0,
         said=[],
         commands=[],
         states=[],
@@ -80,6 +82,9 @@ def make_stub_agent(mode='chat'):
     )
     ag._set_state = lambda s: (ag.states.append(s), ag.events.append(('state', s)))
     ag._reset_nav_confirm = lambda: LlmVoiceAgent._reset_nav_confirm(ag)
+    ag._arm_nav_confirm_timeout = (
+        lambda: LlmVoiceAgent._arm_nav_confirm_timeout(ag)
+    )
     return ag
 
 
@@ -163,17 +168,21 @@ class PendingNavStateMachineTests(unittest.TestCase):
         self.assertEqual(ag.commands, [])
 
     def test_pending_echo_fragment_does_not_cancel(self):
-        # 问题 1 实测路径：回声“或取消放弃”不得取消 pending 导航。
+        # 问题 1 实测路径：回声“或取消放弃”不得取消/确认下发。
+        # Patch 4C.4b：非确认/取消/新目标输入按无关话题清 pending，
+        # 但绝不产生任何机台命令。
         ag = arm_pending_nav(make_stub_agent())
-        self.assertTrue(handle(ag, '或取消放弃'))
-        self.assertTrue(ag.waiting_confirm and ag._pending_nav)
-        self.assertEqual(ag._pending_nav_place, '餐厅')
+        self.assertFalse(handle(ag, '或取消放弃'))
         self.assertEqual(ag.commands, [])
+        self.assertFalse(ag.waiting_confirm or ag._pending_nav)
 
-    def test_pending_uncertain_does_not_cancel(self):
+    def test_pending_uncertain_clears_pending_without_command(self):
+        # Patch 4C.4b：“我不确定”既不是确认也不是取消，
+        # 视为离开确认上下文：清 pending、不下发任何命令。
         ag = arm_pending_nav(make_stub_agent())
-        self.assertTrue(handle(ag, '我不确定'))
-        self.assertTrue(ag.waiting_confirm and ag._pending_nav)
+        self.assertFalse(handle(ag, '我不确定'))
+        self.assertFalse(ag.waiting_confirm or ag._pending_nav)
+        self.assertEqual(ag.commands, [])
         self.assertEqual(ag.commands, [])
 
     def test_pending_confirm_dispatches_exactly_once(self):
@@ -185,10 +194,39 @@ class PendingNavStateMachineTests(unittest.TestCase):
 
     def test_pending_noisy_confirm_no_command(self):
         # 问题 1 实测路径：“确认开始导航”不得确认下发。
+        # Patch 4C.4b：非整句确认按无关输入清 pending。
         ag = arm_pending_nav(make_stub_agent())
-        self.assertTrue(handle(ag, '确认开始导航'))
+        self.assertFalse(handle(ag, '确认开始导航'))
         self.assertEqual(ag.commands, [])
-        self.assertTrue(ag.waiting_confirm and ag._pending_nav)
+
+
+class NavConfirmWindowBehaviorTests(unittest.TestCase):
+    """Patch 4C.4b：确认超时窗口 + 无关话题清除 pending。"""
+
+    def test_yes_after_timeout_clear_does_not_confirm(self):
+        # CASE 2：超时清理后，stale “是的”不得确认旧导航。
+        ag = arm_pending_nav(make_stub_agent())
+        LlmVoiceAgent._reset_nav_confirm(ag)  # 模拟 timeout 清理
+        self.assertFalse(handle(ag, '是的'))
+        self.assertEqual(ag.commands, [])
+
+    def test_resume_yes_within_window_confirms(self):
+        # CASE 4：TTS 结束后的正常 “是的” 在有效期内确认 resume。
+        ag = make_stub_agent()
+        self.assertTrue(handle(ag, '恢复导航'))
+        self.assertEqual(ag.states[-1], 'nav_wait_confirm')
+        self.assertGreater(ag._nav_confirm_deadline, 0.0)
+        self.assertTrue(handle(ag, '是的'))
+        self.assertEqual(ag.commands, ['恢复导航'])
+
+    def test_unrelated_topic_clears_pending_then_yes_is_chat(self):
+        # CASE 5：无关话题清 pending；后续 “是的” 不得恢复导航。
+        ag = arm_pending_nav(make_stub_agent())
+        self.assertFalse(handle(ag, '今天天气怎么样？'))
+        self.assertFalse(ag.waiting_confirm or ag._pending_nav)
+        self.assertEqual(ag.commands, [])
+        self.assertFalse(handle(ag, '是的'))
+        self.assertEqual(ag.commands, [])
 
 
 class NavReplyTokenFreeTests(unittest.TestCase):
@@ -218,10 +256,12 @@ class NavReplyTokenFreeTests(unittest.TestCase):
         self._assert_token_free(ag.said[0])
 
     def test_fallback_reply_token_free_with_place(self):
+        # Patch 4C.4b：fallback 不再追问（无话术即无 token 泄漏），
+        # 无关输入直接清 pending 交回正常 chat 流程。
         ag = arm_pending_nav(make_stub_agent())
-        self.assertTrue(handle(ag, '我想想'))
-        self.assertEqual(ag.said, ['我没听清。还要让Eric去餐厅吗？'])
-        self._assert_token_free(ag.said[0])
+        self.assertFalse(handle(ag, '我想想'))
+        self.assertEqual(ag.said, [])
+        self.assertFalse(ag.waiting_confirm or ag._pending_nav)
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +335,14 @@ class TtsConfirmGateTests(unittest.TestCase):
     def test_echo_fragments_do_not_pass(self):
         # 问题 1 实测路径：Rebecca 自播报回声碎片不得误触确认。
         for text in ('确认开始导航', '请说确认', '可以让Eric去餐厅', '是否确认'):
+            with self.subTest(text=text):
+                self.assertIsNone(
+                    classify_tts_control_reply(_norm_ctrl(text), NAV_WAIT)
+                )
+
+    def test_merged_question_tail_confirms_do_not_pass(self):
+        # Patch 4C.4a：“问句尾音 + 用户确认”合并句绝不作为 TTS-time 确认。
+        for text in ('去吗可以', '过去吗可以', '导航吗是的', '继续吗确认'):
             with self.subTest(text=text):
                 self.assertIsNone(
                     classify_tts_control_reply(_norm_ctrl(text), NAV_WAIT)
@@ -375,7 +423,7 @@ class AsrHardeningStaticTests(unittest.TestCase):
 
     def test_robot_stop_precedes_tts_control_gates(self):
         # Robot STOP 检测必须先于 TTS-time 确认/取消/打断所有逻辑。
-        stop_call = ASR_SOURCE.index('self._handle_robot_stop(text)')
+        stop_call = ASR_SOURCE.index('if self._handle_robot_stop(')
         tts_gate = ASR_SOURCE.index('classify_tts_control_reply(reply')
         self.assertLess(stop_call, tts_gate)
 

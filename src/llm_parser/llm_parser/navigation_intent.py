@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""导航意图解析（命名地点导航 + 取消导航）。
+"""导航意图解析（命名地点导航 + pause / resume / cancel）。
 
-本模块独立于机械臂抓取解析，用于在 ``parse()`` 的最前面识别两类语音导航
+本模块独立于机械臂抓取解析，用于在 ``parse()`` 的最前面识别语音导航
 意图，并把它们转换成与现有 ``/parsed_command`` 协议兼容的 JSON：
 
 - ``navigate_to_place``：去/前往/导航到/移动到/到达/到 <命名地点>
-- ``cancel_navigation``：停止移动 / 停止导航 / 取消导航 / 别走了 ...
+- ``pause_navigation``：停止移动 / 停止导航 / 暂停导航 / 别走了 ...
+- ``resume_navigation``：恢复导航 / 继续导航
+- ``cancel_navigation``：取消导航 / 取消移动 / 放弃导航
 
 设计约束（与 Rebecca 语音栈、place_manager 保持一致）：
 
@@ -76,14 +78,14 @@ def parse_navigation(text: str) -> Optional[Dict]:
     }
 
 
-# ── 取消导航 / 停止移动 ───────────────────────────────────────────────────
-# 只匹配“停止/取消 + 移动/导航”或“别走/不要走”，绝不含“说话/安静”。
-# 使用整句匹配：归一化后与下列短语集合精确比对，最大化可控性。
-_STOP_MOVE_PHRASES = (
+# ── Navigation STOP 三分：pause / cancel / resume ─────────────────────────
+# Patch 4C.1：把原先混合的“停止移动 = cancel_navigation”拆成语义固定的
+# 三类动作。仍然只做整句匹配（归一化 + 语气词剥离），不做 fuzzy matching。
+# “停止说话 / 安静”绝不含在内，绝不能进入任何 navigation action。
+_PAUSE_NAVIGATION_PHRASES = (
     '停止移动',
     '停止导航',
-    '取消导航',
-    '取消移动',
+    '暂停导航',
     '别走了',
     '别走啦',
     '别走',
@@ -93,25 +95,75 @@ _STOP_MOVE_PHRASES = (
     '停下导航',
 )
 
+_CANCEL_NAVIGATION_PHRASES = (
+    '取消导航',
+    '取消移动',
+    '放弃导航',
+)
+
+_RESUME_NAVIGATION_PHRASES = (
+    '恢复导航',
+    '继续导航',
+)
+
 # 仅用于把“停止移动吧/停止移动。”这类带语气词的句子归一到核心短语。
 _TAIL_NOISE = re.compile(r'[吧呢啊呀。！!？?，,]+$')
 
 
-def is_cancel_navigation(text: str) -> bool:
-    """是否为“停止移动 / 取消导航”意图（不需要二次确认）。"""
+def _match_exact(text: str, phrases) -> bool:
+    """整句精确匹配：归一化 + 剥离句尾语气词/标点后与短语集合比对。"""
     norm = _normalize(text)
     if not norm:
         return False
     norm = _TAIL_NOISE.sub('', norm).strip()
-    return norm in _STOP_MOVE_PHRASES
+    return norm in phrases
+
+
+def is_pause_navigation(text: str) -> bool:
+    """是否为“暂停导航（停止移动 / 停止导航 / 暂停导航）”意图。"""
+    return _match_exact(text, _PAUSE_NAVIGATION_PHRASES)
+
+
+def is_cancel_navigation(text: str) -> bool:
+    """是否为“取消导航”意图（取消/放弃；不含“停止移动”类暂停语义）。"""
+    return _match_exact(text, _CANCEL_NAVIGATION_PHRASES)
+
+
+def is_resume_navigation(text: str) -> bool:
+    """是否为“恢复导航 / 继续导航”意图。"""
+    return _match_exact(text, _RESUME_NAVIGATION_PHRASES)
+
+
+def parse_pause_navigation(text: str) -> Optional[Dict]:
+    """识别“暂停导航”意图，返回命令 dict 或 ``None``。"""
+    if not is_pause_navigation(text):
+        return None
+    return {
+        'action': 'pause_navigation',
+        'source': 'voice',
+        'raw_text': text.strip() if text else '',
+        'raw': text.strip() if text else '',
+    }
 
 
 def parse_cancel_navigation(text: str) -> Optional[Dict]:
-    """识别“停止移动 / 取消导航”意图，返回命令 dict 或 ``None``。"""
+    """识别“取消导航”意图，返回命令 dict 或 ``None``。"""
     if not is_cancel_navigation(text):
         return None
     return {
         'action': 'cancel_navigation',
+        'source': 'voice',
+        'raw_text': text.strip() if text else '',
+        'raw': text.strip() if text else '',
+    }
+
+
+def parse_resume_navigation(text: str) -> Optional[Dict]:
+    """识别“恢复导航”意图，返回命令 dict 或 ``None``。"""
+    if not is_resume_navigation(text):
+        return None
+    return {
+        'action': 'resume_navigation',
         'source': 'voice',
         'raw_text': text.strip() if text else '',
         'raw': text.strip() if text else '',

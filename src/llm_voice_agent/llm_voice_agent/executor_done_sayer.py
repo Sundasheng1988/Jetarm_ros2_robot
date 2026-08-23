@@ -34,7 +34,12 @@ from rclpy.node import Node
 from std_msgs.msg import String, Bool
 
 # ── 导航动作与状态（与 navigation_executor_node 保持一致）──────────────────
-_NAV_ACTIONS = ("navigate_to_place", "cancel_navigation")
+_NAV_ACTIONS = (
+    "navigate_to_place",
+    "pause_navigation",
+    "resume_navigation",
+    "cancel_navigation",
+)
 _STATUS_SUCCEEDED = "SUCCEEDED"
 _STATUS_FAILED = "FAILED"
 _STATUS_CANCELLED = "CANCELLED"
@@ -146,6 +151,24 @@ class ExecutorDoneSayer(Node):
             if success or status == _STATUS_CANCELLED:
                 return "已停止移动。"
             return "导航失败，请检查道路。"
+
+        # Patch 4C.3：PAUSED / resume 结果播报（先于 SUCCEEDED / FAILED 判断）。
+        if status == "PAUSED":
+            if place:
+                return f"已暂停前往{place}的导航。"
+            return "已暂停导航。"
+
+        if (
+            action == "resume_navigation"
+            and error_code == "NO_PAUSED_NAVIGATION"
+        ):
+            return "当前没有可以恢复的导航任务。"
+
+        if (
+            action == "resume_navigation"
+            and error_code == "BUSY"
+        ):
+            return "当前导航还没有进入可恢复状态。"
 
         # navigate_to_place
         if status == _STATUS_SUCCEEDED or success:

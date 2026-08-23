@@ -188,7 +188,12 @@ class GroundingNode(Node):
         # 导航类动作不走机械臂 Grounding：由 navigation_executor 独立处理。
         # 这里直接返回，避免污染 /grounded_goal 并防止进入需要 target_object
         # 的机械臂流程。
-        if intent in ("navigate_to_place", "cancel_navigation"):
+        if intent in (
+            "navigate_to_place",
+            "pause_navigation",
+            "resume_navigation",
+            "cancel_navigation",
+        ):
             self.get_logger().info(
                 f"skip — navigation action '{intent}' handled by navigation_executor"
             )

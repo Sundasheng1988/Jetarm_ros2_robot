@@ -10,6 +10,8 @@ from typing import List
 from llm_parser.navigation_intent import (
     parse_navigation,
     parse_cancel_navigation,
+    parse_pause_navigation,
+    parse_resume_navigation,
 )
 
 COLOR_MAP = {
@@ -40,11 +42,19 @@ SIDE_MAP = {
 def parse(text: str):
     t = text.strip()
 
-    # ── 导航意图优先：取消导航 > 命名地点导航 > 原有机械臂命令 ──
-    # 这两类意图不走机械臂 Grounding，由 navigation_executor 独立处理。
+    # ── 导航意图优先：cancel > pause > resume > 命名地点导航 > 原有机械臂命令 ──
+    # 这些意图不走机械臂 Grounding，由 navigation_executor 独立处理。
     cancel_cmd = parse_cancel_navigation(t)
     if cancel_cmd is not None:
         return cancel_cmd
+
+    pause_cmd = parse_pause_navigation(t)
+    if pause_cmd is not None:
+        return pause_cmd
+
+    resume_cmd = parse_resume_navigation(t)
+    if resume_cmd is not None:
+        return resume_cmd
 
     nav_cmd = parse_navigation(t)
     if nav_cmd is not None:

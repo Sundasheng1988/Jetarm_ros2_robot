@@ -4,9 +4,9 @@
 
 职责边界（与机械臂 Runtime 严格分离）：
 
-- 只消费 ``navigate_to_place`` 与 ``cancel_navigation`` 两个 action；其它
-  action（pick/place 等）一律忽略，仍由 Grounding + real_grounded_runtime_node
-  处理。
+- 只消费 ``navigate_to_place`` / ``pause_navigation`` / ``resume_navigation`` /
+  ``cancel_navigation`` 四个导航 action；其它 action（pick/place 等）一律忽略，
+  仍由 Grounding + real_grounded_runtime_node 处理。
 - 导航动作不进入需要 ``target_object`` 的机械臂 Grounding 流程。
 - 同一时刻只允许一个导航任务；导航进行中收到第二个导航任务时，以明确的
   ``BUSY`` 拒绝，绝不自动抢占。
@@ -42,6 +42,7 @@ from place_manager.srv import GotoPlace
 STATUS_SUCCEEDED = 'SUCCEEDED'
 STATUS_FAILED = 'FAILED'
 STATUS_CANCELLED = 'CANCELLED'
+STATUS_PAUSED = 'PAUSED'
 STATUS_REJECTED = 'REJECTED'  # 例如 BUSY
 
 ERR_PLACE_NOT_FOUND = 'PLACE_NOT_FOUND'
@@ -50,9 +51,15 @@ ERR_CANCELLED = 'CANCELLED'
 ERR_BUSY = 'BUSY'
 ERR_SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE'
 ERR_CANCEL_REJECTED = 'CANCEL_REJECTED'
+ERR_NO_PAUSED_NAVIGATION = 'NO_PAUSED_NAVIGATION'
 
 # 处理这些 action；其它 action 交给机械臂链路。
-NAV_ACTIONS = ('navigate_to_place', 'cancel_navigation')
+NAV_ACTIONS = (
+    'navigate_to_place',
+    'pause_navigation',
+    'resume_navigation',
+    'cancel_navigation',
+)
 
 
 class NavigationExecutorNode(Node):
@@ -87,6 +94,11 @@ class NavigationExecutorNode(Node):
         self._cancel_meta: Optional[dict] = None
         # 只有 /cancel_navigation 明确返回 success=True 后才置 True。
         self._cancel_accepted = False
+        # Patch 4C.2：pause 语义目标 + 当前取消动作的语义标记。
+        # _paused_nav_meta: {'place_name', 'source_task_id', 'raw_text'}
+        self._paused_nav_meta: Optional[dict] = None
+        # 'pause_navigation' / 'cancel_navigation'，仅在本轮取消流程内存活。
+        self._cancel_action: Optional[str] = None
         self._nav_seq = 0
 
         self.create_timer(self._tick_period, self._tick)
@@ -111,8 +123,14 @@ class NavigationExecutorNode(Node):
             return  # 非导航动作：交给机械臂链路，忽略
 
         raw_text = data.get('raw_text') or data.get('raw') or ''
+        if action == 'pause_navigation':
+            self._request_cancel(raw_text, action='pause_navigation')
+            return
         if action == 'cancel_navigation':
-            self._request_cancel(raw_text)
+            self._request_cancel(raw_text, action='cancel_navigation')
+            return
+        if action == 'resume_navigation':
+            self._request_resume(raw_text)
             return
 
         # navigate_to_place
@@ -133,12 +151,18 @@ class NavigationExecutorNode(Node):
 
     # ── 发起导航 / 取消 ───────────────────────────────────────────────────
 
-    def _request_navigation(self, place_name: str, raw_text: str, task_id: str) -> None:
+    def _request_navigation(
+        self,
+        place_name: str,
+        raw_text: str,
+        task_id: str,
+        action: str = 'navigate_to_place',
+    ) -> None:
         # 单一导航：进行中直接 BUSY 拒绝，不抢占。
         if self._goto_future is not None:
             self.get_logger().warn(f'BUSY：已有导航进行中，拒绝到 "{place_name}"')
             self._publish_result(
-                task_id=task_id, action='navigate_to_place',
+                task_id=task_id, action=action,
                 place_name=place_name, success=False, status=STATUS_REJECTED,
                 error_code=ERR_BUSY,
                 reason='当前正在移动，请先停止当前导航',
@@ -149,7 +173,7 @@ class NavigationExecutorNode(Node):
         if not self._goto_client.service_is_ready():
             self.get_logger().error(f'/goto_place 服务不可用，无法导航到 "{place_name}"')
             self._publish_result(
-                task_id=task_id, action='navigate_to_place',
+                task_id=task_id, action=action,
                 place_name=place_name, success=False, status=STATUS_FAILED,
                 error_code=ERR_SERVICE_UNAVAILABLE,
                 reason=f'{self._goto_service} 服务不可用',
@@ -164,36 +188,96 @@ class NavigationExecutorNode(Node):
             'task_id': task_id,
             'place_name': place_name,
             'raw_text': raw_text,
+            'action': action,
         }
+        # 新导航真正启动后才覆盖旧 paused target；服务不可用等提前返回
+        # 不清除（resume 失败后仍可再次恢复）。
+        self._paused_nav_meta = None
         self._cancel_accepted = False
         self._cancel_future = None
         self._cancel_meta = None
         self.get_logger().info(f'开始导航到 "{place_name}" (task_id={task_id})')
 
-    def _request_cancel(self, raw_text: str) -> None:
+    def _request_cancel(
+        self,
+        raw_text: str,
+        *,
+        action: str = 'cancel_navigation',
+    ) -> None:
+        if action not in ('pause_navigation', 'cancel_navigation'):
+            return
         cancel_task_id = self._next_task_id()
 
-        # 没有活动导航：幂等成功。
+        # 没有活动导航。
         if self._goto_future is None:
-            self.get_logger().info(
-                '取消导航：当前无活动导航，幂等返回 CANCELLED'
-            )
-            self._publish_result(
-                task_id=cancel_task_id,
-                action='cancel_navigation',
-                place_name='',
-                success=True,
-                status=STATUS_CANCELLED,
-                error_code=ERR_CANCELLED,
-                reason='已停止移动（无活动导航）',
-                raw_text=raw_text,
-            )
+            if action == 'cancel_navigation':
+                # 幂等取消：同时彻底清除 paused target。
+                self._paused_nav_meta = None
+                self.get_logger().info(
+                    '取消导航：当前无活动导航，幂等返回 CANCELLED'
+                )
+                self._publish_result(
+                    task_id=cancel_task_id,
+                    action='cancel_navigation',
+                    place_name='',
+                    success=True,
+                    status=STATUS_CANCELLED,
+                    error_code=ERR_CANCELLED,
+                    reason='已停止移动（无活动导航）',
+                    raw_text=raw_text,
+                )
+                return
+
+            # pause_navigation：无活动导航时不创建假的 paused target。
+            if self._paused_nav_meta is not None:
+                self.get_logger().info('暂停导航：已处于暂停状态')
+                self._publish_result(
+                    task_id=cancel_task_id,
+                    action='pause_navigation',
+                    place_name=self._paused_nav_meta.get('place_name', ''),
+                    success=True,
+                    status=STATUS_PAUSED,
+                    error_code='',
+                    reason='导航已处于暂停状态',
+                    raw_text=raw_text,
+                )
+            else:
+                self.get_logger().info('暂停导航：当前无活动导航，无需暂停')
+                self._publish_result(
+                    task_id=cancel_task_id,
+                    action='pause_navigation',
+                    place_name='',
+                    success=True,
+                    status=STATUS_PAUSED,
+                    error_code='',
+                    reason='当前无活动导航，无需暂停',
+                    raw_text=raw_text,
+                )
             return
 
         # 取消请求正在等待响应，或已经被 Nav2 接受。
         if self._cancel_future is not None or self._cancel_accepted:
+            if (
+                self._cancel_action == 'pause_navigation'
+                and action == 'cancel_navigation'
+            ):
+                # pause -> cancel 允许升级：彻底清除 paused target。
+                self._cancel_action = 'cancel_navigation'
+                self._paused_nav_meta = None
+                if self._cancel_meta is not None:
+                    self._cancel_meta = {
+                        'task_id': cancel_task_id,
+                        'place_name': self._cancel_meta.get('place_name', ''),
+                        'raw_text': raw_text,
+                        'action': 'cancel_navigation',
+                    }
+                self.get_logger().info(
+                    '取消请求升级：pause -> cancel，清除 paused target'
+                )
+                return
+            # cancel -> pause 不允许降级；其它重复请求保持忽略。
             self.get_logger().info(
-                '取消导航：取消请求正在处理，忽略重复请求'
+                '取消请求正在处理，忽略重复请求'
             )
             return
 
@@ -209,7 +293,7 @@ class NavigationExecutorNode(Node):
             self._publish_result(
                 # 取消动作必须使用自己的 task_id，不能复用原导航 task_id。
                 task_id=cancel_task_id,
-                action='cancel_navigation',
+                action=action,
                 place_name=place_name,
                 success=False,
                 status=STATUS_FAILED,
@@ -227,7 +311,7 @@ class NavigationExecutorNode(Node):
             self._cancel_future = None
             self._publish_result(
                 task_id=cancel_task_id,
-                action='cancel_navigation',
+                action=action,
                 place_name=place_name,
                 success=False,
                 status=STATUS_FAILED,
@@ -241,16 +325,63 @@ class NavigationExecutorNode(Node):
             'task_id': cancel_task_id,
             'place_name': place_name,
             'raw_text': raw_text,
+            'action': action,
         }
+        self._cancel_action = action
         self.get_logger().info(
             '已发送取消服务请求，等待 Nav2 接受或拒绝'
+        )
+
+    def _request_resume(self, raw_text: str) -> None:
+        """恢复导航：用新 task_id 从当前位置重新调用 /goto_place。"""
+        task_id = self._next_task_id()
+
+        if (
+            self._goto_future is not None
+            or self._cancel_future is not None
+            or self._cancel_accepted
+        ):
+            self._publish_result(
+                task_id=task_id,
+                action='resume_navigation',
+                place_name=(
+                    self._paused_nav_meta.get('place_name', '')
+                    if self._paused_nav_meta else ''
+                ),
+                success=False,
+                status=STATUS_REJECTED,
+                error_code=ERR_BUSY,
+                reason='当前导航尚未进入可恢复状态',
+                raw_text=raw_text,
+            )
+            return
+
+        if self._paused_nav_meta is None:
+            self._publish_result(
+                task_id=task_id,
+                action='resume_navigation',
+                place_name='',
+                success=False,
+                status=STATUS_REJECTED,
+                error_code=ERR_NO_PAUSED_NAVIGATION,
+                reason='当前没有可恢复的导航任务',
+                raw_text=raw_text,
+            )
+            return
+
+        place_name = self._paused_nav_meta['place_name']
+        self._request_navigation(
+            place_name,
+            raw_text,
+            task_id,
+            action='resume_navigation',
         )
 
     # ── 定时器：轮询 Future 终态 ──────────────────────────────────────────
 
     def _tick(self) -> None:
-        # 必须先处理取消服务响应，再处理导航终态。
-        # 如果两个 Future 在同一个 tick 内完成，分类时才能知道取消是否被接受。
+        # /cancel_navigation response 必须先于原 goto terminal
+        # 完成语义判定。
         if (
             self._cancel_future is not None
             and self._cancel_future.done()
@@ -261,6 +392,14 @@ class NavigationExecutorNode(Node):
             self._goto_future is not None
             and self._goto_future.done()
         ):
+            # 已经发出 pause/cancel 请求，但 service response 尚未返回：
+            # 暂缓 finalize goto。
+            #
+            # 否则会在 _cancel_accepted 尚为 False 时提前处理
+            # goto terminal，并丢失 PAUSED / CANCELLED 的真实语义。
+            if self._cancel_future is not None:
+                return
+
             self._finalize_navigation()
 
     def _finalize_cancel_request(self) -> None:
@@ -289,6 +428,8 @@ class NavigationExecutorNode(Node):
             message = f'读取取消服务响应失败: {exc}'
 
         if accepted:
+            # 保留 _cancel_action：还要等原 goto Future 真正结束后，
+            # 才能判定最终状态是 PAUSED 还是 CANCELLED。
             self._cancel_accepted = True
             self.get_logger().info(
                 f'/cancel_navigation 已接受: {message}'
@@ -297,6 +438,7 @@ class NavigationExecutorNode(Node):
             return
 
         self._cancel_accepted = False
+        self._cancel_action = None
         self.get_logger().error(
             f'/cancel_navigation 未接受: {message}'
         )
@@ -304,8 +446,8 @@ class NavigationExecutorNode(Node):
         # 取消失败使用独立 task_id 发布，不能占用原导航 task_id。
         if self._goto_future is not None:
             self._publish_result(
-                task_id=meta.get('task_id', self._next_task_id()),
-                action='cancel_navigation',
+                task_id=meta.get('task_id') or self._next_task_id(),
+                action=meta.get('action', 'cancel_navigation'),
                 place_name=meta.get('place_name', ''),
                 success=False,
                 status=STATUS_FAILED,
@@ -324,7 +466,10 @@ class NavigationExecutorNode(Node):
         self._goto_future = None
         self._nav_meta = None
         cancel_accepted = self._cancel_accepted
+        # 取消动作语义只在本次判定中使用，随后清理。
+        cancel_action = self._cancel_action
         self._cancel_accepted = False
+        self._cancel_action = None
 
         # 原导航已经终止，不再处理迟到的取消响应。
         self._cancel_future = None
@@ -332,14 +477,15 @@ class NavigationExecutorNode(Node):
 
         place_name = meta.get('place_name', '')
         raw_text = meta.get('raw_text', '')
-        task_id = meta.get('task_id', self._next_task_id())
+        task_id = meta.get('task_id') or self._next_task_id()
+        action = meta.get('action', 'navigate_to_place')
 
         try:
             response: GotoPlace.Response = future.result()
         except Exception as exc:
             self.get_logger().error(f'/goto_place 调用异常: {exc}')
             self._publish_result(
-                task_id=task_id, action='navigate_to_place', place_name=place_name,
+                task_id=task_id, action=action, place_name=place_name,
                 success=False, status=STATUS_FAILED, error_code=ERR_NAV2_FAILED,
                 reason=f'/goto_place 调用异常: {exc}', raw_text=raw_text,
             )
@@ -347,7 +493,7 @@ class NavigationExecutorNode(Node):
 
         if response is None:
             self._publish_result(
-                task_id=task_id, action='navigate_to_place', place_name=place_name,
+                task_id=task_id, action=action, place_name=place_name,
                 success=False, status=STATUS_FAILED, error_code=ERR_NAV2_FAILED,
                 reason='/goto_place 返回空响应', raw_text=raw_text,
             )
@@ -355,16 +501,40 @@ class NavigationExecutorNode(Node):
 
         success = bool(response.success)
         message = response.message or ''
-        status, error_code = self._classify(
-            success, message, cancel_accepted
-        )
+
+        if (
+            not success
+            and cancel_accepted
+            and cancel_action == 'pause_navigation'
+        ):
+            # Case B：取消被接受且语义为暂停 → 保存 paused target，
+            # 后续“恢复导航”从当前位置重新发起 /goto_place。
+            self._paused_nav_meta = {
+                'place_name': place_name,
+                'source_task_id': task_id,
+                'raw_text': raw_text,
+            }
+            status, error_code = STATUS_PAUSED, ''
+        elif (
+            not success
+            and cancel_accepted
+            and cancel_action == 'cancel_navigation'
+        ):
+            # Case C：取消被接受且语义为取消 → 彻底清除 paused target。
+            self._paused_nav_meta = None
+            status, error_code = STATUS_CANCELLED, ERR_CANCELLED
+        else:
+            # Case A（成功）与其它失败沿用现有分类。
+            status, error_code = self._classify(
+                success, message, cancel_accepted
+            )
 
         self.get_logger().info(
             f'导航结束: place="{place_name}" success={success} '
             f'status={status} error_code={error_code} msg={message}'
         )
         self._publish_result(
-            task_id=task_id, action='navigate_to_place', place_name=place_name,
+            task_id=task_id, action=action, place_name=place_name,
             success=success and status == STATUS_SUCCEEDED,
             status=status, error_code=error_code,
             reason=message, raw_text=raw_text,

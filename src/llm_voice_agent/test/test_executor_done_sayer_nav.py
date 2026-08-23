@@ -89,5 +89,54 @@ class DoneSayerNavTextTests(unittest.TestCase):
         )
 
 
+class PauseResumeTextTests(unittest.TestCase):
+    """Patch 4C.3：PAUSED / resume 结果话术。"""
+
+    def test_paused_with_place(self):
+        self.assertEqual(
+            ExecutorDoneSayer._format_nav_text(
+                {'status': 'PAUSED', 'place_name': '餐厅'},
+                'navigate_to_place',
+            ),
+            '已暂停前往餐厅的导航。',
+        )
+
+    def test_paused_without_place(self):
+        self.assertEqual(
+            ExecutorDoneSayer._format_nav_text(
+                {'status': 'PAUSED', 'place_name': ''},
+                'pause_navigation',
+            ),
+            '已暂停导航。',
+        )
+
+    def test_resume_without_paused_target(self):
+        self.assertEqual(
+            ExecutorDoneSayer._format_nav_text(
+                {'status': 'REJECTED', 'error_code': 'NO_PAUSED_NAVIGATION'},
+                'resume_navigation',
+            ),
+            '当前没有可以恢复的导航任务。',
+        )
+
+    def test_resume_busy(self):
+        self.assertEqual(
+            ExecutorDoneSayer._format_nav_text(
+                {'status': 'REJECTED', 'error_code': 'BUSY'},
+                'resume_navigation',
+            ),
+            '当前导航还没有进入可恢复状态。',
+        )
+
+    def test_resume_succeeded_reaches_arrival_text(self):
+        self.assertEqual(
+            ExecutorDoneSayer._format_nav_text(
+                {'status': 'SUCCEEDED', 'success': True, 'place_name': '餐厅'},
+                'resume_navigation',
+            ),
+            '已经到达餐厅。',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

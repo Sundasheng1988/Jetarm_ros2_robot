@@ -156,10 +156,12 @@ VOICE_MODE_SLEEPING = 'voice_mode_sleeping'
 # Robot Stop 短语：与 llm_voice_agent_node.NAV_STOP_PHRASES 对齐（只读对齐，
 # 不修改 Agent）。整句精确匹配，覆盖用户指定的：
 #   “停止移动 / 停止导航 / 取消导航 / 别走了”
+# Patch 4C.1：补充 “暂停导航 / 放弃导航”，保持 STOP 集合覆盖全部导航停止语义。
 VOICE_STOP_PHRASES = frozenset([
     '停止移动', '停止导航', '取消导航', '取消移动',
     '别走了', '别走啦', '别走', '不要走了', '不要走',
     '停下移动', '停下导航',
+    '暂停导航', '放弃导航',
 ])
 
 VOICE_STOP_PREFIX_SAFE = frozenset({
@@ -169,6 +171,17 @@ VOICE_STOP_PREFIX_SAFE = frozenset({
     '取消移动',
     '停下移动',
     '停下导航',
+    '暂停导航',
+    '放弃导航',
+})
+
+# Patch 4C.1：Robot STOP 中的“取消语义”子集。
+# exact / prefix STOP 命中后，canonical 命令发布为 “取消导航”（供 Parser 侧
+# 转成 cancel_navigation）；其余 STOP 一律发布 “停止移动”（pause_navigation）。
+VOICE_CANCEL_NAV_PHRASES = frozenset({
+    '取消导航',
+    '取消移动',
+    '放弃导航',
 })
 
 # ============================================================
@@ -254,27 +267,9 @@ VOICE_TTS_NAV_CONFIRM_REPLIES = frozenset({
     '我确定',
     '可以',
     '执行',
-    '是的',
     '对的',
     '没错',
 })
-
-VOICE_TTS_NAV_CONFIRM_SUFFIX_REPLIES = frozenset({
-    '确认',
-    '确定',
-    '可以',
-    '执行',
-    '是的',
-    '对的',
-    '没错',
-})
-
-VOICE_TTS_QUESTION_TAILS = (
-    '吗',
-    '么',
-    '呢',
-    '吧',
-)
 
 # TTS-time 导航取消：整句精确匹配，命中后只把规范文本“取消”
 # 发给 Agent，不转发带噪声的原始 ASR 句子。
@@ -325,11 +320,10 @@ VOICE_TTS_STOP_PREFIX_SAFE = frozenset({
 def classify_tts_control_reply(norm_reply: str, agent_state: str):
     """TTS-time navigation control classifier.
 
-    安全原则：
-    1. 只有 nav_wait_confirm 才允许确认/取消；
-    2. 干净回复继续 exact match；
-    3. 对“Rebecca 问句尾音 + 用户确认”只开放非常窄的 suffix 规则；
-    4. 不做任意 substring matching。
+    Safety rule:
+    - only nav_wait_confirm accepts navigation confirm/cancel;
+    - confirmation and cancellation are exact-match only;
+    - merged TTS-tail + user confirmation must never be accepted.
     """
     if agent_state != 'nav_wait_confirm':
         return None
@@ -337,44 +331,11 @@ def classify_tts_control_reply(norm_reply: str, agent_state: str):
     if not norm_reply:
         return None
 
-    # clean exact confirmation
     if norm_reply in VOICE_TTS_NAV_CONFIRM_REPLIES:
         return 'confirm'
 
-    # clean exact cancellation
     if norm_reply in VOICE_TTS_NAV_CANCEL_REPLIES:
         return 'cancel'
-
-    # --------------------------------------------------------
-    # Acoustic boundary case:
-    #
-    # Rebecca: "要让 Eric 去餐厅吗？"
-    # User:    "是的"
-    #
-    # ASR may produce:
-    #   "要让eric去餐厅吗是的"
-    #
-    # Only accept when:
-    #   - final suffix is an explicit confirmation reply
-    #   - preceding text itself ends like a question
-    #
-    # Thus this is NOT arbitrary endswith confirmation.
-    # --------------------------------------------------------
-    for reply in sorted(
-        VOICE_TTS_NAV_CONFIRM_SUFFIX_REPLIES,
-        key=len,
-        reverse=True,
-    ):
-        if not norm_reply.endswith(reply):
-            continue
-
-        prefix = norm_reply[:-len(reply)]
-
-        if (
-            prefix
-            and prefix.endswith(VOICE_TTS_QUESTION_TAILS)
-        ):
-            return 'confirm'
 
     return None
 
@@ -897,12 +858,17 @@ class SpeechDialogFunASR(Node):
         exact_stop = n in VOICE_STOP_PHRASES
 
         if exact_stop:
+            canonical = (
+                '取消导航'
+                if n in VOICE_CANCEL_NAV_PHRASES
+                else '停止移动'
+            )
             self.get_logger().info(
                 f"🛑 [VoiceMode:{self._voice_mode}] "
                 f"Robot STOP exact 命中：'{text}'"
             )
 
-            self._publish('停止移动')
+            self._publish(canonical)
             self.pub_interrupt.publish(Bool(data=True))
 
             self.mute_until = time.time() + 0.5
@@ -954,12 +920,20 @@ class SpeechDialogFunASR(Node):
         #   + Rebecca 尾音
         #   -> “停止移动操作和交流”
         # -----------------------------------------------------
+        canonical = (
+            '取消导航'
+            if any(
+                n.startswith(phrase)
+                for phrase in VOICE_CANCEL_NAV_PHRASES
+            )
+            else '停止移动'
+        )
         self.get_logger().info(
             f"🛑 [VoiceMode:{self._voice_mode}] "
             f"Robot STOP prefix 命中：'{text}'"
         )
 
-        self._publish('停止移动')
+        self._publish(canonical)
         self.pub_interrupt.publish(Bool(data=True))
 
         self.mute_until = time.time() + 0.5

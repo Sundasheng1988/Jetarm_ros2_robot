@@ -293,10 +293,25 @@ def build_cmd_text(color, klass, side):
 # Parser 重新识别为同一种导航意图。地点是否存在由 place_manager 判断，这里
 # 不硬编码地点名单。
 NAV_STOP_PHRASES = [
-    '停止移动', '停止导航', '取消导航', '取消移动',
+    '停止移动', '停止导航', '暂停导航', '取消导航', '取消移动', '放弃导航',
     '别走了', '别走啦', '别走', '不要走了', '不要走',
     '停下移动', '停下导航',
 ]
+
+# Patch 4C.1a：STOP 集合中具有“取消”语义的子集——机器侧 canonical 命令
+# 发布为“取消导航”（Parser 侧转 cancel_navigation）；其余 STOP 一律发布
+# “停止移动”（Parser 侧转 pause_navigation）。整句匹配，无 fuzzy/substring。
+NAV_CANCEL_PHRASES = {
+    '取消导航',
+    '取消移动',
+    '放弃导航',
+}
+
+# Patch 4C.3：恢复导航指令（第一次只进入 nav_wait_confirm，确认后才下发）。
+NAV_RESUME_PHRASES = {
+    '恢复导航',
+    '继续导航',
+}
 _NAV_VERB_RE = re.compile(r'^(导航到|移动到|到达|前往|回到|返回|去|到|回)(.+)$')
 _NAV_TAIL_NOISE = re.compile(r'[吧呢啊呀。！!？?，,]+$')
 _NAV_QUERY_SUFFIX_RE = re.compile(
@@ -390,6 +405,38 @@ def is_stop_movement(text):
     """是否为“停止移动 / 取消导航”意图（不需要二次确认）。"""
     n = _NAV_TAIL_NOISE.sub('', _norm_nav_text(text)).strip()
     return n in NAV_STOP_PHRASES
+
+
+def canonical_navigation_stop_command(text):
+    """停止/取消类短语 → 规范机读命令；非停止语义返回 ``None``。
+
+    - pause 语义（停止移动 / 停止导航 / 暂停导航 ...）→ '停止移动'
+    - cancel 语义（取消导航 / 取消移动 / 放弃导航）→ '取消导航'
+
+    只做整句匹配（归一化 + 尾噪声剥离），不做 fuzzy / substring matching。
+    """
+    n = _NAV_TAIL_NOISE.sub(
+        '',
+        _norm_nav_text(text),
+    ).strip()
+
+    if n in NAV_CANCEL_PHRASES:
+        return '取消导航'
+
+    if n in NAV_STOP_PHRASES:
+        return '停止移动'
+
+    return None
+
+
+def is_resume_navigation(text):
+    """是否为明确的恢复导航指令；只做整句匹配。"""
+    n = _NAV_TAIL_NOISE.sub(
+        '',
+        _norm_nav_text(text),
+    ).strip()
+
+    return n in NAV_RESUME_PHRASES
 
 
 # ============================================================
@@ -787,6 +834,17 @@ class LlmVoiceAgent(Node):
         # _pending_nav_place = "餐厅"
         self._pending_nav_place = ''
 
+        # Patch 4C.4b：导航确认窗口。
+        # 超时后旧的“确认/是的”不得重新启动机器人。
+        self.nav_confirm_timeout_s = float(
+            self.declare_parameter(
+                'nav_confirm_timeout_s',
+                15.0,
+            ).get_parameter_value().double_value
+        )
+
+        self._nav_confirm_deadline = 0.0
+
         # —— 严格意图与 LLM 引导开关 ——
         self.strict_intent = bool(self.declare_parameter('strict_intent', True).get_parameter_value().bool_value)
         self.llm_hint_enabled = bool(self.declare_parameter('llm_hint_enabled', True).get_parameter_value().bool_value)
@@ -904,6 +962,12 @@ class LlmVoiceAgent(Node):
                 .get_parameter_value().double_value
         )
 
+        # Patch 4C.4b：导航确认超时周期检查（仅清 navigation pending）。
+        self.create_timer(
+            0.5,
+            self._check_nav_confirm_timeout,
+        )
+
     def _publish_face_control(self, command: str) -> bool:
         if not self.enable_robot_side_effects or self.face_ctrl_pub is None:
             self.get_logger().debug(
@@ -944,7 +1008,11 @@ class LlmVoiceAgent(Node):
             # 无论当前是否静音，都必须下发停止命令。
             # Robot STOP 是最高优先级安全路径：物理停止命令必须
             # 先于状态播报与 Rebecca 的语音反馈。
-            self._publish_command('停止移动')
+            # Patch 4C.1a：按短语语义下发 canonical 命令，
+            # pause → '停止移动'，cancel → '取消导航'。
+            stop_command = canonical_navigation_stop_command(raw_text)
+            if stop_command is not None:
+                self._publish_command(stop_command)
 
             self._set_state('nav_stop')
 
@@ -1493,13 +1561,31 @@ class LlmVoiceAgent(Node):
                 self._reset_nav_confirm()
             # Robot STOP 是最高优先级安全路径：物理停止命令必须
             # 先于 Rebecca 的语音反馈与状态播报。
-            self._publish_command('停止移动')
+            # Patch 4C.1a：按短语语义下发 canonical 命令，
+            # pause → '停止移动'，cancel → '取消导航'。
+            stop_command = canonical_navigation_stop_command(raw_text)
+            if stop_command is not None:
+                self._publish_command(stop_command)
             self._set_state('nav_stop')
             self._say('好的，正在停止移动。')
             return True
 
         # 2) 正在等待导航确认：处理 确认 / 取消 / 更改目标。
         if self.waiting_confirm and self._pending_nav:
+            # Patch 4C.4b hard gate：0.5s timer 与语音输入存在竞态，
+            # 输入处理路径必须自己拒绝已过期的确认窗口，
+            # stale “是的/确认”不得启动任何导航。
+            if (
+                self._nav_confirm_deadline > 0.0
+                and time.monotonic() >= self._nav_confirm_deadline
+            ):
+                self.get_logger().info(
+                    '⌛ 收到输入时导航确认已过期，拒绝 stale confirmation'
+                )
+                self._reset_nav_confirm()
+                self._set_state('nav_confirm_timeout')
+                return False
+
             # 取消/否定必须优先于确认，避免“不要确认”中的“确认”
             # 或“好，不去”中的“好”错误启动导航。
             if is_nav_cancel_reply(raw_text):
@@ -1519,7 +1605,12 @@ class LlmVoiceAgent(Node):
                 self._reset_nav_confirm()
                 self._set_state('nav_confirmed')
 
-                if place:
+                if cmd_text == '恢复导航':
+                    self._say(
+                        f'好的，我让{self.mobile_robot_name}'
+                        f'继续刚才的导航。'
+                    )
+                elif place:
                     self._say(
                         f'好的，我让{self.mobile_robot_name}去{place}。'
                     )
@@ -1528,8 +1619,7 @@ class LlmVoiceAgent(Node):
                         f'好的，我让{self.mobile_robot_name}开始执行。'
                     )
 
-                # machine-facing command 完全保持原样；
-                # 只有用户明确确认后才下发，且仅此一次。
+                # 只有明确确认后才下发 machine-facing command。
                 self._publish_command(cmd_text)
                 return True
 
@@ -1556,6 +1646,7 @@ class LlmVoiceAgent(Node):
                 # 必须先进入确认状态，再播报。
                 # 用户在 Rebecca 播报期间回答时，
                 # speech_dialog 才能看到 nav_wait_confirm。
+                self._arm_nav_confirm_timeout()
                 self._set_state('nav_wait_confirm')
 
                 self._say(
@@ -1582,21 +1673,40 @@ class LlmVoiceAgent(Node):
                 # 先发布状态，再开始 TTS。
                 # 这样用户在 TTS 期间说“确认”时，
                 # ASR 已经知道当前是 nav_wait_confirm。
+                self._arm_nav_confirm_timeout()
                 self._set_state('nav_wait_confirm')
 
                 self._say(
                     f'那改让{self.mobile_robot_name}去{place}，这样安排吗？'
                 )
                 return True
-            # Patch 4A：nav_wait_confirm 期间的追问不得包含确认/取消
-            # token，防止 Rebecca 自己的 TTS 回声被 ASR 识别成控制词。
-            if self._pending_nav_place:
-                self._say(
-                    f'我没听清。还要让{self.mobile_robot_name}'
-                    f'去{self._pending_nav_place}吗？'
-                )
-            else:
-                self._say('我没听清。还要继续这个导航安排吗？')
+            # Patch 4C.4b：
+            # 既不是确认/取消，也不是新的导航目标，
+            # 视为用户离开当前导航确认上下文。
+            # 清除 pending 后交回正常 chat/task 流程。
+            self.get_logger().info(
+                f"🧹 无关输入清除导航确认 pending：'{raw_text}'"
+            )
+            self._reset_nav_confirm()
+            self._set_state('nav_cancel')
+            return False
+
+        # =====================================================
+        # Patch 4C.3：恢复暂停导航
+        # =====================================================
+        if is_resume_navigation(raw_text):
+            self.pending_cmd_text = '恢复导航'
+            self.waiting_confirm = True
+            self._pending_nav = True
+            self._pending_nav_place = ''
+
+            # 必须先进入确认状态，再播报。
+            self._arm_nav_confirm_timeout()
+            self._set_state('nav_wait_confirm')
+
+            self._say(
+                '要继续刚才暂停的导航吗？'
+            )
             return True
 
                 # =====================================================
@@ -1617,6 +1727,7 @@ class LlmVoiceAgent(Node):
             self._pending_nav_place = partial_place
 
             # 先进入状态，再播报
+            self._arm_nav_confirm_timeout()
             self._set_state('nav_wait_confirm')
 
             self._say(
@@ -1677,6 +1788,7 @@ class LlmVoiceAgent(Node):
         # 必须先进入状态，再播报。
         # speech_dialog_funasr_node 的 TTS-time confirm gate
         # 依赖这个状态。
+        self._arm_nav_confirm_timeout()
         self._set_state('nav_wait_confirm')
 
         self._say(
@@ -1684,11 +1796,47 @@ class LlmVoiceAgent(Node):
         )
         return True
 
+    def _arm_nav_confirm_timeout(self) -> None:
+        """启动/刷新导航确认有效期。"""
+        timeout_s = max(
+            0.1,
+            float(self.nav_confirm_timeout_s),
+        )
+        self._nav_confirm_deadline = (
+            time.monotonic() + timeout_s
+        )
+
+    def _check_nav_confirm_timeout(self) -> None:
+        """主动清理过期的导航确认。
+
+        只处理 navigation pending，
+        不影响机械臂 waiting_confirm。
+        """
+        if not (
+            self.waiting_confirm
+            and self._pending_nav
+        ):
+            return
+
+        if self._nav_confirm_deadline <= 0.0:
+            return
+
+        if time.monotonic() < self._nav_confirm_deadline:
+            return
+
+        self.get_logger().info(
+            '⌛ 导航确认已超时，清除 pending navigation'
+        )
+
+        self._reset_nav_confirm()
+        self._set_state('nav_confirm_timeout')
+
     def _reset_nav_confirm(self) -> None:
         self.waiting_confirm = False
         self.pending_cmd_text = ''
         self._pending_nav = False
         self._pending_nav_place = ''
+        self._nav_confirm_deadline = 0.0
 
     def _maybe_switch_mode(self, normed: str) -> bool:
         # start/stop_keywords 里的词本身通常没有标点，这里直接用包含判断即可

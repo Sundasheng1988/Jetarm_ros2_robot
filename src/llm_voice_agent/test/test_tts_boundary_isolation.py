@@ -76,6 +76,8 @@ def make_stub_agent(mode='chat'):
         pending_cmd_text='',
         _pending_nav=False,
         _pending_nav_place='',
+        nav_confirm_timeout_s=15.0,
+        _nav_confirm_deadline=0.0,
         said=[],
         commands=[],
         states=[],
@@ -85,6 +87,9 @@ def make_stub_agent(mode='chat'):
     ag._publish_command = lambda t: ag.commands.append(t)
     ag._set_state = lambda s: ag.states.append(s)
     ag._reset_nav_confirm = lambda: LlmVoiceAgent._reset_nav_confirm(ag)
+    ag._arm_nav_confirm_timeout = (
+        lambda: LlmVoiceAgent._arm_nav_confirm_timeout(ag)
+    )
     return ag
 
 
@@ -164,6 +169,9 @@ def make_stub_asr(text='去吗？可以。', conf=1.0):
         setattr(asr, name, lambda *a, _fn=fn, _self=asr, **kw: _fn(_self, *a, **kw))
     # staticmethod：类访问即未绑定函数，直接挂到实例上
     asr._norm_control_text = SpeechDialogFunASR._norm_control_text
+    # Patch 4C.5：_on_tts_speaking 会调用实例方法切换 VAD 灵敏度，
+    # stub 上以 no-op 替代（不修改生产函数）。
+    asr._apply_vad_mode_for_context = lambda: None
     return asr
 
 
@@ -223,6 +231,25 @@ class BoundaryIsolationTests(unittest.TestCase):
         # A4：finalize 后锁存复位，下一段从新初值开始
         self.assertFalse(asr._utt_restricted)
 
+    def test_resume_cross_boundary_merged_confirm_is_dropped(self):
+        # Patch 4C.4a：resume 场景的“问句尾音 + 确认”合并句
+        # 同样不得作为 TTS-time 确认发布。
+        asr = make_stub_asr(text='导航吗？可以。', conf=1.0)
+        asr._utt_restricted = True
+        asr._interrupt_listen_only = False
+        asr._voice_agent_state = 'nav_wait_confirm'
+        finalize(asr, 'max_utt')
+        self.assertEqual(asr.published, [])
+        self.assertEqual(asr.interrupts, [])
+
+        asr2 = make_stub_asr(text='继续吗？确认。', conf=1.0)
+        asr2._utt_restricted = True
+        asr2._interrupt_listen_only = False
+        asr2._voice_agent_state = 'nav_wait_confirm'
+        finalize(asr2, 'max_utt')
+        self.assertEqual(asr2.published, [])
+        self.assertEqual(asr2.interrupts, [])
+
     def test_restricted_latch_survives_global_flag_flip(self):
         # 不变量 1 的等价观察：锁存 True + 全局 False →
         # min_utt 用 restricted 值（120ms），300ms 短句不被 normal 600ms 丢弃，
@@ -237,9 +264,11 @@ class BoundaryIsolationTests(unittest.TestCase):
     def test_normal_min_utt_still_applies_without_latch(self):
         # 对照组：同样 300ms，锁存 False（全新正常 utterance）→
         # 用 normal min_utt=600 丢弃，什么都不发布。
+        # 注意：必须脱离 nav_wait_confirm（该状态本身使用短控制阈值）。
         asr = make_stub_asr(text='停止移动', conf=1.0)
         asr._utt_restricted = False
         asr._interrupt_listen_only = False
+        asr._voice_agent_state = ''
         asr.ms_in_cur_utt = 300
         finalize(asr, 'endpoint')
         self.assertEqual(asr.published, [])
@@ -283,20 +312,19 @@ class LatchWiringStaticTests(unittest.TestCase):
         self.assertIn('chunk, captured_restricted = self.q.get(timeout=0.1)', ASR_SOURCE)
 
     def test_endpoint_params_use_utt_latch(self):
+        # Patch 4C.5：max_utt / max_sil / min_utt 端点参数使用
+        # utterance 锁存值或 nav_wait_confirm fast-listen 组合条件。
         self.assertIn(
-            'if self._utt_restricted\n                    else self.max_utt_ms',
+            'if (self._utt_restricted or nav_control_fast)',
             ASR_SOURCE,
         )
-        self.assertIn(
-            'if self._utt_restricted\n                        else self.max_sil_ms',
-            ASR_SOURCE,
-        )
-        self.assertIn(
-            'if utt_restricted else self.min_utt_ms', ASR_SOURCE
-        )
+        self.assertIn('else self.max_utt_ms', ASR_SOURCE)
+        self.assertIn('else self.max_sil_ms', ASR_SOURCE)
+        self.assertIn('if (utt_restricted or nav_control_fast)', ASR_SOURCE)
+        self.assertIn('else self.min_utt_ms', ASR_SOURCE)
 
     def test_finalize_branch_uses_saved_latch_after_robot_stop(self):
-        stop_call = ASR_SOURCE.index('self._handle_robot_stop(text)')
+        stop_call = ASR_SOURCE.index('if self._handle_robot_stop(')
         branch = ASR_SOURCE.index('if utt_restricted:')
         self.assertLess(stop_call, branch)
 
@@ -383,22 +411,20 @@ class PlaceExtractionMatrixTests(unittest.TestCase):
 # 3) Agent：pending 不被污染（C）+ 机台命令最终防线（D）
 # ---------------------------------------------------------------------------
 class PendingNavContaminationTests(unittest.TestCase):
-    def test_merged_garbage_does_not_overwrite_pending(self):
-        # 实测问题 3：nav_wait_confirm 时 “去吗？可以。” 不得把 pending
-        # 餐厅改写成垃圾地点。pending 保留，安全 fallback。
+    def test_merged_garbage_never_publishes_command(self):
+        # 实测问题 3 + Patch 4C.4b：nav_wait_confirm 时 “去吗？可以。”
+        # 不得把 pending 餐厅改写成垃圾地点，也不得下发命令；
+        # 作为无关输入直接清 pending（防御纵深：真实链路里该句
+        # 已被 ASR restricted 锁存丢弃，不会到达 Agent）。
         ag = arm_pending_nav(make_stub_agent())
-        self.assertTrue(handle(ag, '去吗？可以。'))
-        self.assertTrue(ag.waiting_confirm and ag._pending_nav)
-        self.assertEqual(ag._pending_nav_place, '餐厅')
-        self.assertEqual(ag.pending_cmd_text, '导航到餐厅')
+        self.assertFalse(handle(ag, '去吗？可以。'))
+        self.assertFalse(ag.waiting_confirm or ag._pending_nav)
         self.assertEqual(ag.commands, [])
-        self.assertEqual(ag.said, ['我没听清。还要让Eric去餐厅吗？'])
 
-    def test_halfwidth_garbage_does_not_overwrite_pending(self):
+    def test_halfwidth_garbage_never_publishes_command(self):
         ag = arm_pending_nav(make_stub_agent())
-        self.assertTrue(handle(ag, '导航到吗?可以'))
-        self.assertTrue(ag.waiting_confirm and ag._pending_nav)
-        self.assertEqual(ag._pending_nav_place, '餐厅')
+        self.assertFalse(handle(ag, '导航到吗?可以'))
+        self.assertFalse(ag.waiting_confirm or ag._pending_nav)
         self.assertEqual(ag.commands, [])
 
     def test_question_tail_place_still_recognized(self):
@@ -412,10 +438,13 @@ class PendingNavContaminationTests(unittest.TestCase):
 class MachineCommandGuardTests(unittest.TestCase):
     def test_garbage_never_produces_navigation_command(self):
         # D：以下输入在 pending 存在时绝不产生 导航到X 机台命令。
+        # Patch 4C.4b：垃圾输入按无关话题清 pending（返回 False 交回
+        # chat 流程），安全不变量仍是不下发任何命令。
         for text in ('去吗', '去吗可以', '去吗？可以。', '导航到吗?可以', '确认确认导航'):
             with self.subTest(text=text):
                 ag = arm_pending_nav(make_stub_agent())
-                self.assertTrue(handle(ag, text))
+                self.assertFalse(handle(ag, text))
+                self.assertFalse(ag.waiting_confirm and ag._pending_nav)
                 self.assertEqual(
                     ag.commands, [],
                     f'{text!r} 不得下发任何机台命令',
