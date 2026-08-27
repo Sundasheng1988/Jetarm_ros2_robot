@@ -6,11 +6,17 @@
 #   source ~/ros2_ws/scripts/ros_env_pc.sh robot    # PC <-> Orin 跨机
 #   source ~/ros2_ws/scripts/ros_env_pc.sh status   # 只查看当前环境
 #
-# voice: DOMAIN=23 + Cyclone + ROS_LOCALHOST_ONLY=1 + 不加载任何 Cyclone XML
-#        完全不依赖 eno1 / wlo1，换网络不影响。
+# voice: DOMAIN=23 + Cyclone + ROS_LOCALHOST_ONLY=1
+#        加载 pc_localhost.xml（绑定 lo，MaxAutoParticipantIndex=120）
+#        完全不依赖 eno1 / wlo1，换网络不影响；XML 缺失即 ERROR 退出。
 # robot: DOMAIN=23 + Cyclone + ROS_LOCALHOST_ONLY=0
-#        仅当 eno1 实际持有 192.168.100.x 地址且 XML 存在时才加载 pc_camera_eno1.xml；
-#        否则保持 CYCLONEDDS_URI unset 并打印 WARNING，绝不静默加载错误 XML。
+#        优先 eno1 有线机器人网络（192.168.100.x -> pc_camera_eno1.xml）；
+#        机器人经 Wi-Fi/hotspot 连接时用 wlo1（172.20.10.x -> pc_camera_wlo1.xml）；
+#        XML 缺失或网络不明确 -> ERROR + return 1（fail-closed），
+#        绝不 WARNING 后回退 Cyclone 默认 discovery。
+# 公共：ROS2CLI_DISABLE_DAEMON=1，避免 stale CLI daemon 复用旧 DDS 环境。
+# 核心语义：模式切换采用 preflight -> commit；任何 preflight 失败均不修改
+# 当前 shell 的 ROS/DDS mode 环境（validate first, commit once）。
 
 (return 0 2>/dev/null) || {
   echo "ERROR: 本脚本必须 source 使用，不能直接执行："
@@ -37,6 +43,10 @@ print_status() {
   echo "  active_iface=$(active_iface)"
 }
 
+# ================= PHASE 1: PREFLIGHT =================
+# 本阶段只读检查并计算目标配置（SELECTED_* 普通变量）；
+# 绝不 export/unset ROS/DDS mode 环境变量，绝不 source setup。
+
 case "$MODE" in
   status)
     print_status
@@ -56,7 +66,7 @@ case "$MODE" in
     ;;
 esac
 
-# --- source ROS Humble + workspace ---
+# --- setup 文件只做可读检查，preflight 全部通过前不 source ---
 if [ ! -r "$ROS_SETUP" ]; then
   echo "ERROR: 找不到 $ROS_SETUP"
   return 1
@@ -65,41 +75,80 @@ if [ ! -r "$WS_SETUP" ]; then
   echo "ERROR: 找不到 $WS_SETUP（工作区尚未构建）"
   return 1
 fi
+
+SELECTED_LOCALHOST_ONLY=""
+SELECTED_CYCLONEDDS_URI=""
+SELECTED_NETWORK=""
+
+if [ "$MODE" = "voice" ]; then
+  # PC-only：只走 loopback，绑定 pc_localhost.xml
+  LOCAL_XML="$WS_HOME/config/cyclonedds/pc_localhost.xml"
+  if [ ! -r "$LOCAL_XML" ]; then
+    echo "ERROR: 缺少 $LOCAL_XML"
+    return 1
+  fi
+  SELECTED_LOCALHOST_ONLY=1
+  SELECTED_CYCLONEDDS_URI="file://$LOCAL_XML"
+else
+  # robot：优先使用 eno1 有线机器人网络；
+  # 如果机器人通过 Wi-Fi / hotspot 连接，则自动使用 wlo1。
+  ENO1_XML="$WS_HOME/config/cyclonedds/pc_camera_eno1.xml"
+  WLO1_XML="$WS_HOME/config/cyclonedds/pc_camera_wlo1.xml"
+
+  if ip link show dev eno1 >/dev/null 2>&1 \
+    && [ "$(cat /sys/class/net/eno1/carrier 2>/dev/null)" = "1" ] \
+    && ip -4 addr show dev eno1 2>/dev/null \
+       | grep -q 'inet 192\.168\.100\.'; then
+
+    if [ -r "$ENO1_XML" ]; then
+      SELECTED_LOCALHOST_ONLY=0
+      SELECTED_CYCLONEDDS_URI="file://$ENO1_XML"
+      SELECTED_NETWORK="eno1 / 192.168.100.x"
+    else
+      echo "ERROR: eno1 在线，但缺少 $ENO1_XML"
+      return 1
+    fi
+
+  elif ip link show dev wlo1 >/dev/null 2>&1 \
+    && ip -4 addr show dev wlo1 2>/dev/null \
+       | grep -q 'inet 172\.20\.10\.'; then
+
+    if [ -r "$WLO1_XML" ]; then
+      SELECTED_LOCALHOST_ONLY=0
+      SELECTED_CYCLONEDDS_URI="file://$WLO1_XML"
+      SELECTED_NETWORK="wlo1 / 172.20.10.x"
+    else
+      echo "ERROR: wlo1 在线，但缺少 $WLO1_XML"
+      return 1
+    fi
+
+  else
+    echo "ERROR: 未检测到机器人网络。"
+    echo "       eno1: 需要 192.168.100.x"
+    echo "       wlo1: 需要 172.20.10.x"
+    echo "       当前活动网卡: $(active_iface)"
+    return 1
+  fi
+fi
+
+# ================= PHASE 2: COMMIT =================
+# 所有 preflight 已通过；从这里开始才允许改变当前 shell 环境。
+
 source "$ROS_SETUP"
 source "$WS_SETUP"
 
 # --- 公共基线（在 source 之后导出，防止被 setup 链覆盖）---
 export ROS_DOMAIN_ID=23
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS2CLI_DISABLE_DAEMON=1
 
-if [ "$MODE" = "voice" ]; then
-  # PC-only：只走 loopback，不依赖任何物理网卡 / Cyclone XML
-  export ROS_LOCALHOST_ONLY=1
-  unset CYCLONEDDS_URI
-else
-  # robot：只有 eno1 有线机器人链路真实在线时才允许绑定 eno1 XML
-  export ROS_LOCALHOST_ONLY=0
-  ENO1_XML="$WS_HOME/config/cyclonedds/pc_camera_eno1.xml"
-  if ip link show dev eno1 >/dev/null 2>&1 \
-    && [ "$(cat /sys/class/net/eno1/carrier 2>/dev/null)" = "1" ] \
-    && ip -4 addr show dev eno1 2>/dev/null | grep -q 'inet 192\.168\.100\.'; then
-    if [ -r "$ENO1_XML" ]; then
-      export CYCLONEDDS_URI="file://$ENO1_XML"
-    else
-      unset CYCLONEDDS_URI
-      echo "WARNING: eno1 在线但缺少 $ENO1_XML"
-      echo "         CYCLONEDDS_URI 保持 unset，使用 Cyclone 默认 discovery。"
-    fi
-  else
-    unset CYCLONEDDS_URI
-    echo "WARNING: 未检测到 eno1 有线机器人链路（eno1 down 或无 192.168.100.x 地址）。"
-    echo "         CYCLONEDDS_URI 保持 unset，当前网络下通常无法发现 Orin 节点。"
-    echo "         当前活动网卡: $(active_iface)"
-    echo "         如 Orin 改经 Wi-Fi/hotspot 连接，请先核对 pc_camera_wlo1.xml 内"
-    echo "         的 Peer 地址是否仍有效，再手动 export；本脚本不会静默加载它。"
-  fi
-fi
+export ROS_LOCALHOST_ONLY="$SELECTED_LOCALHOST_ONLY"
+export CYCLONEDDS_URI="$SELECTED_CYCLONEDDS_URI"
 
 export ROS_ENV_MODE="$MODE"
+
+if [ "$MODE" = "robot" ] && [ -n "$SELECTED_NETWORK" ]; then
+  echo "ROS robot network: $SELECTED_NETWORK"
+fi
 print_status
 echo "  提示: 修改 RMW/DDS 环境后，已运行的 ROS 2 进程不会自动切换，需重启相关进程。"

@@ -8,7 +8,7 @@
 
     <Discovery>
       <ParticipantIndex>auto</ParticipantIndex>
-      <MaxAutoParticipantIndex>30</MaxAutoParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
       <Peers>
         <Peer address="172.20.10.2"/>
         <Peer address="172.20.10.3"/>

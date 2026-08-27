@@ -2,7 +2,7 @@
 <CycloneDDS xmlns="https://cdds.io/config">
   <Domain id="any">
     <General>
-      <NetworkInterfaceAddress>eno1</NetworkInterfaceAddress>
+      <NetworkInterfaceAddress>lo</NetworkInterfaceAddress>
       <AllowMulticast>false</AllowMulticast>
     </General>
 
@@ -10,8 +10,7 @@
       <ParticipantIndex>auto</ParticipantIndex>
       <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
       <Peers>
-        <Peer address="192.168.100.1"/>
-        <Peer address="192.168.100.2"/>
+        <Peer address="127.0.0.1"/>
       </Peers>
     </Discovery>
   </Domain>
